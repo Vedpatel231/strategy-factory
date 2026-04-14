@@ -47,16 +47,28 @@ def generate_dashboard_if_needed():
 
 
 def main():
-    print("=" * 60)
-    print("  🚀 Strategy Factory — Container bootstrap")
-    print("=" * 60)
-    print(f"  DATA_DIR: {config.DATA_DIR}")
-    print(f"  REPORT_DIR: {config.REPORT_DIR}")
-    print(f"  DB_PATH: {config.DB_PATH}")
-    print("=" * 60)
+    print("=" * 60, flush=True)
+    print("  🚀 Strategy Factory — Container bootstrap", flush=True)
+    print("=" * 60, flush=True)
+    print(f"  DATA_DIR: {config.DATA_DIR}", flush=True)
+    print(f"  REPORT_DIR: {config.REPORT_DIR}", flush=True)
+    print(f"  DB_PATH: {config.DB_PATH}", flush=True)
+    print("=" * 60, flush=True)
     seed_if_needed()
     generate_dashboard_if_needed()
-    print("[entrypoint] Bootstrap complete — handing off to web server.")
+    print("[entrypoint] Bootstrap complete — starting gunicorn via exec...", flush=True)
+    # Replace this Python process with gunicorn so stdio passes through cleanly.
+    port = os.environ.get("PORT", "8765")
+    os.execvp("gunicorn", [
+        "gunicorn", "dashboard_server:app",
+        "--bind", f"0.0.0.0:{port}",
+        "--workers", "1",
+        "--threads", "4",
+        "--timeout", "240",
+        "--access-logfile", "-",
+        "--error-logfile", "-",
+        "--log-level", "info",
+    ])
 
 
 if __name__ == "__main__":
