@@ -141,9 +141,8 @@ def static_files(filename):
     return send_from_directory(REPORT_DIR, filename)
 
 
-# ── STATUS ──────────────────────────────────────────────────────────────
+# ── STATUS (public — used by Railway healthcheck, no auth required) ────
 @app.route("/api/status")
-@require_auth
 def status():
     portfolio = load_portfolio()
     return jsonify({
