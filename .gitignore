@@ -1,0 +1,34 @@
+# Credentials + local state
+.env
+.env.local
+*.local
+
+# Generated state (Railway volume will hold these)
+data/
+reports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+ENV/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
