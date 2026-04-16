@@ -11,7 +11,7 @@ It will:
   4. Open your browser
 
 From the dashboard you can then click to initialize the local paper account,
-preview orders, execute simulated trades, see live P&L from real Binance prices,
+preview orders, execute simulated trades, and track synthetic paper P&L,
 and reset back to $1,000 anytime.
 """
 
@@ -100,7 +100,7 @@ def main():
     banner("🚀 Server starting — browser will open automatically", "\033[92m")
     print("   Dashboard: http://127.0.0.1:8765/")
     print("   Simulator: local paper broker, $1,000 starting balance")
-    print("   Price feed: Binance public API (real-time)\n")
+    print("   Price model: synthetic math-based simulation\n")
 
     from dashboard_server import app, HOST, PORT
     app.run(host=HOST, port=PORT, debug=False, use_reloader=False)

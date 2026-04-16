@@ -15,7 +15,7 @@ Endpoints:
     GET  /api/last-refresh      → timestamp of last daily_runner run
     GET  /api/broker/connect    → initialise broker, return account info
     GET  /api/broker/account    → account snapshot
-    GET  /api/broker/positions  → open positions with live Binance P&L
+    GET  /api/broker/positions  → open positions with simulated P&L
     GET  /api/broker/orders     → recent orders
     GET  /api/broker/preview    → dry-run preview of orders to place
     POST /api/broker/execute    → places paper orders, returns results
@@ -358,7 +358,7 @@ def banner():
     print("=" * 64)
     print(f"  Bind:         http://{HOST}:{PORT}/")
     print(f"  Simulator:    local paper broker, $1,000 starting balance")
-    print(f"  Price feed:   Binance public API (real-time)")
+    print(f"  Price model:  synthetic math-based paper simulation")
     if DASHBOARD_PASSWORD:
         print(f"  🔒 Auth:      ON (user='{DASHBOARD_USERNAME}')")
     else:

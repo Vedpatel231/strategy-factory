@@ -527,7 +527,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <div>
         <div class="card-label">Simulator Status</div>
         <div id="alpacaConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);">⚪ Not Initialized</div>
-        <div id="alpacaConnMsg" class="card-sub">Click Connect to initialize the $1,000 paper account (real Binance prices)</div>
+        <div id="alpacaConnMsg" class="card-sub">Click Connect to initialize the $1,000 paper account (synthetic math-based pricing)</div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <button class="filter-btn" style="padding:12px 22px;font-weight:600;" onclick="alpacaConnect()">🔌 Connect</button>
@@ -660,7 +660,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   </div>
 
   <div class="disclaimer">
-    ⚠️ Paper trading only — no real money is involved. Starts with $1,000 virtual capital. Uses real-time Binance crypto prices for valuation, but all orders are simulated locally. The "expected monthly return" on the Portfolio page is a projection from historical backtests, not a guarantee.
+    ⚠️ Paper trading only — no real money is involved. Starts with $1,000 virtual capital. Positions are valued with an internal math model, and all orders are simulated locally. The "expected monthly return" on the Portfolio page is a projection from historical backtests, not a guarantee.
   </div>
 </div>
 

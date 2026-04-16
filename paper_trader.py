@@ -2,7 +2,7 @@
 Strategy Factory — Paper Trader
 
 Takes portfolio allocations produced by daily_runner.py and executes them as
-simulated orders via PaperBroker (local simulator using real Binance prices).
+simulated orders via PaperBroker (local simulator using synthetic math-based pricing).
 
 Uses dashboard-configured starting capital (default $1,000). No external broker.
 """
@@ -19,6 +19,14 @@ logger = logging.getLogger("paper_trader")
 
 PAPER_TRADE_HISTORY = os.path.join(config.DATA_DIR, "paper_trade_runs.json")
 REBALANCE_THRESHOLD_PCT = 15.0  # only trade if position drifts >15% from target
+
+
+def allocation_monthly_return_pct(alloc):
+    allocation_usd = float(alloc.get("allocation_usd", 0) or 0)
+    expected_monthly_return = float(alloc.get("expected_monthly_return", 0) or 0)
+    if allocation_usd <= 0:
+        return 0.0
+    return (expected_monthly_return / allocation_usd) * 100.0
 
 
 class PaperTrader:
@@ -90,12 +98,13 @@ class PaperTrader:
             bot_name = alloc.get("bot_name", "?")
             pair = alloc.get("pair", "")
             dollar_alloc = alloc.get("allocation_usd", 0) * scale
+            model_monthly_return_pct = allocation_monthly_return_pct(alloc)
 
             sym = normalize_symbol(pair)
             if not sym:
                 results["skipped"].append({
                     "bot": bot_name, "pair": pair,
-                    "reason": f"Symbol {pair} not supported by simulator (Binance spot)."
+                    "reason": f"Symbol {pair} not supported by simulator."
                 })
                 continue
 
@@ -127,6 +136,16 @@ class PaperTrader:
             side = "buy" if diff > 0 else "sell"
             order_usd = abs(diff)
 
+            if side == "buy":
+                available_cash = float(self.client.state.get("cash", 0))
+                order_usd = min(order_usd, available_cash)
+                if order_usd < 1.0:
+                    results["skipped"].append({
+                        "bot": bot_name, "pair": sym,
+                        "reason": f"Remaining cash ${available_cash:.2f} below $1 minimum"
+                    })
+                    continue
+
             if dry_run:
                 results["orders"].append({
                     "bot": bot_name, "symbol": sym, "side": side,
@@ -136,7 +155,12 @@ class PaperTrader:
                     "current_usd": current_value,
                 })
             else:
-                order_result = self.client.submit_order(sym, order_usd, side=side)
+                order_result = self.client.submit_order(
+                    sym,
+                    order_usd,
+                    side=side,
+                    model_monthly_return_pct=model_monthly_return_pct if side == "buy" else None,
+                )
                 order_result["bot"] = bot_name
                 order_result["target_usd"] = dollar_alloc
                 order_result["current_usd"] = current_value
@@ -150,7 +174,7 @@ class PaperTrader:
                         "symbol": sym, "side": "close",
                         "notional": pos["market_value"],
                         "status": "DRY_RUN_CLOSE",
-                        "reason": "No longer in target portfolio",
+                    "reason": "No longer in target portfolio",
                     })
                 else:
                     close_result = self.client.close_position(sym)
@@ -158,10 +182,11 @@ class PaperTrader:
                     close_result["side"] = "close"
                     results["orders"].append(close_result)
 
-        buys = sum(1 for o in results["orders"] if o.get("side") == "buy")
-        sells = sum(1 for o in results["orders"] if o.get("side") == "sell")
-        closes = sum(1 for o in results["orders"] if o.get("side") == "close")
-        total_deployed = sum(o.get("notional", 0) for o in results["orders"] if o.get("side") == "buy")
+        successful_orders = [o for o in results["orders"] if not o.get("error")]
+        buys = sum(1 for o in successful_orders if o.get("side") == "buy")
+        sells = sum(1 for o in successful_orders if o.get("side") == "sell")
+        closes = sum(1 for o in successful_orders if o.get("side") == "close")
+        total_deployed = sum(o.get("notional", 0) for o in successful_orders if o.get("side") == "buy")
 
         results["summary"] = {
             "total_orders": len(results["orders"]),

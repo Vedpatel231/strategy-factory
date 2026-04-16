@@ -1,8 +1,8 @@
 """
 Strategy Factory — Local Paper Trading Broker
 
-Self-contained paper trading simulator. Starts with $1,000 cash, fetches real
-crypto prices from Binance for valuation, and persists state to
+Self-contained paper trading simulator. Starts with $1,000 cash, marks
+positions using a synthetic math model, and persists state to
 `data/paper_account.json`.
 
 No external broker account required. Replaces the Alpaca integration.
@@ -19,18 +19,16 @@ import json
 import uuid
 import logging
 import datetime
-import urllib.request
-import urllib.error
 
 logger = logging.getLogger("paper_broker")
 
 _DATA_DIR = os.environ.get("STRATEGY_FACTORY_DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 STATE_FILE = os.path.join(_DATA_DIR, "paper_account.json")
 DEFAULT_STARTING_BALANCE = 1000.0
-BINANCE_BASE = "https://api.binance.com"
+DEFAULT_SYNTHETIC_PRICE = 100.0
+MONTH_SECONDS = 30 * 24 * 60 * 60
 
-# All symbols our bots trade — normalized to Binance spot format
-# (BTC/USDT → BTCUSDT)
+# All symbols our bots trade — normalized to a simple internal symbol format.
 SUPPORTED_SYMBOLS = {
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT",
     "DOTUSDT", "AVAXUSDT", "LINKUSDT", "MATICUSDT", "DOGEUSDT", "UNIUSDT",
@@ -40,7 +38,7 @@ SUPPORTED_SYMBOLS = {
 
 
 def normalize_symbol(pair):
-    """'BTC/USDT' or 'BTCUSD' → 'BTCUSDT' (Binance format). Returns None if unsupported."""
+    """'BTC/USDT' or 'BTCUSD' → 'BTCUSDT'. Returns None if unsupported."""
     if not pair:
         return None
     p = pair.upper().replace("/", "")
@@ -49,45 +47,24 @@ def normalize_symbol(pair):
     return p if p in SUPPORTED_SYMBOLS else None
 
 
-# ── PRICE FETCH ─────────────────────────────────────────────────────────
-_price_cache = {}
-_price_cache_ts = {}
-PRICE_CACHE_SECS = 5  # short cache to avoid hammering Binance during UI refreshes
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
-def get_binance_price(symbol, timeout=5):
-    """Fetch latest spot price for a Binance symbol (e.g. 'BTCUSDT')."""
-    now = datetime.datetime.now().timestamp()
-    cached_ts = _price_cache_ts.get(symbol, 0)
-    if symbol in _price_cache and (now - cached_ts) < PRICE_CACHE_SECS:
-        return _price_cache[symbol]
-    url = f"{BINANCE_BASE}/api/v3/ticker/price?symbol={symbol}"
+def parse_iso(ts):
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "StrategyFactory/3.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            price = float(data["price"])
-            _price_cache[symbol] = price
-            _price_cache_ts[symbol] = now
-            return price
-    except urllib.error.HTTPError as e:
-        if e.code == 400:
-            logger.warning(f"Binance: symbol {symbol} not found")
-            return None
-        if e.code == 451:
-            raise RuntimeError(
-                "Binance price API is blocked from this deployment environment (HTTP 451). "
-                "Paper trading cannot fetch live prices there."
-            ) from e
-        raise
+        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt
     except Exception as e:
-        logger.warning(f"Price fetch failed for {symbol}: {e}")
-        return None
+        logger.warning(f"Could not parse timestamp '{ts}': {e}")
+        return utc_now()
 
 
 # ── BROKER ──────────────────────────────────────────────────────────────
 class PaperBroker:
-    """Local paper trading simulator with persistence."""
+    """Local paper trading simulator with synthetic mark-to-model pricing."""
 
     def __init__(self, starting_balance=DEFAULT_STARTING_BALANCE):
         self.starting_balance = starting_balance
@@ -103,14 +80,15 @@ class PaperBroker:
         return self._fresh_state()
 
     def _fresh_state(self):
+        now = utc_now().isoformat()
         return {
             "account_number": "PAPER-" + str(uuid.uuid4())[:8].upper(),
             "starting_balance": self.starting_balance,
             "cash": self.starting_balance,
             "realized_pl": 0.0,
-            "positions": {},       # symbol -> {qty, cost_basis, avg_entry_price, opened_at}
+            "positions": {},       # symbol -> synthetic position state
             "orders": [],          # newest last
-            "created_at": datetime.datetime.utcnow().isoformat(),
+            "created_at": now,
             "reset_count": 0,
         }
 
@@ -118,6 +96,41 @@ class PaperBroker:
         os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
         with open(STATE_FILE, "w") as f:
             json.dump(self.state, f, indent=2, default=str)
+
+    def _default_price(self, symbol):
+        seed = sum(ord(c) for c in symbol) % 75
+        return round(DEFAULT_SYNTHETIC_PRICE + seed, 4)
+
+    def _normalize_model_return(self, value):
+        try:
+            monthly_pct = float(value)
+        except (TypeError, ValueError):
+            monthly_pct = 0.0
+        return max(-95.0, min(300.0, monthly_pct))
+
+    def _mark_position(self, symbol, pos, as_of=None):
+        now = as_of or utc_now()
+        current_price = float(pos.get("current_price") or pos.get("avg_entry_price") or self._default_price(symbol))
+        last_marked = parse_iso(pos.get("last_marked_at") or pos.get("opened_at") or now.isoformat())
+        elapsed = max(0.0, (now - last_marked).total_seconds())
+        monthly_pct = self._normalize_model_return(pos.get("model_monthly_return_pct", 0.0))
+        if elapsed > 0:
+            growth_factor = max(0.01, 1 + (monthly_pct / 100.0))
+            current_price *= growth_factor ** (elapsed / MONTH_SECONDS)
+        pos["current_price"] = current_price
+        pos["last_marked_at"] = now.isoformat()
+        pos["model_monthly_return_pct"] = monthly_pct
+        return pos
+
+    def _mark_all_positions(self):
+        now = utc_now()
+        changed = False
+        for sym, pos in self.state["positions"].items():
+            before = pos.get("last_marked_at")
+            self._mark_position(sym, pos, as_of=now)
+            changed = changed or before != pos.get("last_marked_at")
+        if changed:
+            self._save()
 
     # ── ACCOUNT ──────────────────────────────────────────────────────────
     def get_account(self):
@@ -154,11 +167,10 @@ class PaperBroker:
 
     # ── POSITIONS ────────────────────────────────────────────────────────
     def get_positions(self):
+        self._mark_all_positions()
         out = []
         for sym, pos in self.state["positions"].items():
-            current_price = get_binance_price(sym)
-            if current_price is None:
-                current_price = pos.get("avg_entry_price", 0)
+            current_price = float(pos.get("current_price") or pos.get("avg_entry_price") or self._default_price(sym))
             qty = pos["qty"]
             cost_basis = pos["cost_basis"]
             market_value = round(qty * current_price, 4)
@@ -174,6 +186,7 @@ class PaperBroker:
                 "unrealized_pl": unrealized_pl,
                 "unrealized_plpc": round(unrealized_plpc, 2),
                 "side": "long",
+                "model_monthly_return_pct": round(pos.get("model_monthly_return_pct", 0.0), 2),
             })
         return out
 
@@ -191,43 +204,60 @@ class PaperBroker:
         sym = normalize_symbol(symbol)
         if not sym:
             return None
-        return get_binance_price(sym)
+        pos = self.state["positions"].get(sym)
+        if pos:
+            self._mark_position(sym, pos)
+            self._save()
+            return round(pos.get("current_price", self._default_price(sym)), 4)
+        return self._default_price(sym)
 
     # ── ORDERS ───────────────────────────────────────────────────────────
-    def submit_order(self, symbol, notional_usd, side="buy"):
-        """Simulate a market order at current Binance price."""
+    def submit_order(self, symbol, notional_usd, side="buy", model_monthly_return_pct=None):
+        """Simulate a market order using synthetic prices and a monthly return model."""
         sym = normalize_symbol(symbol)
         if not sym:
             return {"error": f"Unsupported symbol: {symbol}", "symbol": symbol, "notional": notional_usd}
         if notional_usd <= 0:
             return {"error": "Notional must be positive", "symbol": sym}
 
-        price = get_binance_price(sym)
-        if price is None:
-            return {"error": f"Could not fetch price for {sym}", "symbol": sym}
-
         side = side.lower()
         order_id = "o-" + uuid.uuid4().hex[:10]
-        now = datetime.datetime.utcnow().isoformat()
+        now = utc_now().isoformat()
+        monthly_model = self._normalize_model_return(model_monthly_return_pct)
 
         if side == "buy":
+            price = self.get_latest_price(sym)
             if notional_usd > self.state["cash"] + 0.01:
                 return {"error": f"Insufficient cash: have ${self.state['cash']:.2f}, need ${notional_usd:.2f}", "symbol": sym}
             qty = notional_usd / price
             self.state["cash"] -= notional_usd
             pos = self.state["positions"].get(sym)
             if pos:
+                self._mark_position(sym, pos)
+                existing_value = pos["qty"] * pos.get("current_price", price)
                 new_qty = pos["qty"] + qty
                 new_cost = pos["cost_basis"] + notional_usd
                 pos["qty"] = new_qty
                 pos["cost_basis"] = new_cost
                 pos["avg_entry_price"] = new_cost / new_qty if new_qty else 0
+                pos["current_price"] = price
+                if model_monthly_return_pct is not None:
+                    total_weight = existing_value + notional_usd
+                    if total_weight > 0:
+                        pos["model_monthly_return_pct"] = (
+                            (pos.get("model_monthly_return_pct", 0.0) * existing_value)
+                            + (monthly_model * notional_usd)
+                        ) / total_weight
+                pos["last_marked_at"] = now
             else:
                 self.state["positions"][sym] = {
                     "qty": qty,
                     "avg_entry_price": price,
                     "cost_basis": notional_usd,
                     "opened_at": now,
+                    "last_marked_at": now,
+                    "current_price": price,
+                    "model_monthly_return_pct": monthly_model,
                 }
             order = {
                 "id": order_id, "symbol": sym, "side": "buy",
@@ -240,6 +270,8 @@ class PaperBroker:
             pos = self.state["positions"].get(sym)
             if not pos:
                 return {"error": f"No position in {sym} to sell", "symbol": sym}
+            self._mark_position(sym, pos)
+            price = pos.get("current_price", self._default_price(sym))
             sell_qty = min(pos["qty"], notional_usd / price)
             sell_notional = sell_qty * price
             # Realize pro-rata cost basis
@@ -251,6 +283,8 @@ class PaperBroker:
             pos["cost_basis"] -= pro_rata_cost
             if pos["qty"] <= 1e-9:
                 del self.state["positions"][sym]
+            else:
+                pos["last_marked_at"] = now
             order = {
                 "id": order_id, "symbol": sym, "side": "sell",
                 "notional": round(sell_notional, 2), "qty": round(sell_qty, 8),
@@ -275,9 +309,8 @@ class PaperBroker:
         pos = self.state["positions"].get(sym)
         if not pos:
             return {"error": f"No position in {sym}"}
-        price = get_binance_price(sym)
-        if price is None:
-            return {"error": f"Could not fetch price for {sym}"}
+        self._mark_position(sym, pos)
+        price = pos.get("current_price", self._default_price(sym))
         notional = pos["qty"] * price
         return self.submit_order(sym, notional, side="sell")
 
