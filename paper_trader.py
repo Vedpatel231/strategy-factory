@@ -12,11 +12,12 @@ import json
 import logging
 import datetime
 
+import config
 from paper_broker import PaperBroker, normalize_symbol, SUPPORTED_SYMBOLS
 
 logger = logging.getLogger("paper_trader")
 
-PAPER_TRADE_HISTORY = os.path.join(os.path.dirname(__file__), "data", "paper_trade_runs.json")
+PAPER_TRADE_HISTORY = os.path.join(config.DATA_DIR, "paper_trade_runs.json")
 REBALANCE_THRESHOLD_PCT = 15.0  # only trade if position drifts >15% from target
 
 

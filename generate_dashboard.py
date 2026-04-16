@@ -1612,6 +1612,15 @@ async function alpacaResetAccount() {{
   }}
 }}
 
+function escapeHtml(value) {{
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}}
+
 // ── AUTO-TRADING ───────────────────────────────────────────────
 async function autoRefresh() {{
   try {{
@@ -1642,7 +1651,8 @@ async function autoRefresh() {{
     var lr = s.last_result;
     if (lr) {{
       var color = lr.status === 'ok' ? 'var(--lime)' : 'var(--red)';
-      document.getElementById('autoLastResult').innerHTML = '<span style="color:' + color + ';">' + lr.status.toUpperCase() + '</span>';
+      var detail = lr.error ? '<div style="font-size:0.72em;color:var(--text-dim);margin-top:6px;text-transform:none;letter-spacing:0;">' + escapeHtml(String(lr.error)) + '</div>' : '';
+      document.getElementById('autoLastResult').innerHTML = '<span style="color:' + color + ';">' + lr.status.toUpperCase() + '</span>' + detail;
     }}
     // Recent runs log
     var runs = s.recent_runs || [];
@@ -1656,6 +1666,9 @@ async function autoRefresh() {{
         if (r.steps && r.steps.trade && r.steps.trade.summary) {{
           var s2 = r.steps.trade.summary;
           summary = ' · ' + (s2.buys || 0) + 'B ' + (s2.sells || 0) + 'S ' + (s2.closes || 0) + 'C · equity $' + (r.steps.trade.equity_after || 0).toFixed(2);
+        }}
+        if (!summary && r.error) {{
+          summary = ' · ' + escapeHtml(String(r.error));
         }}
         logHtml += '<div style="padding:3px 0;color:var(--text-dim);">' + time + ' <span style="color:' + statusColor + ';">' + r.status.toUpperCase() + '</span>' + summary + '</div>';
       }});

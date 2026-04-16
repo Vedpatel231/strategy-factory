@@ -23,10 +23,13 @@ import threading
 import subprocess
 import datetime
 
+import config
+
 logger = logging.getLogger("auto_trader")
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get("STRATEGY_FACTORY_DATA_DIR", os.path.join(BASE, "data"))
+DATA_DIR = config.DATA_DIR
+REPORT_DIR = config.REPORT_DIR
 FLAG_FILE = os.path.join(DATA_DIR, "auto_trade.enabled")
 LOG_FILE = os.path.join(DATA_DIR, "auto_trade.log.json")
 DEFAULT_INTERVAL_MIN = int(os.environ.get("AUTO_TRADE_INTERVAL_MIN", "30"))
@@ -158,7 +161,7 @@ class AutoTrader:
 
         # Step 2: Load fresh portfolio, execute rebalance
         try:
-            portfolio_path = os.path.join(BASE, "reports", "latest_portfolio.json")
+            portfolio_path = os.path.join(REPORT_DIR, "latest_portfolio.json")
             with open(portfolio_path) as f:
                 portfolio = json.load(f)
             # Import lazily so sandbox without flask/etc still loads

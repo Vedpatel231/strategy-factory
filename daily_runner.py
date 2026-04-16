@@ -348,7 +348,7 @@ def _write_last_refresh(**meta):
             "display_est": human_est,
             **meta,
         }
-        path = os.path.join(os.path.dirname(__file__), "data", "last_refresh.json")
+        path = os.path.join(config.DATA_DIR, "last_refresh.json")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             json.dump(payload, f, indent=2, default=str)
