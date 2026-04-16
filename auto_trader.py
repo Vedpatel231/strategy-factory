@@ -35,6 +35,11 @@ LOG_FILE = os.path.join(DATA_DIR, "auto_trade.log.json")
 DEFAULT_INTERVAL_MIN = int(os.environ.get("AUTO_TRADE_INTERVAL_MIN", "30"))
 
 
+def utc_now():
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
 class AutoTrader:
     """Background thread that refreshes analysis + rebalances every N minutes."""
 
@@ -126,7 +131,7 @@ class AutoTrader:
 
     def _run_once(self):
         """One full cycle: re-analyze, then rebalance."""
-        start_ts = datetime.datetime.utcnow()
+        start_ts = utc_now()
         logger.info("🤖 Auto-trade cycle start")
 
         entry = {
@@ -179,7 +184,7 @@ class AutoTrader:
             entry["status"] = "trade_failed"
             entry["error"] = str(e)
 
-        entry["duration_sec"] = (datetime.datetime.utcnow() - start_ts).total_seconds()
+        entry["duration_sec"] = (utc_now() - start_ts).total_seconds()
         self._last_run = start_ts.isoformat()
         self._last_result = entry
         self._last_error = None

@@ -968,13 +968,34 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 // ── Last Refresh Badge ─────────────────────────────────────────
 function humanAgo(iso) {{
   try {{
-    var t = new Date(iso).getTime();
+    var t = parseUtcIso(iso).getTime();
     var secs = Math.floor((Date.now() - t) / 1000);
     if (secs < 60) return secs + 's ago';
     if (secs < 3600) return Math.floor(secs/60) + 'm ago';
     if (secs < 86400) return Math.floor(secs/3600) + 'h ago';
     return Math.floor(secs/86400) + 'd ago';
   }} catch (e) {{ return '?'; }}
+}}
+
+function parseUtcIso(iso) {{
+  if (!iso) return new Date(NaN);
+  var normalized = /([zZ]|[+-]\d\d:\d\d)$/.test(iso) ? iso : iso + 'Z';
+  return new Date(normalized);
+}}
+
+function formatNyTime(iso) {{
+  try {{
+    return new Intl.DateTimeFormat('en-US', {{
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+      timeZoneName: 'short'
+    }}).format(parseUtcIso(iso));
+  }} catch (e) {{
+    return '?';
+  }}
 }}
 
 async function loadLastRefresh() {{
@@ -991,7 +1012,7 @@ async function loadLastRefresh() {{
       trigEl.style.display = 'none';
       return;
     }}
-    var ageMins = (Date.now() - new Date(d.timestamp_utc).getTime()) / 60000;
+    var ageMins = (Date.now() - parseUtcIso(d.timestamp_utc).getTime()) / 60000;
     var stateClass = ageMins < 1440 ? 'fresh' : 'stale';
     badge.className = 'last-refresh-badge ' + stateClass;
     timeEl.innerHTML = (d.display_est || 'unknown') + ' <span style="color:var(--text-dim);font-family:Inter,sans-serif;font-size:0.85em;">(' + humanAgo(d.timestamp_utc) + ')</span>';
@@ -1646,8 +1667,8 @@ async function autoRefresh() {{
       btn.style.borderColor = 'var(--lime)';
     }}
     document.getElementById('autoInterval').textContent = (s.interval_min || 30) + ' min';
-    document.getElementById('autoLastRun').textContent = s.last_run ? new Date(s.last_run).toLocaleTimeString() + ' (' + humanAgo(s.last_run) + ')' : '—';
-    document.getElementById('autoNextRun').textContent = s.next_run ? new Date(s.next_run).toLocaleTimeString() : '—';
+    document.getElementById('autoLastRun').textContent = s.last_run ? formatNyTime(s.last_run) + ' (' + humanAgo(s.last_run) + ')' : '—';
+    document.getElementById('autoNextRun').textContent = s.next_run ? formatNyTime(s.next_run) : '—';
     var lr = s.last_result;
     if (lr) {{
       var color = lr.status === 'ok' ? 'var(--lime)' : 'var(--red)';
@@ -1661,7 +1682,7 @@ async function autoRefresh() {{
       logHtml += '<div style="max-height:160px;overflow:auto;background:rgba(10,14,39,0.3);border-radius:8px;padding:10px;font-family:Courier New,monospace;font-size:0.78em;">';
       runs.slice().reverse().forEach(function(r) {{
         var statusColor = r.status === 'ok' ? 'var(--lime)' : r.status === 'running' ? 'var(--cyan)' : 'var(--red)';
-        var time = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : '?';
+        var time = r.timestamp ? formatNyTime(r.timestamp) : '?';
         var summary = '';
         if (r.steps && r.steps.trade && r.steps.trade.summary) {{
           var s2 = r.steps.trade.summary;

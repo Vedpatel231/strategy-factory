@@ -74,6 +74,11 @@ def get_binance_price(symbol, timeout=5):
         if e.code == 400:
             logger.warning(f"Binance: symbol {symbol} not found")
             return None
+        if e.code == 451:
+            raise RuntimeError(
+                "Binance price API is blocked from this deployment environment (HTTP 451). "
+                "Paper trading cannot fetch live prices there."
+            ) from e
         raise
     except Exception as e:
         logger.warning(f"Price fetch failed for {symbol}: {e}")
