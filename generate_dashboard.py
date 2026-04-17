@@ -1342,7 +1342,7 @@ function humanAgo(iso) {{
 
 function parseUtcIso(iso) {{
   if (!iso) return new Date(NaN);
-  var normalized = /([zZ]|[+-]\d\d:\d\d)$/.test(iso) ? iso : iso + 'Z';
+  var normalized = /([zZ]|[+-][0-9][0-9]:[0-9][0-9])$/.test(iso) ? iso : iso + 'Z';
   return new Date(normalized);
 }}
 
@@ -1399,31 +1399,30 @@ async function loadOverviewAccount() {{
   var setText = function(id, val) {{ var el = document.getElementById(id); if(el) {{ el.textContent = val; autoSizeCardValue(el); }} }};
   try {{
     // Try Alpaca real account first
-    var r = await fetch('/api/alpaca/account');
-    var a = await r.json();
-    if (a && !a.error && a.equity !== undefined) {{
-      setText('ovEquity', fmt(a.equity));
-      setText('ovCash', fmt(a.cash));
-      setText('ovStart', fmt(a.last_equity || a.equity));
-      var pl = a.total_pl || 0;
-      var plPct = a.total_pl_pct || 0;
-      var plEl = document.getElementById('ovTotalPL');
-      if (plEl) {{
-        plEl.textContent = (pl >= 0 ? '+' : '') + fmt(pl);
-        plEl.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
-      }}
-      var plSub = document.getElementById('ovTotalPLsub');
-      if (plSub) plSub.textContent = (plPct >= 0 ? '+' : '') + plPct.toFixed(2) + '% today (Alpaca live)';
-      // Position count from Alpaca
-      var pr = await fetch('/api/alpaca/positions');
-      var pd = await pr.json();
+    var a = await apiGet('/api/alpaca/account');
+    setText('ovEquity', fmt(a.equity));
+    setText('ovCash', fmt(a.buying_power !== undefined ? a.buying_power : a.cash));
+    setText('ovStart', fmt(a.last_equity || a.equity));
+    var pl = a.total_pl || 0;
+    var plPct = a.total_pl_pct || 0;
+    var plEl = document.getElementById('ovTotalPL');
+    if (plEl) {{
+      plEl.textContent = (pl >= 0 ? '+' : '') + fmt(pl);
+      plEl.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
+      autoSizeCardValue(plEl);
+    }}
+    var plSub = document.getElementById('ovTotalPLsub');
+    if (plSub) plSub.textContent = (plPct >= 0 ? '+' : '') + plPct.toFixed(2) + '% today (Alpaca live)';
+    try {{
+      var pd = await apiGet('/api/alpaca/positions');
       if (pd.summary) setText('ovPositions', pd.summary.count);
+    }} catch (posErr) {{
+      setText('ovPositions', '—');
     }}
   }} catch (e) {{
     // Alpaca not available — try simulator as fallback
     try {{
-      var r2 = await fetch('/api/broker/connect');
-      var d2 = await r2.json();
+      var d2 = await apiGet('/api/broker/connect');
       if (d2.connected && d2.account) {{
         var a2 = d2.account;
         setText('ovEquity', fmt(a2.equity));
@@ -1433,6 +1432,15 @@ async function loadOverviewAccount() {{
         if (plEl2) {{
           plEl2.textContent = (a2.total_pl >= 0 ? '+' : '') + fmt(a2.total_pl);
           plEl2.style.color = a2.total_pl >= 0 ? 'var(--lime)' : 'var(--red)';
+          autoSizeCardValue(plEl2);
+        }}
+        var plSub2 = document.getElementById('ovTotalPLsub');
+        if (plSub2) plSub2.textContent = (a2.total_pl_pct >= 0 ? '+' : '') + Number(a2.total_pl_pct || 0).toFixed(2) + '% total (simulator fallback)';
+        try {{
+          var pd2 = await apiGet('/api/broker/positions');
+          if (pd2.summary) setText('ovPositions', pd2.summary.count);
+        }} catch (posErr2) {{
+          setText('ovPositions', '—');
         }}
       }}
     }} catch(e2) {{}}
@@ -1546,8 +1554,8 @@ function sortTable(col) {{
   rows.sort(function(a, b) {{
     var aText = a.getElementsByTagName('td')[col].textContent.trim();
     var bText = b.getElementsByTagName('td')[col].textContent.trim();
-    var aNum = parseFloat(aText.replace(/[^\\d.\\-]/g, ''));
-    var bNum = parseFloat(bText.replace(/[^\\d.\\-]/g, ''));
+    var aNum = parseFloat(aText.replace(/[^0-9.-]/g, ''));
+    var bNum = parseFloat(bText.replace(/[^0-9.-]/g, ''));
     if (!isNaN(aNum) && !isNaN(bNum)) return asc ? aNum - bNum : bNum - aNum;
     return asc ? aText.localeCompare(bText) : bText.localeCompare(aText);
   }});
@@ -2318,7 +2326,7 @@ function ganttSetDefaultDates() {{
 
 async function ganttLoad() {{
   try {{
-    var data = await apiGet('/api/alpaca/orders?limit=500');
+    var data = await apiGet('/api/alpaca/orders?limit=500&status=closed');
     if (!data.orders || data.orders.length === 0) return;
     window._ganttOrders = data.orders;
     ganttRender();
@@ -2340,7 +2348,8 @@ function ganttRender() {{
   // Group orders by symbol, build activity spans
   var symbols = {{}};
   orders.forEach(function(o) {{
-    if (!o.symbol || !o.submitted_at) return;
+    if (!o.symbol || (!o.filled_at && !o.submitted_at)) return;
+    if ((o.filled_qty || 0) <= 0) return;
     if (!symbols[o.symbol]) symbols[o.symbol] = [];
     symbols[o.symbol].push(o);
   }});
@@ -2348,11 +2357,15 @@ function ganttRender() {{
   // Build spans: buy opens a span, sell closes it
   var spans = {{}};
   Object.keys(symbols).forEach(function(sym) {{
-    var symOrders = symbols[sym].sort(function(a,b) {{ return a.submitted_at.localeCompare(b.submitted_at); }});
+    var symOrders = symbols[sym].sort(function(a,b) {{
+      var at = a.filled_at || a.submitted_at || '';
+      var bt = b.filled_at || b.submitted_at || '';
+      return at.localeCompare(bt);
+    }});
     spans[sym] = [];
     var currentSpan = null;
     symOrders.forEach(function(o) {{
-      var t = new Date(o.submitted_at);
+      var t = new Date(o.filled_at || o.submitted_at);
       if (o.side === 'buy') {{
         if (!currentSpan) {{
           currentSpan = {{ start: t, entryPrice: o.filled_avg_price || 0, symbol: sym }};
@@ -2418,12 +2431,35 @@ var calMonth = new Date().getMonth(); // 0-indexed
 
 async function calLoadData() {{
   try {{
-    var resp = await fetch('/api/broker/daily-pnl');
-    var json = await resp.json();
+    var json = await apiGet('/api/alpaca/daily-pnl');
     calData = json.snapshots || {{}};
-    calRender();
   }} catch (e) {{
-    calRender(); // render empty
+    try {{
+      var fallback = await apiGet('/api/broker/daily-pnl');
+      calData = fallback.snapshots || {{}};
+    }} catch (e2) {{
+      calData = {{}};
+    }}
+  }}
+  calRender();
+}}
+
+function calExtractChange(snap, prevSnap) {{
+  try {{
+    if (snap && snap.day_pl !== undefined) {{
+      return {{
+        pnl: Number(snap.day_pl || 0),
+        pct: Number(snap.day_pl_pct || 0),
+        equity: Number(snap.equity || 0),
+      }};
+    }}
+    var prevEquity = (prevSnap && prevSnap.equity !== undefined) ? Number(prevSnap.equity || 0) : Number((snap && snap.starting_balance) || 1000);
+    var equity = Number((snap && snap.equity) || 0);
+    var dayPnl = equity - prevEquity;
+    var dayPct = prevEquity > 0 ? (dayPnl / prevEquity * 100) : 0;
+    return {{ pnl: dayPnl, pct: dayPct, equity: equity }};
+  }} catch (e) {{
+    return {{ pnl: 0, pct: 0, equity: 0 }};
   }}
 }}
 
@@ -2463,14 +2499,8 @@ function calRender() {{
   for (var i = 0; i < sortedDates.length; i++) {{
     var d = sortedDates[i];
     var snap = calData[d];
-    var prevEquity = snap.starting_balance || 1000;
-    // Find previous day's equity
-    if (i > 0) {{
-      prevEquity = calData[sortedDates[i-1]].equity || prevEquity;
-    }}
-    var dayPnl = (snap.equity || 0) - prevEquity;
-    var dayPct = prevEquity > 0 ? (dayPnl / prevEquity * 100) : 0;
-    dailyChanges[d] = {{ pnl: dayPnl, pct: dayPct, equity: snap.equity }};
+    var prevSnap = i > 0 ? calData[sortedDates[i-1]] : null;
+    dailyChanges[d] = calExtractChange(snap, prevSnap);
   }}
 
   // Empty cells before first day

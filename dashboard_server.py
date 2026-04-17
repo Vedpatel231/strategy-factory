@@ -422,6 +422,21 @@ def alpaca_orders():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/alpaca/daily-pnl")
+@require_auth
+def alpaca_daily_pnl():
+    """Return Alpaca daily equity history for the overview calendar."""
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    try:
+        period = request.args.get("period", "1A")
+        return jsonify({"snapshots": client.get_daily_pnl(period=period)})
+    except Exception as e:
+        logger.error(f"Alpaca daily P&L failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/alpaca/execute", methods=["POST"])
 @require_auth
 def alpaca_execute():

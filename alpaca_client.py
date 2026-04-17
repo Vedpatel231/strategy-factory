@@ -203,6 +203,50 @@ class AlpacaPaperClient:
         orders = self._trading.get_orders(req)
         return [self._format_order(o) for o in orders]
 
+    def get_daily_pnl(self, period="1A"):
+        """Return daily equity snapshots suitable for the dashboard calendar."""
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+
+        history = self._trading.get_portfolio_history(
+            GetPortfolioHistoryRequest(period=period, timeframe="1D")
+        )
+
+        timestamps = list(getattr(history, "timestamp", []) or [])
+        equities = list(getattr(history, "equity", []) or [])
+        profit_loss = list(getattr(history, "profit_loss", []) or [])
+        profit_loss_pct = list(getattr(history, "profit_loss_pct", []) or [])
+        base_value = float(getattr(history, "base_value", 0) or 0)
+
+        snapshots = {}
+        prev_equity = None
+        for idx, ts in enumerate(timestamps):
+            try:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            except Exception:
+                continue
+
+            date_key = dt.strftime("%Y-%m-%d")
+            equity = float(equities[idx]) if idx < len(equities) and equities[idx] is not None else 0.0
+            total_pl = float(profit_loss[idx]) if idx < len(profit_loss) and profit_loss[idx] is not None else 0.0
+            total_pl_pct = float(profit_loss_pct[idx]) * 100 if idx < len(profit_loss_pct) and profit_loss_pct[idx] is not None else 0.0
+            day_pl = 0.0 if prev_equity is None else equity - prev_equity
+            day_pl_pct = 0.0 if prev_equity in (None, 0) else (day_pl / prev_equity) * 100.0
+
+            snapshots[date_key] = {
+                "date": date_key,
+                "recorded_at": dt.isoformat(),
+                "equity": round(equity, 2),
+                "starting_balance": round(base_value, 2),
+                "total_pl": round(total_pl, 2),
+                "total_pl_pct": round(total_pl_pct, 2),
+                "day_pl": round(day_pl, 2),
+                "day_pl_pct": round(day_pl_pct, 2),
+                "source": "alpaca",
+            }
+            prev_equity = equity
+
+        return snapshots
+
     # ── CLOSE ───────────────────────────────────────────────────────────
     def close_position(self, symbol):
         try:
