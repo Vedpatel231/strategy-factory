@@ -1495,13 +1495,21 @@ async function updatePaperAccountFromAPI() {{
   }} catch(e) {{}}
 }}
 
-// Global tick — runs every 30 seconds, refreshes the ACTIVE page
+// Global tick — 30s for most pages, 10s fast-tick for Alpaca Live (real market data)
 var _liveTickCount = 0;
 function liveTick() {{
   _liveTickCount++;
   refreshPageData(_currentPage);
 }}
 setInterval(liveTick, 30000);
+
+// Fast tick for Alpaca Live — real prices move constantly
+function alpacaFastTick() {{
+  if (_currentPage === 'alpaca-live' && alpLiveConnected) {{
+    alpLiveRefreshPositions();
+  }}
+}}
+setInterval(alpacaFastTick, 10000);
 
 // ── Quantum Filter ──────────────────────────────────────────────
 function filterQuantum(verdict) {{
