@@ -2299,9 +2299,12 @@ async function alpLiveAutoReconnect() {{
           btn.disabled = true;
         }}
         document.getElementById('alpLiveAccountSection').style.display = 'block';
+        document.getElementById('alpLiveNotConfigured').style.display = 'none';
+        document.getElementById('alpLiveConnCard').style.display = 'block';
         alpLiveUpdateAccount(connData.account);
         alpLiveRefreshPositions();
         alpLiveRefreshOrders();
+        alpAutoLoadStatus();
       }}
     }}
   }} catch(e) {{
@@ -2366,11 +2369,12 @@ function ganttRender() {{
     var currentSpan = null;
     symOrders.forEach(function(o) {{
       var t = new Date(o.filled_at || o.submitted_at);
-      if (o.side === 'buy') {{
+      var oSide = (o.side || '').toLowerCase().split('.').pop();
+      if (oSide === 'buy') {{
         if (!currentSpan) {{
           currentSpan = {{ start: t, entryPrice: o.filled_avg_price || 0, symbol: sym }};
         }}
-      }} else if (o.side === 'sell' && currentSpan) {{
+      }} else if (oSide === 'sell' && currentSpan) {{
         currentSpan.end = t;
         currentSpan.exitPrice = o.filled_avg_price || 0;
         spans[sym].push(currentSpan);
@@ -2572,8 +2576,23 @@ function calRender() {{
     document.getElementById('calSumWorst').textContent = worstDay ? ((worstDay.pnl >= 0 ? '+$' : '-$') + Math.abs(worstDay.pnl).toFixed(2)) : '—';
     document.getElementById('calSumWorst').style.color = worstDay && worstDay.pnl >= 0 ? 'var(--lime)' : 'var(--red)';
     document.getElementById('calSumDays').textContent = daysTracked;
+    // Remove first-day notice if it exists
+    var notice = document.getElementById('calFirstDayNotice');
+    if (notice) notice.style.display = 'none';
   }} else {{
     summaryEl.style.display = 'none';
+    // Show first-day notice
+    var notice = document.getElementById('calFirstDayNotice');
+    if (!notice) {{
+      notice = document.createElement('div');
+      notice.id = 'calFirstDayNotice';
+      notice.style.cssText = 'text-align:center;padding:16px;color:var(--text-dim);font-size:0.9em;margin-top:8px;background:rgba(0,212,255,0.05);border:1px solid var(--border);border-radius:8px;';
+      notice.innerHTML = '📊 <strong>No daily P&L data yet.</strong> Alpaca needs at least one full trading day to generate history. Check back tomorrow!';
+      var calSection = document.getElementById('pnlCalendarSection');
+      if (calSection) calSection.appendChild(notice);
+    }} else {{
+      notice.style.display = 'block';
+    }}
   }}
 }}
 
@@ -2626,9 +2645,11 @@ async function alpLiveConnect() {{
       btn.style.borderColor = 'var(--lime)';
       btn.style.color = 'var(--lime)';
       document.getElementById('alpLiveAccountSection').style.display = 'block';
+      document.getElementById('alpLiveNotConfigured').style.display = 'none';
       alpLiveUpdateAccount(data.account);
       alpLiveRefreshPositions();
       alpLiveRefreshOrders();
+      alpAutoLoadStatus();
     }} else {{
       statusEl.textContent = '🔴 Failed';
       statusEl.style.color = 'var(--red)';
@@ -2725,17 +2746,20 @@ async function alpLiveRefreshOrders() {{
     var body = document.getElementById('alpLiveOrdersBody');
     body.innerHTML = '';
     orders.forEach(function(o) {{
-      var sideColor = o.side === 'buy' ? 'var(--lime)' : 'var(--red)';
+      var cleanSide = (o.side || '').toLowerCase().split('.').pop();
+      var cleanStatus = (o.status || '').split('.').pop();
+      var sideColor = cleanSide === 'buy' ? 'var(--lime)' : 'var(--red)';
       var time = o.submitted_at ? new Date(o.submitted_at).toLocaleString() : '—';
       var fillPrice = o.filled_avg_price ? fmtUSD(o.filled_avg_price) : '—';
       var amount = o.notional ? fmtUSD(o.notional) : (o.qty ? o.qty + ' units' : '—');
+      var statusColor = cleanStatus === 'filled' ? 'var(--lime)' : (cleanStatus === 'canceled' || cleanStatus === 'cancelled' ? 'var(--red)' : 'var(--amber)');
       body.innerHTML += '<tr>' +
         '<td style="font-size:0.85em;">' + time + '</td>' +
         '<td style="font-weight:600;color:var(--cyan);">' + o.symbol + '</td>' +
-        '<td style="color:' + sideColor + ';font-weight:600;">' + (o.side || '').toUpperCase() + '</td>' +
+        '<td style="color:' + sideColor + ';font-weight:600;">' + cleanSide.toUpperCase() + '</td>' +
         '<td>' + amount + '</td>' +
         '<td>' + fillPrice + '</td>' +
-        '<td>' + (o.status || '—') + '</td>' +
+        '<td style="color:' + statusColor + ';">' + cleanStatus.toUpperCase() + '</td>' +
         '</tr>';
     }});
   }} catch(e) {{

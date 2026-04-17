@@ -81,13 +81,13 @@ class AlpacaPaperClient:
         last_equity = float(acct.last_equity) if acct.last_equity else equity
         return {
             "account_number": acct.account_number,
-            "status": str(acct.status),
+            "status": str(acct.status).split('.')[-1],
             "equity": round(equity, 2),
             "cash": round(cash, 2),
             "buying_power": round(buying_power, 2),
             "portfolio_value": round(equity, 2),
             "last_equity": round(last_equity, 2),
-            "currency": str(acct.currency) if acct.currency else "USD",
+            "currency": str(acct.currency).split('.')[-1] if acct.currency else "USD",
             "paper": True,
             "broker": "alpaca",
             "total_pl": round(equity - last_equity, 2),
@@ -95,7 +95,7 @@ class AlpacaPaperClient:
             "pattern_day_trader": bool(acct.pattern_day_trader),
             "trading_blocked": bool(acct.trading_blocked),
             "account_blocked": bool(acct.account_blocked),
-            "crypto_status": getattr(acct, "crypto_status", "ACTIVE"),
+            "crypto_status": str(getattr(acct, "crypto_status", "ACTIVE")).split('.')[-1],
         }
 
     # ── ACCOUNT ─────────────────────────────────────────────────────────
@@ -124,8 +124,8 @@ class AlpacaPaperClient:
                 "market_value": round(market_value, 2),
                 "unrealized_pl": round(unrealized_pl, 2),
                 "unrealized_plpc": round(unrealized_plpc, 2),
-                "side": str(p.side).lower() if p.side else "long",
-                "asset_class": str(p.asset_class) if p.asset_class else "crypto",
+                "side": str(p.side).split('.')[-1].lower() if p.side else "long",
+                "asset_class": str(p.asset_class).split('.')[-1].lower() if p.asset_class else "crypto",
                 "exchange": str(p.exchange) if p.exchange else "",
             })
         return out
@@ -175,13 +175,13 @@ class AlpacaPaperClient:
         return {
             "id": str(o.id),
             "symbol": o.symbol,
-            "side": str(o.side).lower(),
-            "type": str(o.type) if o.type else "market",
+            "side": str(o.side).split('.')[-1].lower(),
+            "type": str(o.type).split('.')[-1].lower() if o.type else "market",
             "notional": float(o.notional) if o.notional else 0,
             "qty": float(o.qty) if o.qty else 0,
             "filled_qty": float(o.filled_qty) if o.filled_qty else 0,
             "filled_avg_price": float(o.filled_avg_price) if o.filled_avg_price else 0,
-            "status": str(o.status),
+            "status": str(o.status).split('.')[-1].lower(),
             "submitted_at": o.submitted_at.isoformat() if o.submitted_at else "",
             "filled_at": o.filled_at.isoformat() if o.filled_at else "",
             "created_at": o.created_at.isoformat() if o.created_at else "",

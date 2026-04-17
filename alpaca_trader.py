@@ -21,6 +21,17 @@ logger = logging.getLogger("alpaca_trader")
 ALPACA_TRADE_HISTORY = os.path.join(config.DATA_DIR, "alpaca_trade_runs.json")
 REBALANCE_THRESHOLD_PCT = 15.0  # only trade if position drifts >15% from target
 
+# Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
+# If a portfolio symbol isn't in this set, its allocation gets redistributed.
+ALPACA_SUPPORTED_CRYPTO = {
+    "BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOGE/USD",
+    "SHIB/USD", "DOT/USD", "UNI/USD", "LINK/USD", "LTC/USD",
+    "BCH/USD", "AAVE/USD", "XRP/USD", "ADA/USD", "ALGO/USD",
+    "ATOM/USD", "CRV/USD", "NEAR/USD", "MKR/USD", "GRT/USD",
+    "SUSHI/USD", "YFI/USD", "BAT/USD", "XTZ/USD", "USDT/USD",
+    "USDC/USD", "DAI/USD",
+}
+
 
 def _normalize_alpaca_symbol(pair):
     """Convert bot pair format to Alpaca crypto symbol format.
@@ -100,24 +111,40 @@ class AlpacaTrader:
             "summary": {},
         }
 
+        # --- Pre-filter: identify supported vs unsupported allocations ---
+        supported_allocs = []
+        unsupported_allocs = []
+        for alloc in allocations:
+            pair = alloc.get("pair", "")
+            sym = _normalize_alpaca_symbol(pair)
+            if sym and sym in ALPACA_SUPPORTED_CRYPTO:
+                supported_allocs.append((alloc, sym))
+            else:
+                bot_name = alloc.get("bot_name", "?")
+                reason = f"Symbol {pair} → {sym or '?'} not supported on Alpaca"
+                results["skipped"].append({
+                    "bot": bot_name, "pair": pair, "reason": reason,
+                })
+                unsupported_allocs.append(alloc)
+
+        # Redistribute unsupported capital proportionally to supported allocations
+        unsupported_total = sum(a.get("allocation_usd", 0) for a in unsupported_allocs)
+        supported_total = sum(a.get("allocation_usd", 0) for a, _ in supported_allocs)
+        redistribution_factor = 1.0
+        if unsupported_total > 0 and supported_total > 0:
+            redistribution_factor = (supported_total + unsupported_total) / supported_total
+            logger.info(f"Redistributing ${unsupported_total:.2f} from {len(unsupported_allocs)} "
+                        f"unsupported symbols (factor {redistribution_factor:.3f}x)")
+
         target_by_symbol = {}
 
-        for alloc in allocations:
+        for alloc, sym in supported_allocs:
             bot_name = alloc.get("bot_name", "?")
-            pair = alloc.get("pair", "")
-            dollar_alloc = alloc.get("allocation_usd", 0) * scale
-
-            sym = _normalize_alpaca_symbol(pair)
-            if not sym:
-                results["skipped"].append({
-                    "bot": bot_name, "pair": pair,
-                    "reason": f"Symbol {pair} not supported on Alpaca"
-                })
-                continue
+            dollar_alloc = alloc.get("allocation_usd", 0) * redistribution_factor * scale
 
             if dollar_alloc < 1.0:
                 results["skipped"].append({
-                    "bot": bot_name, "pair": pair,
+                    "bot": bot_name, "pair": sym,
                     "reason": f"Allocation ${dollar_alloc:.2f} below $1 minimum"
                 })
                 continue
