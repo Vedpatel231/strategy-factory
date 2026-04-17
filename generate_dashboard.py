@@ -2071,10 +2071,10 @@ function calRender() {{
     document.getElementById('calSumPnl').style.color = pnlColor;
     document.getElementById('calSumPct').textContent = (monthPct >= 0 ? '+' : '') + monthPct.toFixed(2) + '%';
     document.getElementById('calSumPct').style.color = pnlColor;
-    document.getElementById('calSumBest').textContent = bestDay ? ('+$' + bestDay.pnl.toFixed(2)) : '—';
-    document.getElementById('calSumBest').style.color = 'var(--lime)';
-    document.getElementById('calSumWorst').textContent = worstDay ? ('-$' + Math.abs(worstDay.pnl).toFixed(2)) : '—';
-    document.getElementById('calSumWorst').style.color = 'var(--red)';
+    document.getElementById('calSumBest').textContent = bestDay ? ((bestDay.pnl >= 0 ? '+$' : '-$') + Math.abs(bestDay.pnl).toFixed(2)) : '—';
+    document.getElementById('calSumBest').style.color = bestDay && bestDay.pnl >= 0 ? 'var(--lime)' : 'var(--red)';
+    document.getElementById('calSumWorst').textContent = worstDay ? ((worstDay.pnl >= 0 ? '+$' : '-$') + Math.abs(worstDay.pnl).toFixed(2)) : '—';
+    document.getElementById('calSumWorst').style.color = worstDay && worstDay.pnl >= 0 ? 'var(--lime)' : 'var(--red)';
     document.getElementById('calSumDays').textContent = daysTracked;
   }} else {{
     summaryEl.style.display = 'none';
