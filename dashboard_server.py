@@ -322,6 +322,177 @@ def broker_daily_pnl():
     return jsonify({"snapshots": data})
 
 
+# ── ALPACA PAPER TRADING ENDPOINTS ─────────────────────────────────────
+_alpaca_client = None
+
+
+def get_alpaca_client():
+    global _alpaca_client
+    if _alpaca_client is not None:
+        return _alpaca_client, None
+    try:
+        from alpaca_client import AlpacaPaperClient, is_configured
+        if not is_configured():
+            return None, "Alpaca API keys not configured. Set ALPACA_API_KEY and ALPACA_API_SECRET."
+        _alpaca_client = AlpacaPaperClient()
+        return _alpaca_client, None
+    except Exception as e:
+        logger.error(f"Alpaca client init failed: {e}\n{traceback.format_exc()}")
+        return None, f"Alpaca init failed: {e}"
+
+
+@app.route("/api/alpaca/status")
+@require_auth
+def alpaca_status():
+    """Check if Alpaca keys are configured (doesn't connect yet)."""
+    try:
+        from alpaca_client import is_configured
+        return jsonify({
+            "configured": is_configured(),
+            "broker": "alpaca_paper",
+        })
+    except Exception as e:
+        return jsonify({"configured": False, "error": str(e)})
+
+
+@app.route("/api/alpaca/connect", methods=["POST"])
+@require_auth
+def alpaca_connect():
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"connected": False, "error": err}), 500
+    try:
+        acct = client.connect()
+        return jsonify({"connected": True, "account": acct})
+    except Exception as e:
+        logger.error(f"Alpaca connect failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"connected": False, "error": str(e)}), 500
+
+
+@app.route("/api/alpaca/account")
+@require_auth
+def alpaca_account():
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    try:
+        return jsonify(client.get_account())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/alpaca/positions")
+@require_auth
+def alpaca_positions():
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    try:
+        positions = client.get_positions()
+        total_pl = sum(p["unrealized_pl"] for p in positions)
+        total_value = sum(p["market_value"] for p in positions)
+        total_cost = sum(p["cost_basis"] for p in positions)
+        return jsonify({
+            "positions": positions,
+            "summary": {
+                "count": len(positions),
+                "total_market_value": round(total_value, 2),
+                "total_cost_basis": round(total_cost, 2),
+                "total_unrealized_pl": round(total_pl, 2),
+                "total_unrealized_plpc": round(total_pl / total_cost * 100, 2) if total_cost > 0 else 0,
+            }
+        })
+    except Exception as e:
+        logger.error(f"Alpaca positions failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/alpaca/orders")
+@require_auth
+def alpaca_orders():
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    try:
+        limit = int(request.args.get("limit", 25))
+        status = request.args.get("status", "all")
+        return jsonify({"orders": client.get_orders(limit=limit, status=status)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/alpaca/execute", methods=["POST"])
+@require_auth
+def alpaca_execute():
+    """Execute a single order on Alpaca paper trading."""
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirm"):
+        return jsonify({"error": "Missing 'confirm: true' in request body"}), 400
+    symbol = data.get("symbol")
+    notional = data.get("notional")
+    side = data.get("side", "buy")
+    if not symbol or not notional:
+        return jsonify({"error": "Missing 'symbol' and/or 'notional'"}), 400
+    try:
+        result = client.submit_order(symbol, float(notional), side=side)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Alpaca execute failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/alpaca/close-position", methods=["POST"])
+@require_auth
+def alpaca_close_position():
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirm"):
+        return jsonify({"error": "Missing 'confirm: true'"}), 400
+    symbol = data.get("symbol")
+    if not symbol:
+        return jsonify({"error": "Missing 'symbol'"}), 400
+    try:
+        return jsonify(client.close_position(symbol))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/alpaca/close-all", methods=["POST"])
+@require_auth
+def alpaca_close_all():
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirm"):
+        return jsonify({"error": "Missing 'confirm: true'"}), 400
+    try:
+        return jsonify({"closed": client.close_all_positions()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/alpaca/price")
+@require_auth
+def alpaca_price():
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    symbol = request.args.get("symbol")
+    if not symbol:
+        return jsonify({"error": "Missing 'symbol' query param"}), 400
+    try:
+        price = client.get_latest_price(symbol)
+        return jsonify({"symbol": symbol, "price": price})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── AUTO-TRADER ENDPOINTS ──────────────────────────────────────────────
 @app.route("/api/auto/status")
 @require_auth

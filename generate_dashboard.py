@@ -37,6 +37,7 @@ class DashboardGenerator:
             ("overview", "Overview", "📊"),
             ("portfolio", "Portfolio", "💼"),
             ("alpaca", "Paper Trading", "💵"),
+            ("alpaca-live", "Alpaca", "🔗"),
             ("quantum", "Strategy Scorecard", "⚛️"),
             ("bots", "Bot Status", "🤖"),
             ("performance", "Performance", "📈"),
@@ -93,6 +94,7 @@ class DashboardGenerator:
         parts.append(self._page_overview(bots_data, evaluations, regime_info, execution_summary, ts))
         parts.append(self._page_portfolio(evaluations, portfolio))
         parts.append(self._page_alpaca())
+        parts.append(self._page_alpaca_live())
         parts.append(self._page_quantum(evaluations))
         parts.append(self._page_bots(bots_data, evaluations))
         parts.append(self._page_performance(evaluations))
@@ -840,6 +842,136 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div style="display:flex;gap:12px;justify-content:flex-end;">
       <button class="filter-btn" style="padding:10px 20px;" onclick="alpModalCancel()">Cancel</button>
       <button id="alpModalConfirmBtn" class="filter-btn" style="padding:10px 20px;background:rgba(57,255,20,0.15);color:var(--lime);border-color:var(--lime);font-weight:600;">Confirm</button>
+    </div>
+  </div>
+</div>"""
+
+    # ── PAGE: ALPACA LIVE ────────────────────────────────────────────────
+    def _page_alpaca_live(self):
+        return """<div class="page" id="alpaca-live">
+  <div class="page-title"><span class="accent">🔗</span> Alpaca Paper Trading</div>
+  <p class="page-sub" style="color:var(--text-dim);margin-bottom:24px;">Connect to your real Alpaca paper trading account with live market prices</p>
+
+  <!-- Broker Selector -->
+  <div class="card" style="margin-bottom:24px;">
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+      <span style="font-size:1.2em;font-weight:600;color:var(--text);">Select Broker</span>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      <button id="brokerAlpacaBtn" onclick="alpLiveSelectBroker('alpaca')" class="filter-btn"
+              style="padding:14px 24px;font-size:1em;border-radius:10px;display:flex;align-items:center;gap:10px;min-width:200px;background:rgba(0,212,255,0.1);border-color:var(--cyan);color:var(--cyan);">
+        <span style="font-size:1.5em;">🦙</span>
+        <span>
+          <strong>Alpaca Paper Trading</strong><br>
+          <span style="font-size:0.8em;opacity:0.7;">Crypto &amp; stocks · free paper account</span>
+        </span>
+      </button>
+      <button id="brokerCoinbaseBtn" disabled class="filter-btn"
+              style="padding:14px 24px;font-size:1em;border-radius:10px;display:flex;align-items:center;gap:10px;min-width:200px;opacity:0.4;cursor:not-allowed;">
+        <span style="font-size:1.5em;">🪙</span>
+        <span>
+          <strong>Coinbase</strong><br>
+          <span style="font-size:0.8em;opacity:0.7;">Coming soon · real money trading</span>
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Connection Card -->
+  <div id="alpLiveConnCard" class="card" style="margin-bottom:24px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+      <div>
+        <div style="font-size:0.9em;color:var(--text-dim);margin-bottom:4px;">Connection Status</div>
+        <div id="alpLiveConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);">⚪ Not Connected</div>
+        <div id="alpLiveConnMsg" class="card-sub">Click Connect to link your Alpaca paper trading account</div>
+      </div>
+      <button id="alpLiveConnBtn" onclick="alpLiveConnect()" class="filter-btn"
+              style="padding:12px 28px;font-size:1em;background:rgba(0,212,255,0.15);border-color:var(--cyan);color:var(--cyan);font-weight:600;border-radius:8px;">
+        🔗 Connect
+      </button>
+    </div>
+  </div>
+
+  <!-- Account Summary (hidden until connected) -->
+  <div id="alpLiveAccountSection" style="display:none;">
+    <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;">
+      <div class="card"><div class="card-sub">Equity</div><div id="alpLiveEquity" class="card-value">—</div></div>
+      <div class="card"><div class="card-sub">Cash (Buying Power)</div><div id="alpLiveCash" class="card-value">—</div></div>
+      <div class="card"><div class="card-sub">Today's P&L</div><div id="alpLivePL" class="card-value">—</div></div>
+      <div class="card"><div class="card-sub">Account #</div><div id="alpLiveAccNum" class="card-value" style="font-size:0.95em;">—</div></div>
+    </div>
+
+    <!-- Positions -->
+    <div class="card" style="margin-bottom:24px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-weight:600;font-size:1.1em;">Open Positions</span>
+        <button onclick="alpLiveRefreshPositions()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+      </div>
+      <div id="alpLivePositionsEmpty" style="color:var(--text-dim);padding:20px 0;text-align:center;">No open positions</div>
+      <div id="alpLivePositionsTable" style="display:none;overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr>
+            <th>Symbol</th><th>Qty</th><th>Avg Entry</th><th>Current</th>
+            <th>Market Value</th><th>P&L</th><th>P&L %</th><th>Action</th>
+          </tr></thead>
+          <tbody id="alpLivePositionsBody"></tbody>
+        </table>
+      </div>
+      <div id="alpLivePosSummary" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:none;">
+        <span style="color:var(--text-dim);font-size:0.9em;">Total: </span>
+        <span id="alpLivePosTotal" style="font-weight:600;">—</span>
+        <button onclick="alpLiveCloseAll()" class="filter-btn" style="margin-left:16px;padding:6px 14px;font-size:0.85em;color:var(--red);border-color:var(--red);">Close All</button>
+      </div>
+    </div>
+
+    <!-- Quick Trade -->
+    <div class="card" style="margin-bottom:24px;">
+      <div style="font-weight:600;font-size:1.1em;margin-bottom:12px;">Quick Trade</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
+        <div>
+          <label style="font-size:0.8em;color:var(--text-dim);">Symbol</label>
+          <input id="alpLiveTradeSymbol" type="text" placeholder="BTC/USD" style="display:block;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;width:120px;margin-top:4px;">
+        </div>
+        <div>
+          <label style="font-size:0.8em;color:var(--text-dim);">Amount (USD)</label>
+          <input id="alpLiveTradeAmount" type="number" placeholder="100" min="1" step="1" style="display:block;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;width:120px;margin-top:4px;">
+        </div>
+        <button onclick="alpLiveTrade('buy')" class="filter-btn" style="padding:8px 20px;background:rgba(57,255,20,0.12);color:var(--lime);border-color:var(--lime);font-weight:600;">Buy</button>
+        <button onclick="alpLiveTrade('sell')" class="filter-btn" style="padding:8px 20px;background:rgba(255,69,58,0.12);color:var(--red);border-color:var(--red);font-weight:600;">Sell</button>
+      </div>
+      <div id="alpLiveTradeResult" style="margin-top:12px;padding:10px;border-radius:6px;display:none;"></div>
+    </div>
+
+    <!-- Recent Orders -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-weight:600;font-size:1.1em;">Recent Orders</span>
+        <button onclick="alpLiveRefreshOrders()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+      </div>
+      <div id="alpLiveOrdersEmpty" style="color:var(--text-dim);padding:20px 0;text-align:center;">No recent orders</div>
+      <div id="alpLiveOrdersTable" style="display:none;overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr>
+            <th>Time</th><th>Symbol</th><th>Side</th><th>Amount</th>
+            <th>Fill Price</th><th>Status</th>
+          </tr></thead>
+          <tbody id="alpLiveOrdersBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Not-configured message (shown when keys are missing) -->
+  <div id="alpLiveNotConfigured" style="display:none;">
+    <div class="card" style="text-align:center;padding:40px;">
+      <div style="font-size:2em;margin-bottom:16px;">🔑</div>
+      <div style="font-size:1.1em;color:var(--text);margin-bottom:8px;">Alpaca API Keys Not Configured</div>
+      <div style="color:var(--text-dim);line-height:1.6;max-width:500px;margin:0 auto;">
+        Add these environment variables to Railway:<br>
+        <code style="background:var(--bg);padding:2px 8px;border-radius:4px;color:var(--cyan);">ALPACA_API_KEY</code> and
+        <code style="background:var(--bg);padding:2px 8px;border-radius:4px;color:var(--cyan);">ALPACA_API_SECRET</code><br>
+        <span style="font-size:0.85em;margin-top:8px;display:inline-block;">Get your free paper trading keys at <a href="https://app.alpaca.markets" target="_blank" style="color:var(--cyan);">app.alpaca.markets</a></span>
+      </div>
     </div>
   </div>
 </div>"""
@@ -2233,6 +2365,217 @@ function calRender() {{
 
 // Load calendar data on page load
 calLoadData();
+
+// ── ALPACA LIVE PAGE ─────────────────────────────────────────
+var alpLiveConnected = false;
+
+function alpLiveSelectBroker(broker) {{
+  // For now only alpaca is supported
+  document.getElementById('brokerAlpacaBtn').style.background = 'rgba(0,212,255,0.2)';
+  document.getElementById('brokerAlpacaBtn').style.borderColor = 'var(--cyan)';
+}}
+
+async function alpLiveCheckStatus() {{
+  try {{
+    var data = await apiGet('/api/alpaca/status');
+    if (!data.configured) {{
+      document.getElementById('alpLiveConnCard').style.display = 'none';
+      document.getElementById('alpLiveNotConfigured').style.display = 'block';
+      return false;
+    }}
+    document.getElementById('alpLiveConnCard').style.display = 'block';
+    document.getElementById('alpLiveNotConfigured').style.display = 'none';
+    return true;
+  }} catch(e) {{
+    document.getElementById('alpLiveConnMsg').textContent = 'Could not check Alpaca status: ' + e.message;
+    return false;
+  }}
+}}
+
+async function alpLiveConnect() {{
+  var btn = document.getElementById('alpLiveConnBtn');
+  var statusEl = document.getElementById('alpLiveConnStatus');
+  var msgEl = document.getElementById('alpLiveConnMsg');
+  btn.disabled = true;
+  btn.textContent = '⏳ Connecting...';
+  statusEl.textContent = '🟡 Connecting...';
+  statusEl.style.color = 'var(--amber)';
+  msgEl.textContent = 'Reaching out to Alpaca paper trading API...';
+  try {{
+    var data = await apiPost('/api/alpaca/connect', {{}});
+    if (data.connected) {{
+      alpLiveConnected = true;
+      statusEl.textContent = '🟢 Connected';
+      statusEl.style.color = 'var(--lime)';
+      msgEl.textContent = 'Account ' + (data.account.account_number || '') + ' · ' + (data.account.status || '');
+      btn.textContent = '✅ Connected';
+      btn.style.borderColor = 'var(--lime)';
+      btn.style.color = 'var(--lime)';
+      document.getElementById('alpLiveAccountSection').style.display = 'block';
+      alpLiveUpdateAccount(data.account);
+      alpLiveRefreshPositions();
+      alpLiveRefreshOrders();
+    }} else {{
+      statusEl.textContent = '🔴 Failed';
+      statusEl.style.color = 'var(--red)';
+      msgEl.textContent = data.error || 'Connection failed';
+      btn.textContent = '🔗 Retry';
+      btn.disabled = false;
+    }}
+  }} catch(e) {{
+    statusEl.textContent = '🔴 Error';
+    statusEl.style.color = 'var(--red)';
+    msgEl.textContent = e.message || 'Network error';
+    btn.textContent = '🔗 Retry';
+    btn.disabled = false;
+  }}
+}}
+
+function alpLiveUpdateAccount(acct) {{
+  document.getElementById('alpLiveEquity').textContent = fmtUSD(acct.equity);
+  document.getElementById('alpLiveCash').textContent = fmtUSD(acct.cash);
+  var pl = acct.total_pl || 0;
+  var plEl = document.getElementById('alpLivePL');
+  plEl.textContent = (pl >= 0 ? '+' : '') + fmtUSD(pl);
+  plEl.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
+  document.getElementById('alpLiveAccNum').textContent = acct.account_number || '—';
+}}
+
+async function alpLiveRefreshPositions() {{
+  if (!alpLiveConnected) return;
+  try {{
+    var data = await apiGet('/api/alpaca/positions');
+    var positions = data.positions || [];
+    var emptyEl = document.getElementById('alpLivePositionsEmpty');
+    var tableEl = document.getElementById('alpLivePositionsTable');
+    var summEl = document.getElementById('alpLivePosSummary');
+    if (positions.length === 0) {{
+      emptyEl.style.display = 'block';
+      tableEl.style.display = 'none';
+      summEl.style.display = 'none';
+      return;
+    }}
+    emptyEl.style.display = 'none';
+    tableEl.style.display = 'block';
+    summEl.style.display = 'block';
+    var body = document.getElementById('alpLivePositionsBody');
+    body.innerHTML = '';
+    positions.forEach(function(p) {{
+      var plColor = p.unrealized_pl >= 0 ? 'var(--lime)' : 'var(--red)';
+      var plSign = p.unrealized_pl >= 0 ? '+' : '';
+      body.innerHTML += '<tr>' +
+        '<td style="font-weight:600;color:var(--cyan);">' + p.symbol + '</td>' +
+        '<td>' + Number(p.qty).toFixed(4) + '</td>' +
+        '<td>' + fmtUSD(p.avg_entry_price) + '</td>' +
+        '<td>' + fmtUSD(p.current_price) + '</td>' +
+        '<td>' + fmtUSD(p.market_value) + '</td>' +
+        '<td style="color:' + plColor + ';">' + plSign + fmtUSD(p.unrealized_pl) + '</td>' +
+        '<td style="color:' + plColor + ';">' + plSign + p.unrealized_plpc.toFixed(2) + '%</td>' +
+        '<td><button onclick="alpLiveClosePos(\'' + p.symbol + '\')" class="filter-btn" style="padding:4px 10px;font-size:0.8em;color:var(--red);border-color:var(--red);">Close</button></td>' +
+        '</tr>';
+    }});
+    if (data.summary) {{
+      var s = data.summary;
+      var tColor = s.total_unrealized_pl >= 0 ? 'var(--lime)' : 'var(--red)';
+      document.getElementById('alpLivePosTotal').innerHTML =
+        '<span style="color:var(--text);">' + s.count + ' positions · ' + fmtUSD(s.total_market_value) + '</span>' +
+        ' · <span style="color:' + tColor + ';">' + (s.total_unrealized_pl >= 0 ? '+' : '') + fmtUSD(s.total_unrealized_pl) + '</span>';
+    }}
+    // Also refresh account
+    var acct = await apiGet('/api/alpaca/account');
+    alpLiveUpdateAccount(acct);
+  }} catch(e) {{
+    console.error('Positions refresh error:', e);
+  }}
+}}
+
+async function alpLiveRefreshOrders() {{
+  if (!alpLiveConnected) return;
+  try {{
+    var data = await apiGet('/api/alpaca/orders?limit=20');
+    var orders = data.orders || [];
+    var emptyEl = document.getElementById('alpLiveOrdersEmpty');
+    var tableEl = document.getElementById('alpLiveOrdersTable');
+    if (orders.length === 0) {{
+      emptyEl.style.display = 'block';
+      tableEl.style.display = 'none';
+      return;
+    }}
+    emptyEl.style.display = 'none';
+    tableEl.style.display = 'block';
+    var body = document.getElementById('alpLiveOrdersBody');
+    body.innerHTML = '';
+    orders.forEach(function(o) {{
+      var sideColor = o.side === 'buy' ? 'var(--lime)' : 'var(--red)';
+      var time = o.submitted_at ? new Date(o.submitted_at).toLocaleString() : '—';
+      var fillPrice = o.filled_avg_price ? fmtUSD(o.filled_avg_price) : '—';
+      var amount = o.notional ? fmtUSD(o.notional) : (o.qty ? o.qty + ' units' : '—');
+      body.innerHTML += '<tr>' +
+        '<td style="font-size:0.85em;">' + time + '</td>' +
+        '<td style="font-weight:600;color:var(--cyan);">' + o.symbol + '</td>' +
+        '<td style="color:' + sideColor + ';font-weight:600;">' + (o.side || '').toUpperCase() + '</td>' +
+        '<td>' + amount + '</td>' +
+        '<td>' + fillPrice + '</td>' +
+        '<td>' + (o.status || '—') + '</td>' +
+        '</tr>';
+    }});
+  }} catch(e) {{
+    console.error('Orders refresh error:', e);
+  }}
+}}
+
+async function alpLiveTrade(side) {{
+  if (!alpLiveConnected) {{ alert('Connect to Alpaca first.'); return; }}
+  var symbol = document.getElementById('alpLiveTradeSymbol').value.trim();
+  var amount = parseFloat(document.getElementById('alpLiveTradeAmount').value);
+  if (!symbol) {{ alert('Enter a symbol (e.g. BTC/USD).'); return; }}
+  if (!amount || amount < 1) {{ alert('Enter an amount of at least $1.'); return; }}
+  var resultEl = document.getElementById('alpLiveTradeResult');
+  resultEl.style.display = 'block';
+  resultEl.style.background = 'rgba(255,255,255,0.05)';
+  resultEl.style.color = 'var(--text-dim)';
+  resultEl.textContent = '⏳ Placing ' + side + ' order for ' + symbol + '...';
+  try {{
+    var data = await apiPost('/api/alpaca/execute', {{
+      confirm: true, symbol: symbol, notional: amount, side: side
+    }});
+    if (data.error) {{
+      resultEl.style.background = 'rgba(255,69,58,0.1)';
+      resultEl.style.color = 'var(--red)';
+      resultEl.textContent = '❌ ' + data.error;
+    }} else {{
+      resultEl.style.background = 'rgba(57,255,20,0.1)';
+      resultEl.style.color = 'var(--lime)';
+      resultEl.textContent = '✅ ' + (data.side||side).toUpperCase() + ' ' + data.symbol + ' — ' +
+        (data.status || 'submitted') + (data.filled_avg_price ? ' at ' + fmtUSD(data.filled_avg_price) : '');
+      setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); }}, 2000);
+    }}
+  }} catch(e) {{
+    resultEl.style.background = 'rgba(255,69,58,0.1)';
+    resultEl.style.color = 'var(--red)';
+    resultEl.textContent = '❌ ' + e.message;
+  }}
+}}
+
+async function alpLiveClosePos(symbol) {{
+  if (!confirm('Close position in ' + symbol + '?')) return;
+  try {{
+    var data = await apiPost('/api/alpaca/close-position', {{ confirm: true, symbol: symbol }});
+    if (data.error) {{ alert('Error: ' + data.error); }}
+    else {{ setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); }}, 2000); }}
+  }} catch(e) {{ alert('Error: ' + e.message); }}
+}}
+
+async function alpLiveCloseAll() {{
+  if (!confirm('Close ALL open Alpaca positions?')) return;
+  try {{
+    var data = await apiPost('/api/alpaca/close-all', {{ confirm: true }});
+    setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); }}, 2000);
+  }} catch(e) {{ alert('Error: ' + e.message); }}
+}}
+
+// Check Alpaca status on page load
+alpLiveCheckStatus();
 
 </script>"""
 
