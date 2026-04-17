@@ -959,6 +959,67 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         </table>
       </div>
     </div>
+
+    <!-- Auto-Trade Controls -->
+    <div class="card" style="margin-bottom:24px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+        <div>
+          <div style="font-weight:600;font-size:1.1em;">Auto-Trade (Alpaca)</div>
+          <div style="color:var(--text-dim);font-size:0.85em;">Automatically rebalances your Alpaca account based on the latest portfolio analysis</div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <span id="alpAutoStatusBadge" style="font-size:0.9em;padding:4px 12px;border-radius:20px;background:rgba(107,115,148,0.2);color:var(--gray);">OFF</span>
+          <button id="alpAutoToggleBtn" onclick="alpAutoToggle()" class="filter-btn"
+                  style="padding:8px 20px;font-size:0.95em;font-weight:600;">
+            Enable Auto-Trade
+          </button>
+        </div>
+      </div>
+
+      <!-- Manual controls -->
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+        <button onclick="alpAutoPreview()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;">
+          👁 Preview Rebalance
+        </button>
+        <button onclick="alpAutoExecuteNow()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;background:rgba(0,212,255,0.1);border-color:var(--cyan);color:var(--cyan);">
+          ▶ Execute Portfolio Now
+        </button>
+        <button onclick="alpAutoRunNow()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;background:rgba(57,255,20,0.1);border-color:var(--lime);color:var(--lime);">
+          🔄 Full Cycle (Analyze + Trade)
+        </button>
+      </div>
+
+      <!-- Preview results area -->
+      <div id="alpAutoPreviewResult" style="display:none;margin-bottom:16px;padding:14px;background:rgba(0,212,255,0.05);border:1px solid var(--border);border-radius:8px;">
+        <div style="font-weight:600;margin-bottom:8px;color:var(--cyan);">Rebalance Preview (dry run)</div>
+        <div id="alpAutoPreviewBody" style="font-size:0.9em;color:var(--text-dim);"></div>
+      </div>
+
+      <!-- Status info -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px;">
+        <div style="padding:10px;background:var(--bg);border-radius:6px;">
+          <div style="font-size:0.75em;color:var(--text-dim);">Status</div>
+          <div id="alpAutoRunStatus" style="font-size:0.95em;margin-top:2px;">—</div>
+        </div>
+        <div style="padding:10px;background:var(--bg);border-radius:6px;">
+          <div style="font-size:0.75em;color:var(--text-dim);">Last Run</div>
+          <div id="alpAutoLastRun" style="font-size:0.95em;margin-top:2px;">Never</div>
+        </div>
+        <div style="padding:10px;background:var(--bg);border-radius:6px;">
+          <div style="font-size:0.75em;color:var(--text-dim);">Next Run</div>
+          <div id="alpAutoNextRun" style="font-size:0.95em;margin-top:2px;">—</div>
+        </div>
+        <div style="padding:10px;background:var(--bg);border-radius:6px;">
+          <div style="font-size:0.75em;color:var(--text-dim);">Interval</div>
+          <div id="alpAutoInterval" style="font-size:0.95em;margin-top:2px;">30 min</div>
+        </div>
+      </div>
+
+      <!-- Recent auto-runs log -->
+      <div style="font-weight:600;font-size:0.95em;margin-bottom:8px;">Recent Auto-Runs</div>
+      <div id="alpAutoLogsEmpty" style="color:var(--text-dim);font-size:0.85em;">No auto-runs yet. Enable auto-trade or click "Full Cycle" to start.</div>
+      <div id="alpAutoLogs" style="display:none;max-height:250px;overflow-y:auto;font-size:0.85em;"></div>
+    </div>
   </div>
 
   <!-- Not-configured message (shown when keys are missing) -->
@@ -2576,6 +2637,158 @@ async function alpLiveCloseAll() {{
 
 // Check Alpaca status on page load
 alpLiveCheckStatus();
+
+// ── ALPACA AUTO-TRADE CONTROLS ───────────────────────────────
+var alpAutoEnabled = false;
+
+async function alpAutoLoadStatus() {{
+  try {{
+    var data = await apiGet('/api/alpaca/auto/status');
+    alpAutoEnabled = data.enabled;
+    alpAutoUpdateUI(data);
+  }} catch(e) {{}}
+}}
+
+function alpAutoUpdateUI(data) {{
+  var badge = document.getElementById('alpAutoStatusBadge');
+  var btn = document.getElementById('alpAutoToggleBtn');
+  if (data.enabled) {{
+    badge.textContent = 'ON';
+    badge.style.background = 'rgba(57,255,20,0.15)';
+    badge.style.color = 'var(--lime)';
+    btn.textContent = 'Disable Auto-Trade';
+    btn.style.borderColor = 'var(--red)';
+    btn.style.color = 'var(--red)';
+  }} else {{
+    badge.textContent = 'OFF';
+    badge.style.background = 'rgba(107,115,148,0.2)';
+    badge.style.color = 'var(--gray)';
+    btn.textContent = 'Enable Auto-Trade';
+    btn.style.borderColor = 'var(--lime)';
+    btn.style.color = 'var(--lime)';
+  }}
+  var statusEl = document.getElementById('alpAutoRunStatus');
+  if (data.thread_alive) {{
+    statusEl.textContent = data.enabled ? '🟢 Running' : '🟡 Idle (disabled)';
+    statusEl.style.color = data.enabled ? 'var(--lime)' : 'var(--amber)';
+  }} else {{
+    statusEl.textContent = '⚪ Stopped';
+    statusEl.style.color = 'var(--gray)';
+  }}
+  document.getElementById('alpAutoInterval').textContent = (data.interval_min || 30) + ' min';
+  if (data.last_run) {{
+    document.getElementById('alpAutoLastRun').textContent = new Date(data.last_run).toLocaleString();
+  }}
+  if (data.next_run && data.enabled) {{
+    document.getElementById('alpAutoNextRun').textContent = new Date(data.next_run).toLocaleString();
+  }} else {{
+    document.getElementById('alpAutoNextRun').textContent = data.enabled ? 'Soon' : '—';
+  }}
+  // Render logs
+  var runs = data.recent_runs || [];
+  var logsEl = document.getElementById('alpAutoLogs');
+  var emptyEl = document.getElementById('alpAutoLogsEmpty');
+  if (runs.length === 0) {{
+    logsEl.style.display = 'none';
+    emptyEl.style.display = 'block';
+  }} else {{
+    emptyEl.style.display = 'none';
+    logsEl.style.display = 'block';
+    var html = '';
+    runs.slice().reverse().forEach(function(r) {{
+      var ts = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : '?';
+      var statusColor = r.status === 'ok' ? 'var(--lime)' : (r.status === 'error' ? 'var(--red)' : 'var(--amber)');
+      var s2 = (r.steps && r.steps.trade && r.steps.trade.summary) || {{}};
+      var detail = '';
+      if (s2.buys !== undefined) {{
+        detail = ' · ' + (s2.buys||0) + ' buys, ' + (s2.sells||0) + ' sells, ' + (s2.closes||0) + ' closes';
+      }}
+      if (s2.equity_after || (r.steps && r.steps.trade && r.steps.trade.equity_after)) {{
+        var eq = s2.equity_after || r.steps.trade.equity_after;
+        detail += ' · equity $' + Number(eq).toFixed(2);
+      }}
+      html += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">' +
+        '<span style="color:var(--text-dim);">' + ts + '</span> ' +
+        '<span style="color:' + statusColor + ';font-weight:600;">' + (r.status||'?').toUpperCase() + '</span>' +
+        detail +
+        (r.error ? ' <span style="color:var(--red);font-size:0.85em;">' + r.error.substring(0,80) + '</span>' : '') +
+        '</div>';
+    }});
+    logsEl.innerHTML = html;
+  }}
+}}
+
+async function alpAutoToggle() {{
+  var newState = !alpAutoEnabled;
+  try {{
+    var data = await apiPost('/api/alpaca/auto/toggle', {{ enabled: newState }});
+    alpAutoEnabled = data.enabled;
+    alpAutoUpdateUI(data.status || data);
+  }} catch(e) {{ alert('Error: ' + e.message); }}
+}}
+
+async function alpAutoPreview() {{
+  var resultEl = document.getElementById('alpAutoPreviewResult');
+  var bodyEl = document.getElementById('alpAutoPreviewBody');
+  resultEl.style.display = 'block';
+  bodyEl.textContent = '⏳ Running dry-run preview...';
+  try {{
+    var data = await apiGet('/api/alpaca/auto/preview');
+    if (data.error) {{
+      bodyEl.innerHTML = '<span style="color:var(--red);">❌ ' + data.error + '</span>';
+      return;
+    }}
+    var orders = data.orders || [];
+    var skipped = data.skipped || [];
+    var s = data.summary || {{}};
+    var html = '<div style="margin-bottom:8px;"><strong>' + (s.buys||0) + '</strong> buys, <strong>' + (s.sells||0) + '</strong> sells, <strong>' + (s.closes||0) + '</strong> closes, <strong>' + (s.skipped||0) + '</strong> skipped</div>';
+    if (orders.length > 0) {{
+      html += '<table style="width:100%;font-size:0.85em;"><tr style="color:var(--text-dim);"><th style="text-align:left;">Symbol</th><th>Side</th><th>Amount</th><th>Bot</th></tr>';
+      orders.forEach(function(o) {{
+        var sColor = o.side === 'buy' ? 'var(--lime)' : 'var(--red)';
+        html += '<tr><td style="color:var(--cyan);font-weight:600;">' + (o.symbol||'?') + '</td>' +
+          '<td style="color:' + sColor + ';">' + (o.side||'').toUpperCase() + '</td>' +
+          '<td>' + fmtUSD(o.notional||0) + '</td>' +
+          '<td style="color:var(--text-dim);">' + (o.bot||'—') + '</td></tr>';
+      }});
+      html += '</table>';
+    }}
+    if (skipped.length > 0) {{
+      html += '<div style="margin-top:8px;color:var(--text-dim);font-size:0.85em;">' + skipped.length + ' positions skipped (within rebalance threshold)</div>';
+    }}
+    bodyEl.innerHTML = html;
+  }} catch(e) {{
+    bodyEl.innerHTML = '<span style="color:var(--red);">❌ ' + e.message + '</span>';
+  }}
+}}
+
+async function alpAutoExecuteNow() {{
+  if (!confirm('Execute portfolio rebalance on Alpaca NOW? This will place real paper trades.')) return;
+  try {{
+    var data = await apiPost('/api/alpaca/auto/execute', {{ confirm: true }});
+    if (data.error) {{
+      alert('Error: ' + data.error);
+    }} else {{
+      var s = data.summary || {{}};
+      alert('Executed: ' + (s.buys||0) + ' buys, ' + (s.sells||0) + ' sells, ' + (s.closes||0) + ' closes');
+      setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); alpAutoLoadStatus(); }}, 3000);
+    }}
+  }} catch(e) {{ alert('Error: ' + e.message); }}
+}}
+
+async function alpAutoRunNow() {{
+  if (!confirm('Run full cycle (analyze + trade) on Alpaca NOW?')) return;
+  try {{
+    var data = await apiPost('/api/alpaca/auto/run-now', {{ confirm: true }});
+    if (data.triggered) {{
+      alert('Full cycle triggered! It will take 1-2 minutes. Check the auto-runs log for results.');
+      setTimeout(alpAutoLoadStatus, 60000);
+    }}
+  }} catch(e) {{ alert('Error: ' + e.message); }}
+}}
+
+// Load Alpaca auto-trade status on page load
+alpAutoLoadStatus();
 
 </script>"""
 

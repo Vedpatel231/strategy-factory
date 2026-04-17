@@ -48,6 +48,7 @@ except ImportError:
 
 import config
 from auto_trader import AutoTrader
+from alpaca_auto_trader import AlpacaAutoTrader
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("dashboard_server")
@@ -493,6 +494,75 @@ def alpaca_price():
         return jsonify({"error": str(e)}), 500
 
 
+# ── ALPACA AUTO-TRADER ENDPOINTS ───────────────────────────────────────
+@app.route("/api/alpaca/auto/status")
+@require_auth
+def alpaca_auto_status():
+    return jsonify(AlpacaAutoTrader.get().status())
+
+
+@app.route("/api/alpaca/auto/toggle", methods=["POST"])
+@require_auth
+def alpaca_auto_toggle():
+    data = request.get_json(silent=True) or {}
+    if "enabled" not in data:
+        return jsonify({"error": "Missing 'enabled' in request body"}), 400
+    AlpacaAutoTrader.set_enabled(bool(data["enabled"]))
+    return jsonify({"enabled": AlpacaAutoTrader.is_enabled(), "status": AlpacaAutoTrader.get().status()})
+
+
+@app.route("/api/alpaca/auto/run-now", methods=["POST"])
+@require_auth
+def alpaca_auto_run_now():
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirm"):
+        return jsonify({"error": "Missing 'confirm: true'"}), 400
+    return jsonify(AlpacaAutoTrader.get().trigger_now())
+
+
+@app.route("/api/alpaca/auto/preview")
+@require_auth
+def alpaca_auto_preview():
+    """Dry-run preview of what Alpaca auto-trade would do."""
+    try:
+        from alpaca_trader import AlpacaTrader
+        from alpaca_client import is_configured
+        if not is_configured():
+            return jsonify({"error": "Alpaca API keys not configured"}), 400
+        portfolio = load_portfolio()
+        if not portfolio:
+            return jsonify({"error": "No portfolio found. Run a daily analysis first."}), 400
+        trader = AlpacaTrader()
+        return jsonify(trader.execute_portfolio(portfolio, dry_run=True))
+    except Exception as e:
+        logger.error(f"Alpaca preview failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/alpaca/auto/execute", methods=["POST"])
+@require_auth
+def alpaca_auto_execute():
+    """Execute portfolio rebalance on Alpaca (manual trigger)."""
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirm"):
+        return jsonify({"error": "Missing 'confirm: true'"}), 400
+    try:
+        from alpaca_trader import AlpacaTrader
+        from alpaca_client import is_configured
+        if not is_configured():
+            return jsonify({"error": "Alpaca API keys not configured"}), 400
+        portfolio = load_portfolio()
+        if not portfolio:
+            return jsonify({"error": "No portfolio found. Run a daily analysis first."}), 400
+        trader = AlpacaTrader()
+        results = trader.execute_portfolio(portfolio, dry_run=False)
+        logger.info(f"Alpaca execute: {results.get('summary', {})}")
+        return jsonify(results)
+    except Exception as e:
+        logger.error(f"Alpaca execute failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ── AUTO-TRADER ENDPOINTS ──────────────────────────────────────────────
 @app.route("/api/auto/status")
 @require_auth
@@ -557,6 +627,9 @@ def banner():
     at = AutoTrader.get()
     at_on = AutoTrader.is_enabled()
     print(f"  🤖 Auto-trade: {'ON' if at_on else 'OFF'} (interval {at.interval_min}min)")
+    aat = AlpacaAutoTrader.get()
+    aat_on = AlpacaAutoTrader.is_enabled()
+    print(f"  🦙 Alpaca auto: {'ON' if aat_on else 'OFF'} (interval {aat.interval_min}min)")
     print("=" * 64)
     print()
 
@@ -564,6 +637,7 @@ def banner():
 # Start the auto-trader thread as soon as this module loads so it also runs
 # under WSGI/gunicorn on Railway (not only when __main__).
 AutoTrader.get().start()
+AlpacaAutoTrader.get().start()
 
 
 if __name__ == "__main__":
