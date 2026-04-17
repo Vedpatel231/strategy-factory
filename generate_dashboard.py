@@ -241,7 +241,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .chart-grid{{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:28px;}}
 .chart-box{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;}}
 .chart-box h3{{font-size:1em;color:var(--text);margin-bottom:14px;font-weight:600;}}
-.chart-box canvas{{width:100%!important;max-height:320px;}}
+.chart-box canvas{{width:100%!important;height:280px!important;max-height:320px;}}
 .chart-fallback{{display:flex;flex-direction:column;gap:10px;padding:4px 0;min-height:220px;justify-content:center;}}
 .chart-fallback-note{{color:var(--text-dim);font-size:0.82em;margin-bottom:6px;}}
 .chart-fallback-row{{display:flex;justify-content:space-between;gap:16px;padding:10px 12px;background:rgba(0,212,255,0.05);border:1px solid rgba(45,53,97,0.8);border-radius:10px;font-size:0.88em;}}
@@ -299,6 +299,35 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .filter-btn{{padding:8px 16px;background:var(--card);border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--text-dim);transition:all 0.2s;font-size:0.9em;font-weight:500;}}
 .filter-btn:hover{{border-color:var(--cyan);color:var(--cyan);}}
 .filter-btn.active{{background:rgba(0,212,255,0.15);color:var(--cyan);border-color:var(--cyan);}}
+
+/* P&L CALENDAR */
+.pnl-calendar{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px;}}
+.pnl-calendar-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;}}
+.pnl-calendar-header h3{{font-size:1.1em;color:var(--text);font-weight:600;}}
+.pnl-calendar-nav{{display:flex;align-items:center;gap:12px;}}
+.pnl-calendar-nav button{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 14px;cursor:pointer;color:var(--text-dim);font-size:0.9em;font-weight:500;transition:all 0.2s;}}
+.pnl-calendar-nav button:hover{{border-color:var(--cyan);color:var(--cyan);}}
+.pnl-calendar-nav .cal-month-label{{font-size:1em;font-weight:600;color:var(--cyan);min-width:140px;text-align:center;font-family:'Courier New',monospace;}}
+.pnl-calendar-grid{{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}}
+.pnl-cal-dayheader{{text-align:center;font-size:0.7em;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;padding:8px 0;font-weight:600;}}
+.pnl-cal-cell{{background:rgba(13,17,48,0.5);border:1px solid rgba(45,53,97,0.4);border-radius:8px;padding:8px 6px;min-height:68px;text-align:center;transition:all 0.2s;position:relative;}}
+.pnl-cal-cell:hover{{border-color:var(--cyan);background:rgba(0,212,255,0.04);}}
+.pnl-cal-cell.empty{{background:transparent;border-color:transparent;min-height:0;}}
+.pnl-cal-cell .cal-day{{font-size:0.75em;color:var(--text-dim);margin-bottom:4px;font-weight:500;}}
+.pnl-cal-cell .cal-pnl-usd{{font-size:0.85em;font-weight:700;font-family:'Courier New',monospace;}}
+.pnl-cal-cell .cal-pnl-pct{{font-size:0.7em;font-family:'Courier New',monospace;margin-top:2px;}}
+.pnl-cal-cell.positive .cal-pnl-usd{{color:var(--lime);}}
+.pnl-cal-cell.positive .cal-pnl-pct{{color:var(--lime);}}
+.pnl-cal-cell.negative .cal-pnl-usd{{color:var(--red);}}
+.pnl-cal-cell.negative .cal-pnl-pct{{color:var(--red);}}
+.pnl-cal-cell.zero .cal-pnl-usd{{color:var(--text-dim);}}
+.pnl-cal-cell.zero .cal-pnl-pct{{color:var(--text-dim);}}
+.pnl-cal-cell.today{{border-color:var(--cyan);box-shadow:0 0 8px rgba(0,212,255,0.2);}}
+.pnl-cal-summary{{display:flex;gap:24px;margin-top:16px;padding:14px 20px;background:rgba(0,212,255,0.04);border:1px solid rgba(45,53,97,0.6);border-radius:10px;flex-wrap:wrap;}}
+.pnl-cal-summary-item{{display:flex;flex-direction:column;gap:2px;}}
+.pnl-cal-summary-label{{font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;}}
+.pnl-cal-summary-value{{font-size:1em;font-weight:700;font-family:'Courier New',monospace;color:var(--cyan);}}
+.pnl-cal-nodata{{text-align:center;padding:40px 20px;color:var(--text-dim);font-size:0.9em;}}
 
 /* FOOTER */
 .footer{{text-align:center;padding:32px 0;border-top:1px solid var(--border);margin-top:40px;font-size:0.85em;color:var(--text-dim);}}
@@ -474,6 +503,49 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <canvas id="verdictPieChart"></canvas>
     </div>
   </div>
+  <!-- P&L CALENDAR -->
+  <div class="pnl-calendar" id="pnlCalendarSection">
+    <div class="pnl-calendar-header">
+      <h3>📅 Daily P&L Calendar</h3>
+      <div class="pnl-calendar-nav">
+        <button onclick="calPrev()">◀ Prev</button>
+        <span class="cal-month-label" id="calMonthLabel">—</span>
+        <button onclick="calNext()">Next ▶</button>
+      </div>
+    </div>
+    <div class="pnl-calendar-grid" id="calGrid">
+      <div class="pnl-cal-dayheader">Sun</div>
+      <div class="pnl-cal-dayheader">Mon</div>
+      <div class="pnl-cal-dayheader">Tue</div>
+      <div class="pnl-cal-dayheader">Wed</div>
+      <div class="pnl-cal-dayheader">Thu</div>
+      <div class="pnl-cal-dayheader">Fri</div>
+      <div class="pnl-cal-dayheader">Sat</div>
+    </div>
+    <div class="pnl-cal-summary" id="calSummary" style="display:none;">
+      <div class="pnl-cal-summary-item">
+        <span class="pnl-cal-summary-label">Monthly P&L</span>
+        <span class="pnl-cal-summary-value" id="calSumPnl">—</span>
+      </div>
+      <div class="pnl-cal-summary-item">
+        <span class="pnl-cal-summary-label">Monthly %</span>
+        <span class="pnl-cal-summary-value" id="calSumPct">—</span>
+      </div>
+      <div class="pnl-cal-summary-item">
+        <span class="pnl-cal-summary-label">Best Day</span>
+        <span class="pnl-cal-summary-value" id="calSumBest">—</span>
+      </div>
+      <div class="pnl-cal-summary-item">
+        <span class="pnl-cal-summary-label">Worst Day</span>
+        <span class="pnl-cal-summary-value" id="calSumWorst">—</span>
+      </div>
+      <div class="pnl-cal-summary-item">
+        <span class="pnl-cal-summary-label">Days Tracked</span>
+        <span class="pnl-cal-summary-value" id="calSumDays">—</span>
+      </div>
+    </div>
+  </div>
+
   <div class="footer">
     Strategy Factory v3.0 — Generated {ts}<br>
     <span style="font-size:0.85em;">For informational and educational purposes only. Not financial advice.</span>
@@ -495,8 +567,10 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
             name = a.get("bot_name", a.get("strategy", "Unknown"))
             pair = a.get("pair", "N/A")
             usd = a.get("allocation_usd", a.get("allocated_usd", 0))
+            usd = abs(usd) if abs(usd) < 0.005 else usd  # avoid $-0.00
             pct = a.get("allocation_pct", 0)
             exp_ret = a.get("expected_monthly_return", 0)
+            exp_ret = abs(exp_ret) if abs(exp_ret) < 0.005 else exp_ret  # avoid $-0.00
             score = a.get("score", 0)
             reasoning = a.get("reasoning", "")
             alloc_rows += f"""<tr>
@@ -734,7 +808,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <td><span class="tip" data-tip="Total profit / total loss. Above 1.0 is profitable, 1.5+ is strong.">{pf:.2f}</span></td>
       <td><span class="tip" data-tip="Risk-adjusted return. Above 0.5 is decent, above 1.0 is great.">{sr:.2f}</span></td>
       <td><span class="tip" data-tip="Biggest peak-to-valley drop. Lower is better.">{md:.1f}%</span></td>
-      <td><span class="tip" data-tip="How well this strategy fits current market conditions. 75+ is great.">{adapt:.0f}</span></td>
+      <td><span class="tip" data-tip="How well this strategy fits current market conditions. 75+ is great.">{adapt:.0f}/100</span></td>
     </tr>"""
 
         return f"""<div class="page" id="quantum">
@@ -1209,9 +1283,15 @@ function ensureChartsForPage(name) {{
     var page = canvas.closest('.page');
     if (page && page.id !== name) return;
     if (chartInstances[def.id]) {{
-      if (typeof chartInstances[def.id].resize === 'function') {{
+      try {{
         chartInstances[def.id].resize();
-      }}
+        // Force redraw if canvas has zero dimensions
+        var cw = canvas.clientWidth;
+        var ch = canvas.clientHeight;
+        if (cw > 0 && ch > 0) {{
+          chartInstances[def.id].update();
+        }}
+      }} catch(e) {{}}
       return;
     }}
     if (typeof Chart === 'undefined') {{
@@ -1233,6 +1313,7 @@ registerChart('overviewPnlChart', function() {{
     }},
     options: {{
       responsive: true,
+      maintainAspectRatio: false,
       plugins: {{ legend: {{ display: false }}, tooltip: ttOpts }},
       scales: {{
         y: {{ ticks: {{ color: tickColor }}, grid: {{ color: gridColor }} }},
@@ -1254,6 +1335,7 @@ registerChart('verdictPieChart', function() {{
     }},
     options: {{
       responsive: true,
+      maintainAspectRatio: false,
       plugins: {{
         legend: {{ position: 'bottom', labels: {{ color: labelColor, padding: 16, font: {{ size: 12 }} }} }},
         tooltip: ttOpts
@@ -1474,7 +1556,9 @@ function alpMsg(text, color, persist) {{
 
 function fmtUSD(n) {{
   if (n === null || n === undefined || isNaN(n)) return '—';
-  return '$' + Number(n).toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+  var val = Number(n);
+  if (Math.abs(val) < 0.005) val = 0;  // avoid $-0.00
+  return '$' + val.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
 }}
 
 async function apiGet(url) {{
@@ -1840,7 +1924,11 @@ setInterval(autoRefresh, 30000);
 var alpacaAutoTried = false;
 document.addEventListener('DOMContentLoaded', function() {{
   var initialPage = document.querySelector('.page.active');
-  ensureChartsForPage(initialPage ? initialPage.id : 'overview');
+  var initialPageId = initialPage ? initialPage.id : 'overview';
+  ensureChartsForPage(initialPageId);
+  // Re-trigger after short delay to handle layout stabilization
+  setTimeout(function() {{ ensureChartsForPage(initialPageId); }}, 200);
+  setTimeout(function() {{ ensureChartsForPage(initialPageId); }}, 800);
   var alpacaNav = document.querySelector('.nav-item[data-page="alpaca"]');
   if (alpacaNav) {{
     alpacaNav.addEventListener('click', function() {{
@@ -1856,6 +1944,145 @@ window.addEventListener('resize', function() {{
   var activePage = document.querySelector('.page.active');
   if (activePage) ensureChartsForPage(activePage.id);
 }});
+
+// ── P&L CALENDAR ──────────────────────────────────────────────
+var calData = {{}};
+var calYear = new Date().getFullYear();
+var calMonth = new Date().getMonth(); // 0-indexed
+
+async function calLoadData() {{
+  try {{
+    var resp = await fetch('/api/broker/daily-pnl');
+    var json = await resp.json();
+    calData = json.snapshots || {{}};
+    calRender();
+  }} catch (e) {{
+    calRender(); // render empty
+  }}
+}}
+
+function calPrev() {{
+  calMonth--;
+  if (calMonth < 0) {{ calMonth = 11; calYear--; }}
+  calRender();
+}}
+
+function calNext() {{
+  calMonth++;
+  if (calMonth > 11) {{ calMonth = 0; calYear++; }}
+  calRender();
+}}
+
+function calRender() {{
+  var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('calMonthLabel').textContent = monthNames[calMonth] + ' ' + calYear;
+
+  var grid = document.getElementById('calGrid');
+  // Keep the day headers (first 7 children)
+  var headers = [];
+  for (var h = 0; h < 7 && h < grid.children.length; h++) {{
+    headers.push(grid.children[h]);
+  }}
+  grid.innerHTML = '';
+  headers.forEach(function(hdr) {{ grid.appendChild(hdr); }});
+
+  var firstDay = new Date(calYear, calMonth, 1).getDay();
+  var daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  var today = new Date();
+  var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+
+  // Collect daily P&L changes (compare each day to previous day)
+  var sortedDates = Object.keys(calData).sort();
+  var dailyChanges = {{}};
+  for (var i = 0; i < sortedDates.length; i++) {{
+    var d = sortedDates[i];
+    var snap = calData[d];
+    var prevEquity = snap.starting_balance || 1000;
+    // Find previous day's equity
+    if (i > 0) {{
+      prevEquity = calData[sortedDates[i-1]].equity || prevEquity;
+    }}
+    var dayPnl = (snap.equity || 0) - prevEquity;
+    var dayPct = prevEquity > 0 ? (dayPnl / prevEquity * 100) : 0;
+    dailyChanges[d] = {{ pnl: dayPnl, pct: dayPct, equity: snap.equity }};
+  }}
+
+  // Empty cells before first day
+  for (var e = 0; e < firstDay; e++) {{
+    var empty = document.createElement('div');
+    empty.className = 'pnl-cal-cell empty';
+    grid.appendChild(empty);
+  }}
+
+  var monthPnl = 0;
+  var bestDay = null;
+  var worstDay = null;
+  var daysTracked = 0;
+  var firstEquity = null;
+  var lastEquity = null;
+
+  for (var day = 1; day <= daysInMonth; day++) {{
+    var dateStr = calYear + '-' + String(calMonth+1).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+    var cell = document.createElement('div');
+    cell.className = 'pnl-cal-cell';
+
+    var dayLabel = document.createElement('div');
+    dayLabel.className = 'cal-day';
+    dayLabel.textContent = day;
+    cell.appendChild(dayLabel);
+
+    if (dateStr === todayStr) cell.classList.add('today');
+
+    var change = dailyChanges[dateStr];
+    if (change) {{
+      daysTracked++;
+      if (firstEquity === null) firstEquity = change.equity - change.pnl;
+      lastEquity = change.equity;
+      monthPnl += change.pnl;
+
+      var pnlEl = document.createElement('div');
+      pnlEl.className = 'cal-pnl-usd';
+      pnlEl.textContent = (change.pnl >= 0 ? '+$' : '-$') + Math.abs(change.pnl).toFixed(2);
+      cell.appendChild(pnlEl);
+
+      var pctEl = document.createElement('div');
+      pctEl.className = 'cal-pnl-pct';
+      pctEl.textContent = (change.pct >= 0 ? '+' : '') + change.pct.toFixed(2) + '%';
+      cell.appendChild(pctEl);
+
+      if (change.pnl > 0) cell.classList.add('positive');
+      else if (change.pnl < 0) cell.classList.add('negative');
+      else cell.classList.add('zero');
+
+      if (bestDay === null || change.pnl > bestDay.pnl) bestDay = {{ pnl: change.pnl, date: dateStr }};
+      if (worstDay === null || change.pnl < worstDay.pnl) worstDay = {{ pnl: change.pnl, date: dateStr }};
+    }}
+
+    grid.appendChild(cell);
+  }}
+
+  // Summary
+  var summaryEl = document.getElementById('calSummary');
+  if (daysTracked > 0) {{
+    summaryEl.style.display = 'flex';
+    var pnlColor = monthPnl >= 0 ? 'var(--lime)' : 'var(--red)';
+    var monthPct = firstEquity > 0 ? (monthPnl / firstEquity * 100) : 0;
+    document.getElementById('calSumPnl').textContent = (monthPnl >= 0 ? '+$' : '-$') + Math.abs(monthPnl).toFixed(2);
+    document.getElementById('calSumPnl').style.color = pnlColor;
+    document.getElementById('calSumPct').textContent = (monthPct >= 0 ? '+' : '') + monthPct.toFixed(2) + '%';
+    document.getElementById('calSumPct').style.color = pnlColor;
+    document.getElementById('calSumBest').textContent = bestDay ? ('+$' + bestDay.pnl.toFixed(2)) : '—';
+    document.getElementById('calSumBest').style.color = 'var(--lime)';
+    document.getElementById('calSumWorst').textContent = worstDay ? ('-$' + Math.abs(worstDay.pnl).toFixed(2)) : '—';
+    document.getElementById('calSumWorst').style.color = 'var(--red)';
+    document.getElementById('calSumDays').textContent = daysTracked;
+  }} else {{
+    summaryEl.style.display = 'none';
+  }}
+}}
+
+// Load calendar data on page load
+calLoadData();
 
 </script>"""
 

@@ -178,6 +178,11 @@ class AutoTrader:
                 "summary": results.get("summary", {}),
                 "equity_after": trader.client.get_account()["equity"],
             }
+            # Record daily P&L snapshot for calendar
+            try:
+                trader.client.record_daily_snapshot()
+            except Exception as snap_err:
+                logger.warning(f"Daily snapshot failed: {snap_err}")
             entry["status"] = "ok"
         except Exception as e:
             entry["steps"]["trade"] = {"ok": False, "error": str(e)}

@@ -304,6 +304,24 @@ def broker_reset():
         return jsonify({"error": str(e)}), 500
 
 
+# ── DAILY P&L CALENDAR DATA ────────────────────────────────────────────
+@app.route("/api/broker/daily-pnl")
+@require_auth
+def broker_daily_pnl():
+    """Return all daily P&L snapshots for the calendar view."""
+    from paper_broker import get_daily_pnl
+    data = get_daily_pnl()
+    # Also record today's snapshot if broker is available
+    trader, err = get_paper_trader()
+    if not err:
+        try:
+            today_snap = trader.client.record_daily_snapshot()
+            data[today_snap["date"]] = today_snap
+        except Exception:
+            pass
+    return jsonify({"snapshots": data})
+
+
 # ── AUTO-TRADER ENDPOINTS ──────────────────────────────────────────────
 @app.route("/api/auto/status")
 @require_auth

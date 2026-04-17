@@ -326,3 +326,48 @@ class PaperBroker:
         if status != "all":
             orders = [o for o in orders if o.get("status") == status]
         return orders[:limit]
+
+    # ── DAILY P&L SNAPSHOT ──────────────────────────────────────────────
+    def record_daily_snapshot(self):
+        """Record today's equity snapshot for the P&L calendar.
+
+        Saves/updates an entry in data/daily_pnl.json keyed by YYYY-MM-DD.
+        Each entry stores equity, cash, realized_pl, and total_pl.
+        """
+        acct = self.get_account()
+        today = utc_now().strftime("%Y-%m-%d")
+        pnl_file = os.path.join(_DATA_DIR, "daily_pnl.json")
+        data = {}
+        if os.path.exists(pnl_file):
+            try:
+                with open(pnl_file) as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+        data[today] = {
+            "date": today,
+            "equity": acct["equity"],
+            "cash": acct["cash"],
+            "starting_balance": acct["starting_balance"],
+            "realized_pl": acct["realized_pl"],
+            "total_pl": acct["total_pl"],
+            "total_pl_pct": acct["total_pl_pct"],
+            "positions_count": len(self.state.get("positions", {})),
+            "recorded_at": utc_now().isoformat(),
+        }
+        os.makedirs(os.path.dirname(pnl_file), exist_ok=True)
+        with open(pnl_file, "w") as f:
+            json.dump(data, f, indent=2)
+        return data[today]
+
+
+def get_daily_pnl():
+    """Load daily P&L snapshots from disk. Returns dict keyed by date string."""
+    pnl_file = os.path.join(_DATA_DIR, "daily_pnl.json")
+    if not os.path.exists(pnl_file):
+        return {}
+    try:
+        with open(pnl_file) as f:
+            return json.load(f)
+    except Exception:
+        return {}
