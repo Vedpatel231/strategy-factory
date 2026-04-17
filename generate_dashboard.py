@@ -36,7 +36,6 @@ class DashboardGenerator:
         self.pages = [
             ("overview", "Overview", "📊"),
             ("portfolio", "Portfolio", "💼"),
-            ("alpaca", "Paper Trading", "💵"),
             ("alpaca-live", "Alpaca", "🔗"),
             ("quantum", "Strategy Scorecard", "⚛️"),
             ("bots", "Bot Status", "🤖"),
@@ -93,7 +92,6 @@ class DashboardGenerator:
         parts.append('<div class="main-content">')
         parts.append(self._page_overview(bots_data, evaluations, regime_info, execution_summary, ts))
         parts.append(self._page_portfolio(evaluations, portfolio))
-        parts.append(self._page_alpaca())
         parts.append(self._page_alpaca_live())
         parts.append(self._page_quantum(evaluations))
         parts.append(self._page_bots(bots_data, evaluations))
@@ -226,12 +224,12 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 }}
 
 /* CARDS */
-.cards-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;margin-bottom:28px;}}
+.cards-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;margin-bottom:28px;}}
 .card{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;transition:all 0.3s cubic-bezier(0.4,0,0.2,1);position:relative;overflow:hidden;}}
 .card:hover{{transform:translateY(-4px);border-color:var(--cyan);box-shadow:0 8px 24px rgba(0,212,255,0.1);}}
 .card-label{{font-size:0.75em;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px;font-weight:600;}}
-.card-value{{font-size:2.2em;font-weight:700;font-family:'Courier New',monospace;color:var(--cyan);letter-spacing:-1px;}}
-.card-sub{{font-size:0.85em;color:var(--text-dim);margin-top:8px;}}
+.card-value{{font-size:2.2em;font-weight:700;font-family:'Courier New',monospace;color:var(--cyan);letter-spacing:-1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}}
+.card-sub{{font-size:0.85em;color:var(--text-dim);margin-top:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
 
 /* TABLE */
 .data-table{{width:100%;border-collapse:collapse;font-size:0.9em;}}
@@ -458,28 +456,28 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         return f"""<div class="page active" id="overview">
   <div class="page-title"><span class="accent">📊</span> Overview</div>
 
-  <!-- LIVE PAPER ACCOUNT (populated via JS from broker) -->
-  <h3 style="color:var(--cyan);margin-bottom:14px;font-size:1em;text-transform:uppercase;letter-spacing:1px;">💵 Your Paper Account</h3>
+  <!-- LIVE ACCOUNT (populated via JS from Alpaca) -->
+  <h3 style="color:var(--cyan);margin-bottom:14px;font-size:1em;text-transform:uppercase;letter-spacing:1px;">🦙 Your Alpaca Account</h3>
   <div class="cards-row">
     <div class="card">
-      <div class="card-label">Account Value</div>
+      <div class="card-label">Equity</div>
       <div id="ovEquity" class="card-value">$—</div>
       <div class="card-sub">Cash + positions market value</div>
     </div>
     <div class="card">
-      <div class="card-label">Total P&L</div>
+      <div class="card-label">Today's P&L</div>
       <div id="ovTotalPL" class="card-value">$—</div>
-      <div id="ovTotalPLsub" class="card-sub">vs starting capital</div>
+      <div id="ovTotalPLsub" class="card-sub">since last close</div>
     </div>
     <div class="card">
-      <div class="card-label">Starting Capital</div>
-      <div id="ovStart" class="card-value">$1,000</div>
-      <div class="card-sub">Profits reinvest on next rebalance</div>
+      <div class="card-label">Last Close</div>
+      <div id="ovStart" class="card-value">$—</div>
+      <div class="card-sub">Previous day equity</div>
     </div>
     <div class="card">
-      <div class="card-label">Cash Available</div>
+      <div class="card-label">Buying Power</div>
       <div id="ovCash" class="card-value">$—</div>
-      <div class="card-sub">To deploy</div>
+      <div class="card-sub">Available to trade</div>
     </div>
     <div class="card">
       <div class="card-label">Open Positions</div>
@@ -1397,35 +1395,56 @@ loadLastRefresh();
 
 // ── Live Overview Paper Account Stats ─────────────────────────
 async function loadOverviewAccount() {{
+  var fmt = function(n) {{ return '$' + Number(n || 0).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}}); }};
+  var setText = function(id, val) {{ var el = document.getElementById(id); if(el) {{ el.textContent = val; autoSizeCardValue(el); }} }};
   try {{
-    var r = await fetch('/api/broker/connect');
-    var d = await r.json();
-    if (!d.connected || !d.account) return;
-    var a = d.account;
-    var fmt = function(n) {{ return '$' + Number(n || 0).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}}); }};
-    var setText = function(id, val) {{ var el = document.getElementById(id); if(el) el.textContent = val; }};
-    setText('ovEquity', fmt(a.equity));
-    setText('ovCash', fmt(a.cash));
-    setText('ovStart', fmt(a.starting_balance));
-    var plPct = a.total_pl_pct || 0;
-    var plEl = document.getElementById('ovTotalPL');
-    if (plEl) {{
-      plEl.textContent = (a.total_pl >= 0 ? '+' : '') + fmt(a.total_pl);
-      plEl.style.color = a.total_pl >= 0 ? 'var(--lime)' : 'var(--red)';
+    // Try Alpaca real account first
+    var r = await fetch('/api/alpaca/account');
+    var a = await r.json();
+    if (a && !a.error && a.equity !== undefined) {{
+      setText('ovEquity', fmt(a.equity));
+      setText('ovCash', fmt(a.cash));
+      setText('ovStart', fmt(a.last_equity || a.equity));
+      var pl = a.total_pl || 0;
+      var plPct = a.total_pl_pct || 0;
+      var plEl = document.getElementById('ovTotalPL');
+      if (plEl) {{
+        plEl.textContent = (pl >= 0 ? '+' : '') + fmt(pl);
+        plEl.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
+      }}
+      var plSub = document.getElementById('ovTotalPLsub');
+      if (plSub) plSub.textContent = (plPct >= 0 ? '+' : '') + plPct.toFixed(2) + '% today (Alpaca live)';
+      // Position count from Alpaca
+      var pr = await fetch('/api/alpaca/positions');
+      var pd = await pr.json();
+      if (pd.summary) setText('ovPositions', pd.summary.count);
     }}
-    var plSub = document.getElementById('ovTotalPLsub');
-    if (plSub) plSub.textContent = (plPct >= 0 ? '+' : '') + plPct.toFixed(2) + '% from starting capital';
-    // Position count
-    var pr = await fetch('/api/broker/positions');
-    var pd = await pr.json();
-    if (pd.summary) setText('ovPositions', pd.summary.count);
-    // Expected monthly from status
+  }} catch (e) {{
+    // Alpaca not available — try simulator as fallback
+    try {{
+      var r2 = await fetch('/api/broker/connect');
+      var d2 = await r2.json();
+      if (d2.connected && d2.account) {{
+        var a2 = d2.account;
+        setText('ovEquity', fmt(a2.equity));
+        setText('ovCash', fmt(a2.cash));
+        setText('ovStart', fmt(a2.starting_balance));
+        var plEl2 = document.getElementById('ovTotalPL');
+        if (plEl2) {{
+          plEl2.textContent = (a2.total_pl >= 0 ? '+' : '') + fmt(a2.total_pl);
+          plEl2.style.color = a2.total_pl >= 0 ? 'var(--lime)' : 'var(--red)';
+        }}
+      }}
+    }} catch(e2) {{}}
+  }}
+  // Expected monthly from status (independent of broker)
+  try {{
     var sr = await fetch('/api/status');
     var sd = await sr.json();
     if (sd.expected_monthly_return_pct !== undefined) {{
       setText('ovExpReturn', '+' + (sd.expected_monthly_return_pct || 0).toFixed(1) + '%');
     }}
-  }} catch (e) {{ /* server not running — leave placeholders */ }}
+  }} catch(e3) {{}}
 }}
 loadOverviewAccount();
 
@@ -1458,14 +1477,7 @@ function refreshPageData(page) {{
   if (page === 'overview') {{
     loadOverviewAccount();
     loadLastRefresh();
-  }} else if (page === 'alpaca') {{
-    // Paper Trading page
-    if (alpacaConnected) {{
-      alpacaLoadPositions();
-      alpacaLoadOrders();
-      updatePaperAccountFromAPI();
-    }}
-    autoRefresh();
+    calLoadData();
   }} else if (page === 'alpaca-live') {{
     // Alpaca Live page
     if (alpLiveConnected) {{
@@ -1475,10 +1487,6 @@ function refreshPageData(page) {{
     alpAutoLoadStatus();
   }} else if (page === 'portfolio') {{
     ganttLoad();
-  }}
-  // Calendar is on overview, refresh it too
-  if (page === 'overview') {{
-    calLoadData();
   }}
 }}
 
@@ -1843,6 +1851,24 @@ function fmtUSD(n) {{
   var val = Number(n);
   if (Math.abs(val) < 0.005) val = 0;  // avoid $-0.00
   return '$' + val.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+}}
+// Compact USD for large numbers in tight cards
+function fmtUSDCompact(n) {{
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  var val = Number(n);
+  var abs = Math.abs(val);
+  if (abs >= 1000000) return (val < 0 ? '-' : '') + '$' + (abs/1000000).toFixed(2) + 'M';
+  if (abs >= 10000) return (val < 0 ? '-' : '') + '$' + (abs/1000).toFixed(1) + 'K';
+  if (abs < 0.005) val = 0;
+  return '$' + val.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+}}
+// Auto-size: shrink font if text is too long for card
+function autoSizeCardValue(el) {{
+  if (!el) return;
+  var len = (el.textContent || '').length;
+  if (len > 12) el.style.fontSize = '1.6em';
+  else if (len > 9) el.style.fontSize = '1.8em';
+  else el.style.fontSize = '';  // reset to CSS default (2.2em)
 }}
 
 async function apiGet(url) {{
@@ -2229,14 +2255,6 @@ document.addEventListener('DOMContentLoaded', function() {{
   setTimeout(function() {{ ensureChartsForPage(initialPageId); }}, 200);
   setTimeout(function() {{ ensureChartsForPage(initialPageId); }}, 800);
 
-  // Auto-connect Paper Trading simulator on page load (background)
-  setTimeout(function() {{
-    if (!alpacaConnected) {{
-      alpacaAutoTried = true;
-      alpacaConnect();
-    }}
-  }}, 800);
-
   // Auto-connect Alpaca Live on page load (if keys are configured)
   setTimeout(function() {{
     alpLiveAutoReconnect();
@@ -2300,7 +2318,7 @@ function ganttSetDefaultDates() {{
 
 async function ganttLoad() {{
   try {{
-    var data = await apiGet('/api/broker/orders?limit=500');
+    var data = await apiGet('/api/alpaca/orders?limit=500');
     if (!data.orders || data.orders.length === 0) return;
     window._ganttOrders = data.orders;
     ganttRender();
@@ -2598,12 +2616,17 @@ async function alpLiveConnect() {{
 }}
 
 function alpLiveUpdateAccount(acct) {{
-  document.getElementById('alpLiveEquity').textContent = fmtUSD(acct.equity);
-  document.getElementById('alpLiveCash').textContent = fmtUSD(acct.cash);
+  var eqEl = document.getElementById('alpLiveEquity');
+  eqEl.textContent = fmtUSD(acct.equity);
+  autoSizeCardValue(eqEl);
+  var cashEl = document.getElementById('alpLiveCash');
+  cashEl.textContent = fmtUSD(acct.cash);
+  autoSizeCardValue(cashEl);
   var pl = acct.total_pl || 0;
   var plEl = document.getElementById('alpLivePL');
   plEl.textContent = (pl >= 0 ? '+' : '') + fmtUSD(pl);
   plEl.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
+  autoSizeCardValue(plEl);
   document.getElementById('alpLiveAccNum').textContent = acct.account_number || '—';
 }}
 
