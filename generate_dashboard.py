@@ -37,7 +37,7 @@ class DashboardGenerator:
             ("overview", "Overview", "📊"),
             ("portfolio", "Portfolio", "💼"),
             ("alpaca", "Paper Trading", "💵"),
-            ("quantum", "Quantum Matrix", "⚛️"),
+            ("quantum", "Strategy Scorecard", "⚛️"),
             ("bots", "Bot Status", "🤖"),
             ("performance", "Performance", "📈"),
             ("learning", "Learning Engine", "🧠"),
@@ -131,6 +131,32 @@ class DashboardGenerator:
         if num is None:
             return "—"
         return f"{num:.{decimals}f}{suffix}"
+
+    def _quality_badge(self, metric, value):
+        """Return a small colored badge like (Good) or (Weak) for a metric value."""
+        v = self._num(value, 0)
+        if metric == "pf":  # profit factor
+            if v >= 1.5: return '<span style="color:var(--lime);font-size:0.75em;"> ● Strong</span>'
+            if v >= 1.0: return '<span style="color:var(--amber);font-size:0.75em;"> ● OK</span>'
+            return '<span style="color:var(--red);font-size:0.75em;"> ● Weak</span>'
+        if metric == "sharpe":
+            if v >= 1.0: return '<span style="color:var(--lime);font-size:0.75em;"> ● Strong</span>'
+            if v >= 0.3: return '<span style="color:var(--amber);font-size:0.75em;"> ● OK</span>'
+            return '<span style="color:var(--red);font-size:0.75em;"> ● Weak</span>'
+        if metric == "wr":  # win rate
+            if v >= 60: return '<span style="color:var(--lime);font-size:0.75em;"> ● Strong</span>'
+            if v >= 45: return '<span style="color:var(--amber);font-size:0.75em;"> ● OK</span>'
+            return '<span style="color:var(--red);font-size:0.75em;"> ● Weak</span>'
+        if metric == "adapt":
+            if v >= 75: return '<span style="color:var(--lime);font-size:0.75em;"> ● Strong</span>'
+            if v >= 50: return '<span style="color:var(--amber);font-size:0.75em;"> ● OK</span>'
+            return '<span style="color:var(--red);font-size:0.75em;"> ● Weak</span>'
+        if metric == "dd":  # max drawdown (negative, lower abs is better)
+            av = abs(v)
+            if av <= 10: return '<span style="color:var(--lime);font-size:0.75em;"> ● Low</span>'
+            if av <= 25: return '<span style="color:var(--amber);font-size:0.75em;"> ● Moderate</span>'
+            return '<span style="color:var(--red);font-size:0.75em;"> ● High</span>'
+        return ''
 
     def _evaluation_for_bot(self, bot, evaluations):
         name = bot.get("name", "")
@@ -300,6 +326,17 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .filter-btn:hover{{border-color:var(--cyan);color:var(--cyan);}}
 .filter-btn.active{{background:rgba(0,212,255,0.15);color:var(--cyan);border-color:var(--cyan);}}
 
+/* GANTT TIMELINE */
+.gantt-row{{display:flex;align-items:center;margin-bottom:6px;}}
+.gantt-label{{width:130px;min-width:130px;font-size:0.8em;font-weight:600;color:var(--text);padding-right:12px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.gantt-track{{flex:1;height:28px;background:rgba(13,17,48,0.5);border-radius:6px;position:relative;overflow:hidden;}}
+.gantt-bar{{position:absolute;height:100%;border-radius:6px;min-width:4px;cursor:pointer;transition:opacity 0.2s;}}
+.gantt-bar:hover{{opacity:0.85;}}
+.gantt-bar .gantt-tooltip{{display:none;position:absolute;bottom:110%;left:50%;transform:translateX(-50%);background:#0d1130;color:var(--cyan);padding:8px 12px;border-radius:6px;font-size:0.75em;white-space:nowrap;border:1px solid var(--border);z-index:100;pointer-events:none;}}
+.gantt-bar:hover .gantt-tooltip{{display:block;}}
+.gantt-axis{{display:flex;margin-left:130px;margin-top:8px;font-size:0.7em;color:var(--text-dim);}}
+.gantt-axis span{{flex:1;text-align:center;}}
+
 /* P&L CALENDAR */
 .pnl-calendar{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px;}}
 .pnl-calendar-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;}}
@@ -386,7 +423,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 <div class="sidebar">
   <div class="sidebar-header">
     <h1>Strategy Factory</h1>
-    <p>Quantum Decision Matrix</p>
+    <p>Strategy Scorecard</p>
   </div>
   <nav class="sidebar-nav">{items}</nav>
   <div class="sidebar-footer">v3.0<br>Adaptive Intelligence</div>
@@ -489,7 +526,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="card">
       <div class="card-label">Expected Monthly</div>
       <div id="ovExpReturn" class="card-value" style="color:var(--lime);font-size:1.3em;">—</div>
-      <div class="card-sub">Projection from backtests</div>
+      <div class="card-sub">⚠️ Estimate only, not guaranteed</div>
     </div>
   </div>
 
@@ -604,26 +641,37 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="portfolio-hero-value">${total_capital:,.0f}</div>
     <div class="portfolio-hero-subtitle">Allocated across {n_strats} strategies</div>
   </div>
-  <div class="portfolio-grid">
-    <div>
-      <h3 style="margin-bottom:16px;">Allocation Breakdown</h3>
-      <table class="data-table">
-        <thead><tr>
-          <th>Strategy</th><th>Pair</th><th>Allocated</th><th>%</th>
-          <th>Est. Monthly</th><th>Score</th><th>Reasoning</th>
-        </tr></thead>
-        <tbody>{alloc_rows}</tbody>
-      </table>
+
+  <!-- Bot Activity Timeline (Gantt) -->
+  <div class="chart-box" style="margin-bottom:28px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+      <h3>📊 Bot Activity Timeline</h3>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <label style="font-size:0.8em;color:var(--text-dim);">From:</label>
+        <input type="date" id="ganttFrom" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:0.85em;" />
+        <label style="font-size:0.8em;color:var(--text-dim);">To:</label>
+        <input type="date" id="ganttTo" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:0.85em;" />
+        <button class="filter-btn" onclick="ganttApplyDates()" style="padding:6px 14px;">Apply</button>
+      </div>
     </div>
-    <div class="chart-box" style="display:flex;align-items:center;justify-content:center;">
-      <canvas id="portfolioChart"></canvas>
+    <div id="ganttContainer" style="overflow-x:auto;min-height:200px;">
+      <div style="padding:30px;text-align:center;color:var(--text-dim);font-size:0.9em;">Connect to the paper broker to see bot activity timeline.</div>
     </div>
   </div>
+
+  <h3 style="margin-bottom:16px;">Allocation Breakdown</h3>
+  <table class="data-table" style="margin-bottom:28px;">
+    <thead><tr>
+      <th>Strategy</th><th>Pair</th><th>Allocated</th><th>%</th>
+      <th>Est. Monthly</th><th>Score</th><th>Reasoning</th>
+    </tr></thead>
+    <tbody>{alloc_rows}</tbody>
+  </table>
   {excluded_html}
   <div class="portfolio-summary">
     <h3 style="margin-bottom:16px;">Portfolio Summary</h3>
     <div class="summary-row"><span class="summary-label">Total Allocated</span><span class="summary-value">${total_allocated:,.2f}</span></div>
-    <div class="summary-row"><span class="summary-label">Expected Monthly Return</span><span class="summary-value">${exp_monthly_usd:,.2f} ({exp_monthly_pct:+.1f}%)</span></div>
+    <div class="summary-row"><span class="summary-label">Expected Monthly Return</span><span class="summary-value">${exp_monthly_usd:,.2f} ({exp_monthly_pct:+.1f}%) ⚠️ estimate only</span></div>
     <div class="summary-row"><span class="summary-label">Diversification Score</span><span class="summary-value">{div_score:.0f} / 100</span></div>
     <div class="summary-row"><span class="summary-label">Strategies Included</span><span class="summary-value">{n_strats}</span></div>
     <div class="summary-row"><span class="summary-label">Strategies Excluded</span><span class="summary-value">{len(excluded)}</span></div>
@@ -764,7 +812,12 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div style="margin-bottom:24px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <h3>Recent Orders</h3>
-        <button class="filter-btn" onclick="alpacaLoadOrders()">🔄 Refresh</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="filter-btn active" id="orderFilterAll" onclick="filterOrders('all')">All</button>
+          <button class="filter-btn" id="orderFilterBuy" onclick="filterOrders('buy')">Buy</button>
+          <button class="filter-btn" id="orderFilterSell" onclick="filterOrders('sell')">Sell</button>
+          <button class="filter-btn" onclick="alpacaLoadOrders()">🔄 Refresh</button>
+        </div>
       </div>
       <div id="alpOrdersBody">
         <div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">
@@ -804,15 +857,15 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
             rows += f"""<tr class="row-{v.lower()}" data-verdict="{v}">
       <td><strong>{bot_name}</strong></td>
       <td><span class="badge badge-{v.lower()}">{v}</span></td>
-      <td><span class="tip" data-tip="How often trades are profitable. Above 50% is good.">{wr:.1f}%</span></td>
-      <td><span class="tip" data-tip="Total profit / total loss. Above 1.0 is profitable, 1.5+ is strong.">{pf:.2f}</span></td>
-      <td><span class="tip" data-tip="Risk-adjusted return. Above 0.5 is decent, above 1.0 is great.">{sr:.2f}</span></td>
-      <td><span class="tip" data-tip="Biggest peak-to-valley drop. Lower is better.">{md:.1f}%</span></td>
-      <td><span class="tip" data-tip="How well this strategy fits current market conditions. 75+ is great.">{adapt:.0f}/100</span></td>
+      <td><span class="tip" data-tip="How often trades are profitable. Above 50% is good.">{wr:.1f}%{self._quality_badge('wr', wr)}</span></td>
+      <td><span class="tip" data-tip="Gross profit ÷ gross loss. Above 1.0 means profitable overall.">{pf:.2f}{self._quality_badge('pf', pf)}</span></td>
+      <td><span class="tip" data-tip="Return per unit of risk. Higher is better — 1.0+ is great.">{sr:.2f}{self._quality_badge('sharpe', sr)}</span></td>
+      <td><span class="tip" data-tip="Biggest drop from a peak. Lower is safer.">{md:.1f}%{self._quality_badge('dd', md)}</span></td>
+      <td><span class="tip" data-tip="How well this strategy fits current market conditions. 75+ is great.">{adapt:.0f}/100{self._quality_badge('adapt', adapt)}</span></td>
     </tr>"""
 
         return f"""<div class="page" id="quantum">
-  <div class="page-title"><span class="accent">⚛️</span> Quantum Matrix</div>
+  <div class="page-title"><span class="accent">⚛️</span> Strategy Scorecard</div>
   <div class="filter-buttons">
     <button class="filter-btn active" onclick="filterQuantum('ALL')">Show All</button>
     <button class="filter-btn" onclick="filterQuantum('PAUSE')">Pause</button>
@@ -825,9 +878,9 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <th onclick="sortTable(1)">Verdict</th>
       <th onclick="sortTable(2)">Win Rate</th>
       <th onclick="sortTable(3)">Profit Factor</th>
-      <th onclick="sortTable(4)">Sharpe Ratio</th>
-      <th onclick="sortTable(5)">Max Drawdown</th>
-      <th onclick="sortTable(6)">Adaptation</th>
+      <th onclick="sortTable(4)">Risk-Adj. Return</th>
+      <th onclick="sortTable(5)">Worst Drop</th>
+      <th onclick="sortTable(6)">Market Fit</th>
     </tr></thead>
     <tbody>{rows}</tbody>
   </table>
@@ -864,10 +917,10 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       </div>
       <div class="bot-card-metrics">
         <div><div class="bot-card-metric-label">P&L</div><div class="bot-card-metric-val" style="color:var(--{pnl_color});">${pnl:,.0f}</div></div>
-        <div><div class="bot-card-metric-label">Win Rate</div><div class="bot-card-metric-val">{wr:.1f}%</div></div>
-        <div><div class="bot-card-metric-label">Profit Factor</div><div class="bot-card-metric-val">{pf:.2f}</div></div>
+        <div><div class="bot-card-metric-label">Win Rate</div><div class="bot-card-metric-val">{wr:.1f}%{self._quality_badge('wr', wr)}</div></div>
+        <div><div class="bot-card-metric-label">Profit Factor</div><div class="bot-card-metric-val">{pf:.2f}{self._quality_badge('pf', pf)}</div></div>
         <div><div class="bot-card-metric-label">Trades</div><div class="bot-card-metric-val">{trades:.0f}</div></div>
-        <div><div class="bot-card-metric-label">Adaptation</div><div class="bot-card-metric-val">{adapt:.0f}/100</div></div>
+        <div><div class="bot-card-metric-label">Market Fit</div><div class="bot-card-metric-val">{adapt:.0f}/100{self._quality_badge('adapt', adapt)}</div></div>
         <div><div class="bot-card-metric-label">Current Status</div><div class="bot-card-metric-val" style="color:var(--{status_color});">● {status.upper()}</div></div>
       </div>
     </div>"""
@@ -948,10 +1001,10 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     {emoji} {regime.replace('_',' ').title()} — {confidence:.0f}% Confidence
   </div>
   <div class="cards-row">
-    <div class="card"><div class="card-label">Volatility</div><div class="card-value" style="font-size:1.2em;">{vol}</div></div>
-    <div class="card"><div class="card-label">Trend</div><div class="card-value" style="font-size:1.2em;">{trend}</div></div>
-    <div class="card"><div class="card-label">Autocorrelation</div><div class="card-value" style="font-size:1.2em;">{autocorr}</div></div>
-    <div class="card"><div class="card-label">Vol Ratio</div><div class="card-value" style="font-size:1.2em;">{vol_ratio}</div></div>
+    <div class="card"><div class="card-label">Volatility</div><div class="card-value" style="font-size:1.2em;">{vol}</div><div class="card-sub">How wildly prices are swinging</div></div>
+    <div class="card"><div class="card-label">Trend Direction</div><div class="card-value" style="font-size:1.2em;">{trend}</div><div class="card-sub">Positive = prices going up</div></div>
+    <div class="card"><div class="card-label">Autocorrelation</div><div class="card-value" style="font-size:1.2em;">{autocorr}</div><div class="card-sub">Do trends tend to continue? (closer to 1 = yes)</div></div>
+    <div class="card"><div class="card-label">Vol Ratio</div><div class="card-value" style="font-size:1.2em;">{vol_ratio}</div><div class="card-sub">Current vs historical volatility</div></div>
   </div>
   <div class="chart-grid">
     <div class="chart-box"><h3>Strategy Scores by Regime Fit</h3><canvas id="regimeChart"></canvas></div>
@@ -969,7 +1022,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
             reason_str = "; ".join(reasons) if isinstance(reasons, list) else str(reasons) if reasons else "—"
             is_override = base_v.upper() != v.upper()
             override_class = " override" if is_override else ""
-            override_tag = f' <span style="color:var(--magenta);font-size:0.82em;">🔄 Override from {base_v}</span>' if is_override else ""
+            override_tag = f' <span style="color:var(--magenta);font-size:0.82em;">🔄 System changed from {base_v} → {v} (learning engine thinks this bot still has edge)</span>' if is_override else ""
 
             items += f"""<div class="decision-item{override_class}">
       <div class="decision-meta">
@@ -1346,30 +1399,6 @@ registerChart('verdictPieChart', function() {{
   return {json.dumps([{"label": n, "value": str(v)} for n, v in zip(verdict_labels, verdict_values)])};
 }});
 
-// ── 3. Portfolio Doughnut ───────────────────────────────────────
-registerChart('portfolioChart', function() {{
-  return {{
-    type: 'doughnut',
-    data: {{
-      labels: {json.dumps(alloc_labels)},
-      datasets: [{{ data: {json.dumps(alloc_values)}, backgroundColor: {json.dumps(palette[:len(alloc_labels)])}, borderColor: '#0a0e27', borderWidth: 2 }}]
-    }},
-    options: {{
-      responsive: true,
-      plugins: {{
-        legend: {{ position: 'right', labels: {{ color: labelColor, font: {{ size: 11 }}, padding: 8 }} }},
-        tooltip: {{
-          backgroundColor: '#0d1130', borderColor: '#2d3561', borderWidth: 1,
-          titleColor: '#00d4ff', bodyColor: '#e0e6ff', padding: 10,
-          callbacks: {{ label: function(c) {{ return c.label + ': $' + c.parsed.toFixed(2); }} }}
-        }}
-      }}
-    }}
-  }};
-}}, function() {{
-  return {json.dumps([{"label": n, "value": f"${v:,.2f}"} for n, v in zip(alloc_labels, alloc_values)])};
-}});
-
 // ── 4. P&L Line/Bar (Top 5) ────────────────────────────────────
 registerChart('pnlChart', function() {{
   return {{
@@ -1670,7 +1699,7 @@ async function alpacaLoadOrders() {{
     var rows = '';
     data.orders.forEach(function(o) {{
       var sideColor = o.side === 'buy' ? 'var(--lime)' : 'var(--amber)';
-      rows += '<tr>' +
+      rows += '<tr data-side="' + (o.side || '').toLowerCase() + '">' +
         '<td>' + (o.submitted_at || '').substring(0, 19).replace('T', ' ') + '</td>' +
         '<td><strong>' + o.symbol + '</strong></td>' +
         '<td style="color:' + sideColor + ';font-weight:700;">' + (o.side || '').toUpperCase() + '</td>' +
@@ -1685,6 +1714,22 @@ async function alpacaLoadOrders() {{
       '</tr></thead><tbody>' + rows + '</tbody></table>';
   }} catch (e) {{
     alpMsg('Failed to load orders: ' + e.message, 'var(--red)');
+  }}
+}}
+
+function filterOrders(side) {{
+  var btns = [document.getElementById('orderFilterAll'), document.getElementById('orderFilterBuy'), document.getElementById('orderFilterSell')];
+  btns.forEach(function(b) {{ if (b) b.classList.remove('active'); }});
+  var activeBtn = document.getElementById('orderFilter' + side.charAt(0).toUpperCase() + side.slice(1));
+  if (activeBtn) activeBtn.classList.add('active');
+  var body = document.getElementById('alpOrdersBody');
+  var rows = body.querySelectorAll('tr[data-side]');
+  for (var i = 0; i < rows.length; i++) {{
+    if (side === 'all') {{
+      rows[i].style.display = '';
+    }} else {{
+      rows[i].style.display = rows[i].getAttribute('data-side') === side ? '' : 'none';
+    }}
   }}
 }}
 
@@ -1880,7 +1925,7 @@ async function autoRefresh() {{
         var summary = '';
         if (r.steps && r.steps.trade && r.steps.trade.summary) {{
           var s2 = r.steps.trade.summary;
-          summary = ' · ' + (s2.buys || 0) + 'B ' + (s2.sells || 0) + 'S ' + (s2.closes || 0) + 'C · equity $' + (r.steps.trade.equity_after || 0).toFixed(2);
+          summary = ' · ' + (s2.buys || 0) + ' buys, ' + (s2.sells || 0) + ' sells, ' + (s2.closes || 0) + ' closes · equity $' + (r.steps.trade.equity_after || 0).toFixed(2);
         }}
         if (!summary && r.error) {{
           summary = ' · ' + escapeHtml(String(r.error));
@@ -1944,6 +1989,111 @@ window.addEventListener('resize', function() {{
   var activePage = document.querySelector('.page.active');
   if (activePage) ensureChartsForPage(activePage.id);
 }});
+
+// ── GANTT BOT TIMELINE ────────────────────────────────────────
+var ganttColors = ['#00d4ff','#39ff14','#ffb700','#ff006e','#ff4444','#00dd77','#6b7394','#e0e6ff','#00d4ff','#39ff14','#ffb700','#ff006e'];
+
+function ganttSetDefaultDates() {{
+  var now = new Date();
+  var from = new Date(now.getFullYear(), now.getMonth(), 1);
+  document.getElementById('ganttFrom').value = from.toISOString().split('T')[0];
+  document.getElementById('ganttTo').value = now.toISOString().split('T')[0];
+}}
+
+async function ganttLoad() {{
+  try {{
+    var data = await apiGet('/api/broker/orders?limit=500');
+    if (!data.orders || data.orders.length === 0) return;
+    window._ganttOrders = data.orders;
+    ganttRender();
+  }} catch(e) {{}}
+}}
+
+function ganttApplyDates() {{ ganttRender(); }}
+
+function ganttRender() {{
+  var orders = window._ganttOrders || [];
+  if (!orders.length) return;
+  var fromStr = document.getElementById('ganttFrom').value;
+  var toStr = document.getElementById('ganttTo').value;
+  var fromDate = fromStr ? new Date(fromStr + 'T00:00:00') : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  var toDate = toStr ? new Date(toStr + 'T23:59:59') : new Date();
+  var rangeMs = toDate - fromDate;
+  if (rangeMs <= 0) return;
+
+  // Group orders by symbol, build activity spans
+  var symbols = {{}};
+  orders.forEach(function(o) {{
+    if (!o.symbol || !o.submitted_at) return;
+    if (!symbols[o.symbol]) symbols[o.symbol] = [];
+    symbols[o.symbol].push(o);
+  }});
+
+  // Build spans: buy opens a span, sell closes it
+  var spans = {{}};
+  Object.keys(symbols).forEach(function(sym) {{
+    var symOrders = symbols[sym].sort(function(a,b) {{ return a.submitted_at.localeCompare(b.submitted_at); }});
+    spans[sym] = [];
+    var currentSpan = null;
+    symOrders.forEach(function(o) {{
+      var t = new Date(o.submitted_at);
+      if (o.side === 'buy') {{
+        if (!currentSpan) {{
+          currentSpan = {{ start: t, entryPrice: o.filled_avg_price || 0, symbol: sym }};
+        }}
+      }} else if (o.side === 'sell' && currentSpan) {{
+        currentSpan.end = t;
+        currentSpan.exitPrice = o.filled_avg_price || 0;
+        spans[sym].push(currentSpan);
+        currentSpan = null;
+      }}
+    }});
+    if (currentSpan) {{
+      currentSpan.end = new Date(); // still open
+      currentSpan.exitPrice = null; // still active
+      spans[sym].push(currentSpan);
+    }}
+  }});
+
+  var container = document.getElementById('ganttContainer');
+  var html = '';
+  var symKeys = Object.keys(spans).sort();
+  symKeys.forEach(function(sym, idx) {{
+    var color = ganttColors[idx % ganttColors.length];
+    html += '<div class="gantt-row"><div class="gantt-label">' + sym + '</div><div class="gantt-track">';
+    spans[sym].forEach(function(sp) {{
+      var startMs = Math.max(sp.start - fromDate, 0);
+      var endMs = Math.min(sp.end - fromDate, rangeMs);
+      if (endMs <= 0 || startMs >= rangeMs) return;
+      var leftPct = (startMs / rangeMs * 100).toFixed(2);
+      var widthPct = Math.max(((endMs - startMs) / rangeMs * 100), 0.5).toFixed(2);
+      var entryStr = sp.entryPrice ? '$' + Number(sp.entryPrice).toFixed(2) : '—';
+      var exitStr = sp.exitPrice === null ? 'Still Open' : (sp.exitPrice ? '$' + Number(sp.exitPrice).toFixed(2) : '—');
+      var dateRange = sp.start.toLocaleDateString() + ' → ' + (sp.exitPrice === null ? 'Now' : sp.end.toLocaleDateString());
+      html += '<div class="gantt-bar" style="left:' + leftPct + '%;width:' + widthPct + '%;background:' + color + ';">' +
+        '<div class="gantt-tooltip">' + sym + '<br>Entry: ' + entryStr + '<br>Exit: ' + exitStr + '<br>' + dateRange + '</div></div>';
+    }});
+    html += '</div></div>';
+  }});
+
+  // Axis labels
+  var axisCount = 6;
+  html += '<div class="gantt-axis">';
+  for (var a = 0; a <= axisCount; a++) {{
+    var d = new Date(fromDate.getTime() + (rangeMs * a / axisCount));
+    html += '<span>' + (d.getMonth()+1) + '/' + d.getDate() + '</span>';
+  }}
+  html += '</div>';
+
+  if (symKeys.length === 0) {{
+    html = '<div style="padding:30px;text-align:center;color:var(--text-dim);">No trading activity in this date range.</div>';
+  }}
+  container.innerHTML = html;
+}}
+
+// Load gantt on portfolio page visit
+ganttSetDefaultDates();
+setTimeout(ganttLoad, 1000);
 
 // ── P&L CALENDAR ──────────────────────────────────────────────
 var calData = {{}};
