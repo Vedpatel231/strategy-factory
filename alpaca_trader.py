@@ -30,13 +30,13 @@ def _normalize_alpaca_symbol(pair):
     if not pair:
         return None
     p = pair.upper().replace(" ", "")
-    # Handle BTCUSDT → BTC/USD
-    if p.endswith("USDT"):
-        base = p[:-4]
-        return f"{base}/USD"
-    # Handle BTC/USDT → BTC/USD
+    # Handle BTC/USDT → BTC/USD (check slash version FIRST)
     if p.endswith("/USDT"):
         base = p[:-5]
+        return f"{base}/USD"
+    # Handle BTCUSDT → BTC/USD (no slash)
+    if p.endswith("USDT") and "/" not in p:
+        base = p[:-4]
         return f"{base}/USD"
     # Handle BTCUSD → BTC/USD
     if p.endswith("USD") and "/" not in p:
@@ -84,8 +84,9 @@ class AlpacaTrader:
         effective_capital = capital_override or acct.get("equity", acct.get("cash", 1000))
         scale = effective_capital / dashboard_capital if dashboard_capital > 0 else 1.0
 
+        remaining_cash = float(acct.get("buying_power", acct.get("cash", 0)))
         logger.info(f"Alpaca equity: ${acct.get('equity', 0):.2f}, "
-                    f"scale factor: {scale:.3f}x")
+                    f"buying power: ${remaining_cash:.2f}, scale factor: {scale:.3f}x")
 
         results = {
             "timestamp": datetime.datetime.utcnow().isoformat(),
@@ -144,12 +145,11 @@ class AlpacaTrader:
             order_usd = abs(diff)
 
             if side == "buy":
-                available_cash = float(acct.get("buying_power", acct.get("cash", 0)))
-                order_usd = min(order_usd, available_cash)
+                order_usd = min(order_usd, remaining_cash)
                 if order_usd < 1.0:
                     results["skipped"].append({
                         "bot": bot_name, "pair": sym,
-                        "reason": f"Buying power ${available_cash:.2f} insufficient"
+                        "reason": f"Buying power ${remaining_cash:.2f} insufficient"
                     })
                     continue
 
@@ -161,6 +161,8 @@ class AlpacaTrader:
                     "target_usd": dollar_alloc,
                     "current_usd": current_value,
                 })
+                if side == "buy":
+                    remaining_cash -= order_usd
             else:
                 try:
                     order_result = self.client.submit_order(sym, order_usd, side=side)
@@ -168,6 +170,8 @@ class AlpacaTrader:
                     order_result["target_usd"] = dollar_alloc
                     order_result["current_usd"] = current_value
                     results["orders"].append(order_result)
+                    if side == "buy":
+                        remaining_cash -= order_usd
                 except Exception as e:
                     results["orders"].append({
                         "bot": bot_name, "symbol": sym, "side": side,
