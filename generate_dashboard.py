@@ -974,23 +974,18 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         </div>
       </div>
 
-      <!-- Manual controls -->
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
-        <button onclick="alpAutoPreview()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;">
-          👁 Preview Rebalance
-        </button>
-        <button onclick="alpAutoExecuteNow()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;background:rgba(0,212,255,0.1);border-color:var(--cyan);color:var(--cyan);">
-          ▶ Execute Portfolio Now
-        </button>
-        <button onclick="alpAutoRunNow()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;background:rgba(57,255,20,0.1);border-color:var(--lime);color:var(--lime);">
-          🔄 Full Cycle (Analyze + Trade)
+      <!-- One-click run -->
+      <div style="margin-bottom:16px;">
+        <button id="alpAutoRunBtn" onclick="alpAutoOneClick()" class="filter-btn"
+                style="padding:12px 28px;font-size:1.05em;background:rgba(57,255,20,0.12);border-color:var(--lime);color:var(--lime);font-weight:700;border-radius:10px;">
+          🚀 Run Now
         </button>
       </div>
 
-      <!-- Preview results area -->
-      <div id="alpAutoPreviewResult" style="display:none;margin-bottom:16px;padding:14px;background:rgba(0,212,255,0.05);border:1px solid var(--border);border-radius:8px;">
-        <div style="font-weight:600;margin-bottom:8px;color:var(--cyan);">Rebalance Preview (dry run)</div>
-        <div id="alpAutoPreviewBody" style="font-size:0.9em;color:var(--text-dim);"></div>
+      <!-- Progress + results area -->
+      <div id="alpAutoProgressArea" style="display:none;margin-bottom:16px;padding:16px;background:rgba(0,212,255,0.05);border:1px solid var(--border);border-radius:10px;">
+        <div id="alpAutoProgressSteps" style="font-size:0.9em;"></div>
+        <div id="alpAutoProgressResult" style="margin-top:10px;font-size:0.9em;color:var(--text-dim);"></div>
       </div>
 
       <!-- Status info -->
@@ -1015,7 +1010,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
       <!-- Recent auto-runs log -->
       <div style="font-weight:600;font-size:0.95em;margin-bottom:8px;">Recent Auto-Runs</div>
-      <div id="alpAutoLogsEmpty" style="color:var(--text-dim);font-size:0.85em;">No auto-runs yet. Enable auto-trade or click "Full Cycle" to start.</div>
+      <div id="alpAutoLogsEmpty" style="color:var(--text-dim);font-size:0.85em;">No auto-runs yet. Enable auto-trade or click "Run Now" to start.</div>
       <div id="alpAutoLogs" style="display:none;max-height:250px;overflow-y:auto;font-size:0.85em;"></div>
     </div>
   </div>
@@ -2909,64 +2904,111 @@ async function alpAutoToggle() {{
   }} catch(e) {{ alert('Error: ' + e.message); }}
 }}
 
-async function alpAutoPreview() {{
-  var resultEl = document.getElementById('alpAutoPreviewResult');
-  var bodyEl = document.getElementById('alpAutoPreviewBody');
-  resultEl.style.display = 'block';
-  bodyEl.textContent = '⏳ Running dry-run preview...';
+async function alpAutoOneClick() {{
+  var btn = document.getElementById('alpAutoRunBtn');
+  var area = document.getElementById('alpAutoProgressArea');
+  var steps = document.getElementById('alpAutoProgressSteps');
+  var result = document.getElementById('alpAutoProgressResult');
+  area.style.display = 'block';
+  result.innerHTML = '';
+  btn.disabled = true;
+  btn.textContent = '⏳ Running...';
+  btn.style.opacity = '0.6';
+
+  function step(num, text, status) {{
+    var id = 'alpStep' + num;
+    var el = document.getElementById(id);
+    var icon = status === 'done' ? '✅' : (status === 'error' ? '❌' : (status === 'running' ? '⏳' : '⬜'));
+    var color = status === 'done' ? 'var(--lime)' : (status === 'error' ? 'var(--red)' : (status === 'running' ? 'var(--amber)' : 'var(--text-dim)'));
+    if (!el) {{
+      el = document.createElement('div');
+      el.id = id;
+      el.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);';
+      steps.appendChild(el);
+    }}
+    el.innerHTML = '<span style="margin-right:8px;">' + icon + '</span><span style="color:' + color + ';">' + text + '</span>';
+  }}
+
+  steps.innerHTML = '';
+
+  // Step 1: Preview (dry run)
+  step(1, 'Previewing rebalance...', 'running');
+  step(2, 'Execute trades', 'pending');
+  step(3, 'Refresh dashboard', 'pending');
+
+  var previewData = null;
   try {{
-    var data = await apiGet('/api/alpaca/auto/preview');
-    if (data.error) {{
-      bodyEl.innerHTML = '<span style="color:var(--red);">❌ ' + data.error + '</span>';
+    previewData = await apiGet('/api/alpaca/auto/preview');
+    if (previewData.error) {{
+      step(1, 'Preview failed: ' + previewData.error, 'error');
+      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
       return;
     }}
-    var orders = data.orders || [];
-    var skipped = data.skipped || [];
-    var s = data.summary || {{}};
-    var html = '<div style="margin-bottom:8px;"><strong>' + (s.buys||0) + '</strong> buys, <strong>' + (s.sells||0) + '</strong> sells, <strong>' + (s.closes||0) + '</strong> closes, <strong>' + (s.skipped||0) + '</strong> skipped</div>';
+    var s = previewData.summary || {{}};
+    var orderCount = (s.buys||0) + (s.sells||0) + (s.closes||0);
+    step(1, 'Preview: ' + (s.buys||0) + ' buys, ' + (s.sells||0) + ' sells, ' + (s.closes||0) + ' closes, ' + (s.skipped||0) + ' skipped', 'done');
+
+    // Show preview details
+    var orders = previewData.orders || [];
     if (orders.length > 0) {{
-      html += '<table style="width:100%;font-size:0.85em;"><tr style="color:var(--text-dim);"><th style="text-align:left;">Symbol</th><th>Side</th><th>Amount</th><th>Bot</th></tr>';
+      var html = '<table style="width:100%;font-size:0.85em;margin-top:8px;"><tr style="color:var(--text-dim);"><th style="text-align:left;">Symbol</th><th>Side</th><th>Amount</th><th>Bot</th></tr>';
       orders.forEach(function(o) {{
-        var sColor = o.side === 'buy' ? 'var(--lime)' : 'var(--red)';
+        var cSide = (o.side || '').toLowerCase().split('.').pop();
+        var sColor = cSide === 'buy' ? 'var(--lime)' : 'var(--red)';
         html += '<tr><td style="color:var(--cyan);font-weight:600;">' + (o.symbol||'?') + '</td>' +
-          '<td style="color:' + sColor + ';">' + (o.side||'').toUpperCase() + '</td>' +
+          '<td style="color:' + sColor + ';">' + cSide.toUpperCase() + '</td>' +
           '<td>' + fmtUSD(o.notional||0) + '</td>' +
           '<td style="color:var(--text-dim);">' + (o.bot||'—') + '</td></tr>';
       }});
       html += '</table>';
+      result.innerHTML = html;
     }}
-    if (skipped.length > 0) {{
-      html += '<div style="margin-top:8px;color:var(--text-dim);font-size:0.85em;">' + skipped.length + ' positions skipped (within rebalance threshold)</div>';
+
+    if (orderCount === 0) {{
+      step(2, 'No trades needed — portfolio is balanced', 'done');
+      step(3, 'Done', 'done');
+      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
+      return;
     }}
-    bodyEl.innerHTML = html;
   }} catch(e) {{
-    bodyEl.innerHTML = '<span style="color:var(--red);">❌ ' + e.message + '</span>';
+    step(1, 'Preview error: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
+    return;
   }}
-}}
 
-async function alpAutoExecuteNow() {{
-  if (!confirm('Execute portfolio rebalance on Alpaca NOW? This will place real paper trades.')) return;
+  // Step 2: Execute
+  step(2, 'Executing trades...', 'running');
   try {{
-    var data = await apiPost('/api/alpaca/auto/execute', {{ confirm: true }});
-    if (data.error) {{
-      alert('Error: ' + data.error);
-    }} else {{
-      var s = data.summary || {{}};
-      alert('Executed: ' + (s.buys||0) + ' buys, ' + (s.sells||0) + ' sells, ' + (s.closes||0) + ' closes');
-      setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); alpAutoLoadStatus(); }}, 3000);
+    var execData = await apiPost('/api/alpaca/auto/execute', {{ confirm: true }});
+    if (execData.error) {{
+      step(2, 'Execute failed: ' + execData.error, 'error');
+      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
+      return;
     }}
-  }} catch(e) {{ alert('Error: ' + e.message); }}
-}}
+    var es = execData.summary || {{}};
+    step(2, 'Executed: ' + (es.buys||0) + ' buys, ' + (es.sells||0) + ' sells, ' + (es.closes||0) + ' closes — ' + fmtUSD(es.total_capital_deployed_usd||0) + ' deployed', 'done');
+  }} catch(e) {{
+    step(2, 'Execute error: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
+    return;
+  }}
 
-async function alpAutoRunNow() {{
-  if (!confirm('Run full cycle (analyze + trade) on Alpaca NOW?')) return;
+  // Step 3: Refresh everything
+  step(3, 'Refreshing positions & orders...', 'running');
   try {{
-    var data = await apiPost('/api/alpaca/auto/run-now', {{ confirm: true }});
-    if (data.triggered) {{
-      alert('Full cycle triggered! It will take 1-2 minutes. Check the auto-runs log for results.');
-      setTimeout(alpAutoLoadStatus, 60000);
-    }}
-  }} catch(e) {{ alert('Error: ' + e.message); }}
+    await new Promise(function(r) {{ setTimeout(r, 2000); }});
+    await alpLiveRefreshPositions();
+    await alpLiveRefreshOrders();
+    await alpAutoLoadStatus();
+    await loadOverviewAccount();
+    step(3, 'Dashboard refreshed', 'done');
+  }} catch(e) {{
+    step(3, 'Refresh done (some data may still update)', 'done');
+  }}
+
+  btn.disabled = false;
+  btn.textContent = '🚀 Run Now';
+  btn.style.opacity = '';
 }}
 
 // Load Alpaca auto-trade status on page load
