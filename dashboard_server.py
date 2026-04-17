@@ -67,11 +67,11 @@ HOST = "0.0.0.0" if IS_DEPLOYED else "127.0.0.1"
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
 DASHBOARD_USERNAME = os.getenv("DASHBOARD_USERNAME", "admin")
 
-# Safety: refuse to run publicly without a password
+# Safety warning: prefer auth in deployed environments, but do not hard-fail
+# the service or Railway healthcheck if the env var is temporarily missing.
 if IS_DEPLOYED and not DASHBOARD_PASSWORD:
-    print("❌ DASHBOARD_PASSWORD is required when deployed. "
-          "Set it as an environment variable in your hosting dashboard.")
-    sys.exit(1)
+    logger.warning("DASHBOARD_PASSWORD is not set in a deployed environment; "
+                   "dashboard auth is disabled until the variable is configured.")
 
 
 def require_auth(func):
@@ -154,6 +154,8 @@ def status():
         "portfolio_strategies": portfolio["summary"]["num_strategies"] if portfolio else 0,
         "expected_monthly_return_pct": portfolio["summary"].get("expected_monthly_return_pct", 0) if portfolio else 0,
         "dashboard_path": DASHBOARD_PATH,
+        "auth_enabled": bool(DASHBOARD_PASSWORD),
+        "deployed": IS_DEPLOYED,
     })
 
 

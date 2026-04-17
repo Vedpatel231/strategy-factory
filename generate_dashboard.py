@@ -116,6 +116,37 @@ class DashboardGenerator:
             f.write(html_content)
         return path
 
+    def _num(self, value, default=0.0):
+        try:
+            if value is None or value == "":
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _fmt_metric(self, value, decimals=2, suffix=""):
+        if value is None or value == "":
+            return "—"
+        num = self._num(value, None)
+        if num is None:
+            return "—"
+        return f"{num:.{decimals}f}{suffix}"
+
+    def _evaluation_for_bot(self, bot, evaluations):
+        name = bot.get("name", "")
+        bot_id = bot.get("id")
+
+        if name in evaluations:
+            return evaluations[name]
+
+        if bot_id is not None:
+            bot_id_str = str(bot_id)
+            for entry in evaluations.values():
+                if str(entry.get("bot_id", "")) == bot_id_str:
+                    return entry
+
+        return {}
+
     # ── CSS ──────────────────────────────────────────────────────────────
     def _head(self, timestamp):
         return f"""<!DOCTYPE html>
@@ -211,6 +242,11 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .chart-box{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;}}
 .chart-box h3{{font-size:1em;color:var(--text);margin-bottom:14px;font-weight:600;}}
 .chart-box canvas{{width:100%!important;max-height:320px;}}
+.chart-fallback{{display:flex;flex-direction:column;gap:10px;padding:4px 0;min-height:220px;justify-content:center;}}
+.chart-fallback-note{{color:var(--text-dim);font-size:0.82em;margin-bottom:6px;}}
+.chart-fallback-row{{display:flex;justify-content:space-between;gap:16px;padding:10px 12px;background:rgba(0,212,255,0.05);border:1px solid rgba(45,53,97,0.8);border-radius:10px;font-size:0.88em;}}
+.chart-fallback-row strong{{color:var(--text);font-weight:600;}}
+.chart-fallback-row span{{color:var(--cyan);font-family:'Courier New',monospace;}}
 @media(max-width:1400px){{.chart-grid{{grid-template-columns:1fr;}}}}
 
 /* PORTFOLIO */
@@ -329,14 +365,19 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
     # ── PAGE: OVERVIEW ───────────────────────────────────────────────────
     def _page_overview(self, bots_data, evaluations, regime_info, execution_summary, ts):
-        total = len(evaluations)
-        active_count = sum(1 for e in evaluations.values() if e.get("bot_status") == "active")
-        paused_count = sum(1 for e in evaluations.values() if e.get("bot_status") == "paused")
-        total_pnl = sum(e.get("net_profit", 0) for e in evaluations.values())
-        avg_wr = sum(e.get("win_rate", 0) for e in evaluations.values()) / max(total, 1)
-        avg_pf = sum(e.get("profit_factor", 0) for e in evaluations.values()) / max(total, 1)
+        total = len(bots_data) or len(evaluations)
+        active_count = sum(1 for b in bots_data if str(b.get("status", "")).lower() == "active")
+        paused_count = sum(1 for b in bots_data if str(b.get("status", "")).lower() == "paused")
+        if not active_count and not paused_count:
+            active_count = sum(1 for e in evaluations.values() if str(e.get("bot_status", "")).lower() == "active")
+            paused_count = sum(1 for e in evaluations.values() if str(e.get("bot_status", "")).lower() == "paused")
+        total_pnl = sum(self._num(e.get("net_profit", 0)) for e in evaluations.values())
+        avg_wr = sum(self._num(e.get("win_rate", 0)) for e in evaluations.values()) / max(len(evaluations), 1)
+        avg_pf = sum(self._num(e.get("profit_factor", 0)) for e in evaluations.values()) / max(len(evaluations), 1)
         regime = regime_info.get("regime", "unknown")
-        regime_conf = regime_info.get("confidence", 0)
+        regime_conf = self._num(regime_info.get("confidence", 0))
+        if regime_conf <= 1:
+            regime_conf *= 100
         pnl_color = "cyan" if total_pnl >= 0 else "red"
         pnl_arrow = "↗" if total_pnl >= 0 else "↘"
 
@@ -389,8 +430,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   <div class="cards-row">
     <div class="card">
       <div class="card-label">Active Bots</div>
-      <div class="card-value">{total}</div>
-      <div class="card-sub">{active_count} active · {paused_count} paused</div>
+      <div class="card-value">{active_count}</div>
+      <div class="card-sub">{paused_count} paused · {total} total tracked</div>
     </div>
     <div class="card">
       <div class="card-label">Backtest Cumulative P&L</div>
@@ -681,11 +722,11 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         rows = ""
         for bot_name, ed in evaluations.items():
             v = ed.get("verdict", "HOLD").upper()
-            wr = ed.get("win_rate", 0)
-            pf = ed.get("profit_factor", 0)
-            sr = ed.get("sharpe_ratio", 0)
-            md = ed.get("max_drawdown", 0)
-            adapt = ed.get("adaptation_score", 0)
+            wr = self._num(ed.get("win_rate", 0))
+            pf = self._num(ed.get("profit_factor", 0))
+            sr = self._num(ed.get("sharpe_ratio", 0))
+            md = self._num(ed.get("max_drawdown", 0))
+            adapt = self._num(ed.get("adaptation_score", 0))
             rows += f"""<tr class="row-{v.lower()}" data-verdict="{v}">
       <td><strong>{bot_name}</strong></td>
       <td><span class="badge badge-{v.lower()}">{v}</span></td>
@@ -726,13 +767,14 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
             pair = bot.get("pair", "N/A")
             status = bot.get("status", "unknown")
             # Pull real metrics from evaluations
-            ed = evaluations.get(name, {})
-            pnl = ed.get("net_profit", 0)
-            wr = ed.get("win_rate", 0)
-            trades = ed.get("total_trades", 0)
-            pf = ed.get("profit_factor", 0)
+            ed = self._evaluation_for_bot(bot, evaluations)
+            status = ed.get("bot_status", status)
+            pnl = self._num(ed.get("net_profit", 0))
+            wr = self._num(ed.get("win_rate", 0))
+            trades = self._num(ed.get("total_trades", 0))
+            pf = self._num(ed.get("profit_factor", 0))
             verdict = ed.get("verdict", "HOLD")
-            adapt = ed.get("adaptation_score", 50)
+            adapt = self._num(ed.get("adaptation_score", 50))
 
             pulse = '<span class="status-pulse"></span>' if status == "active" else ""
             status_color = "lime" if status == "active" else "amber" if status == "paused" else "red"
@@ -752,7 +794,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         <div><div class="bot-card-metric-label">Profit Factor</div><div class="bot-card-metric-val">{pf:.2f}</div></div>
         <div><div class="bot-card-metric-label">Trades</div><div class="bot-card-metric-val">{trades:.0f}</div></div>
         <div><div class="bot-card-metric-label">Adaptation</div><div class="bot-card-metric-val">{adapt:.0f}/100</div></div>
-        <div><div class="bot-card-metric-label">Status</div><div class="bot-card-metric-val" style="color:var(--{status_color});">● {status.upper()}</div></div>
+        <div><div class="bot-card-metric-label">Current Status</div><div class="bot-card-metric-val" style="color:var(--{status_color});">● {status.upper()}</div></div>
       </div>
     </div>"""
 
@@ -813,17 +855,18 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     # ── PAGE: MARKET REGIME ──────────────────────────────────────────────
     def _page_regime(self, regime_info):
         regime = regime_info.get("regime", "unknown")
-        confidence = regime_info.get("confidence", 0)
-        details = regime_info.get("details", {})
+        confidence = self._num(regime_info.get("confidence", 0))
+        if confidence <= 1:
+            confidence *= 100
+        details = regime_info.get("details") or regime_info.get("stats", {})
         emojis = {"trending_up": "📈", "trending_down": "📉", "mean_reverting": "↔️",
                   "high_volatility": "⚡", "low_volatility": "⏸️", "choppy": "〰️"}
         emoji = emojis.get(regime, "❓")
 
-        # Show details or placeholders
-        vol = details.get("volatility", details.get("coefficient_of_variation", "N/A"))
-        trend = details.get("trend_direction", details.get("avg_trend", "N/A"))
-        autocorr = details.get("support_strength", details.get("autocorrelation", "N/A"))
-        resist = details.get("resistance_level", details.get("volatility_ratio", "N/A"))
+        vol = self._fmt_metric(details.get("std_dev", details.get("volatility")), 2)
+        trend = self._fmt_metric(details.get("mean_return", details.get("trend_direction")), 2)
+        autocorr = self._fmt_metric(details.get("autocorrelation", details.get("support_strength")), 2)
+        vol_ratio = self._fmt_metric(details.get("coefficient_of_variation", details.get("volatility_ratio")), 2)
 
         return f"""<div class="page" id="regime">
   <div class="page-title"><span class="accent">🌊</span> Market Regime Analysis</div>
@@ -834,7 +877,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="card"><div class="card-label">Volatility</div><div class="card-value" style="font-size:1.2em;">{vol}</div></div>
     <div class="card"><div class="card-label">Trend</div><div class="card-value" style="font-size:1.2em;">{trend}</div></div>
     <div class="card"><div class="card-label">Autocorrelation</div><div class="card-value" style="font-size:1.2em;">{autocorr}</div></div>
-    <div class="card"><div class="card-label">Vol Ratio</div><div class="card-value" style="font-size:1.2em;">{resist}</div></div>
+    <div class="card"><div class="card-label">Vol Ratio</div><div class="card-value" style="font-size:1.2em;">{vol_ratio}</div></div>
   </div>
   <div class="chart-grid">
     <div class="chart-box"><h3>Strategy Scores by Regime Fit</h3><canvas id="regimeChart"></canvas></div>
@@ -947,18 +990,20 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
             regime_bar_colors.append(color_map.get(v, "#00d4ff"))
 
         # Confidence radar from regime details
-        rd = regime_info.get("details", {})
+        rd = regime_info.get("details") or regime_info.get("stats", {})
         conf_labels = list(rd.keys())[:5] if rd else ["Confidence"]
         conf_values = []
         for k in conf_labels:
             val = rd.get(k, 0)
             try:
-                conf_values.append(float(val))
+                num = float(val)
+                conf_values.append(round(num * 100, 1) if 0 <= num <= 1 else round(num, 1))
             except (ValueError, TypeError):
                 conf_values.append(50)  # default
         if not conf_labels:
             conf_labels = ["Regime Confidence"]
-            conf_values = [regime_info.get("confidence", 0)]
+            base_conf = self._num(regime_info.get("confidence", 0))
+            conf_values = [round(base_conf * 100, 1) if 0 <= base_conf <= 1 else round(base_conf, 1)]
 
         # Common chart options
         tt = '{"backgroundColor":"#0d1130","borderColor":"#2d3561","borderWidth":1,"titleColor":"#00d4ff","bodyColor":"#e0e6ff"}'
@@ -1081,6 +1126,7 @@ function showPage(name) {{
     navs[i].classList.remove('active');
     if (navs[i].getAttribute('data-page') === name) navs[i].classList.add('active');
   }}
+  setTimeout(function() {{ ensureChartsForPage(name); }}, 0);
 }}
 
 // ── Quantum Filter ──────────────────────────────────────────────
@@ -1123,12 +1169,63 @@ var ttOpts = {{backgroundColor:'#0d1130',borderColor:'#2d3561',borderWidth:1,tit
 var gridColor = '#2d3561';
 var tickColor = '#8892b0';
 var labelColor = '#e0e6ff';
+var chartRegistry = [];
+var chartInstances = {{}};
+
+function chartSummaryRows(rows) {{
+  return (rows || []).slice(0, 6);
+}}
+
+function renderChartFallback(canvas, rows) {{
+  if (!canvas) return;
+  var parent = canvas.parentNode;
+  if (!parent) return;
+  var existing = parent.querySelector('.chart-fallback');
+  if (existing) return;
+  canvas.style.display = 'none';
+  var wrap = document.createElement('div');
+  wrap.className = 'chart-fallback';
+  var note = document.createElement('div');
+  note.className = 'chart-fallback-note';
+  note.textContent = 'Interactive charts are unavailable, so a compact data summary is shown instead.';
+  wrap.appendChild(note);
+  chartSummaryRows(rows).forEach(function(row) {{
+    var item = document.createElement('div');
+    item.className = 'chart-fallback-row';
+    item.innerHTML = '<strong>' + row.label + '</strong><span>' + row.value + '</span>';
+    wrap.appendChild(item);
+  }});
+  parent.appendChild(wrap);
+}}
+
+function registerChart(id, buildConfig, buildFallback) {{
+  chartRegistry.push({{ id: id, buildConfig: buildConfig, buildFallback: buildFallback }});
+}}
+
+function ensureChartsForPage(name) {{
+  chartRegistry.forEach(function(def) {{
+    var canvas = document.getElementById(def.id);
+    if (!canvas) return;
+    var page = canvas.closest('.page');
+    if (page && page.id !== name) return;
+    if (chartInstances[def.id]) {{
+      if (typeof chartInstances[def.id].resize === 'function') {{
+        chartInstances[def.id].resize();
+      }}
+      return;
+    }}
+    if (typeof Chart === 'undefined') {{
+      renderChartFallback(canvas, def.buildFallback());
+      return;
+    }}
+    canvas.style.display = '';
+    chartInstances[def.id] = new Chart(canvas, def.buildConfig());
+  }});
+}}
 
 // ── 1. Overview P&L Bar ─────────────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('overviewPnlChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('overviewPnlChart', function() {{
+  return {{
     type: 'bar',
     data: {{
       labels: {json.dumps(ov_names)},
@@ -1142,14 +1239,14 @@ var labelColor = '#e0e6ff';
         x: {{ ticks: {{ color: tickColor, maxRotation: 45 }}, grid: {{ display: false }} }}
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": f"${v:,.0f}"} for n, v in zip(ov_names, ov_pnl)])};
+}});
 
 // ── 2. Verdict Pie ──────────────────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('verdictPieChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('verdictPieChart', function() {{
+  return {{
     type: 'doughnut',
     data: {{
       labels: {json.dumps(verdict_labels)},
@@ -1162,14 +1259,14 @@ var labelColor = '#e0e6ff';
         tooltip: ttOpts
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": str(v)} for n, v in zip(verdict_labels, verdict_values)])};
+}});
 
 // ── 3. Portfolio Doughnut ───────────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('portfolioChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('portfolioChart', function() {{
+  return {{
     type: 'doughnut',
     data: {{
       labels: {json.dumps(alloc_labels)},
@@ -1186,14 +1283,14 @@ var labelColor = '#e0e6ff';
         }}
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": f"${v:,.2f}"} for n, v in zip(alloc_labels, alloc_values)])};
+}});
 
 // ── 4. P&L Line/Bar (Top 5) ────────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('pnlChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('pnlChart', function() {{
+  return {{
     type: 'bar',
     data: {{
       labels: {json.dumps(pnl_names)},
@@ -1207,14 +1304,14 @@ var labelColor = '#e0e6ff';
         x: {{ ticks: {{ color: tickColor }}, grid: {{ display: false }} }}
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": f"${v:,.0f}"} for n, v in zip(pnl_names, pnl_values)])};
+}});
 
 // ── 5. Win Rate Horizontal Bar ──────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('winrateChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('winrateChart', function() {{
+  return {{
     type: 'bar',
     data: {{
       labels: {json.dumps(wr_names)},
@@ -1229,14 +1326,14 @@ var labelColor = '#e0e6ff';
         y: {{ ticks: {{ color: tickColor, font: {{ size: 10 }} }} }}
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": f"{v:.1f}%"} for n, v in zip(wr_names, wr_values)])};
+}});
 
 // ── 6. Risk vs Return Scatter ───────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('riskreturnChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('riskreturnChart', function() {{
+  return {{
     type: 'scatter',
     data: {{
       datasets: [{{ label: 'Strategies', data: {json.dumps(scatter_data)}, backgroundColor: '#00d4ff', borderColor: '#39ff14', borderWidth: 2, pointRadius: 7 }}]
@@ -1249,14 +1346,14 @@ var labelColor = '#e0e6ff';
         y: {{ title: {{ display: true, text: 'Profit Factor', color: labelColor }}, ticks: {{ color: tickColor }}, grid: {{ color: gridColor }} }}
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": d.get("label", "Strategy"), "value": f"Sharpe {d['x']:.2f} · PF {d['y']:.2f}"} for d in scatter_data])};
+}});
 
 // ── 7. Radar (Top Strategy) ────────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('radarChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('radarChart', function() {{
+  return {{
     type: 'radar',
     data: {{
       labels: ['Win Rate', 'Profit Factor', 'Sharpe', 'Consistency', 'Adaptation'],
@@ -1267,14 +1364,14 @@ var labelColor = '#e0e6ff';
       plugins: {{ legend: {{ labels: {{ color: labelColor }} }}, tooltip: ttOpts }},
       scales: {{ r: {{ ticks: {{ color: tickColor, backdropColor: 'transparent' }}, grid: {{ color: gridColor }}, beginAtZero: true, max: 100 }} }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": f"{v:.1f}"} for n, v in zip(['Win Rate', 'Profit Factor', 'Sharpe', 'Consistency', 'Adaptation'], radar_data)])};
+}});
 
 // ── 8. Adaptation Bar ──────────────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('adaptationChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('adaptationChart', function() {{
+  return {{
     type: 'bar',
     data: {{
       labels: {json.dumps(adapt_names)},
@@ -1288,14 +1385,14 @@ var labelColor = '#e0e6ff';
         x: {{ ticks: {{ color: tickColor, maxRotation: 45, font: {{ size: 10 }} }}, grid: {{ display: false }} }}
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": f"{v:.0f}/100"} for n, v in zip(adapt_names, adapt_scores)])};
+}});
 
 // ── 9. Adaptation vs Win Rate Scatter ──────────────────────────
-(function() {{
-  var ctx = document.getElementById('adaptWinrateChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('adaptWinrateChart', function() {{
+  return {{
     type: 'scatter',
     data: {{
       datasets: [{{ label: 'Adapt vs WR', data: {json.dumps(adapt_wr_data)}, backgroundColor: '#ff006e', borderColor: '#ffb700', borderWidth: 2, pointRadius: 7 }}]
@@ -1308,14 +1405,14 @@ var labelColor = '#e0e6ff';
         y: {{ title: {{ display: true, text: 'Win Rate %', color: labelColor }}, ticks: {{ color: tickColor }}, grid: {{ color: gridColor }} }}
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": d.get("label", "Strategy"), "value": f"Adapt {d['x']:.0f} · WR {d['y']:.1f}%"} for d in adapt_wr_data])};
+}});
 
 // ── 10. Regime Bar Chart ───────────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('regimeChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('regimeChart', function() {{
+  return {{
     type: 'bar',
     data: {{
       labels: {json.dumps(regime_names)},
@@ -1329,14 +1426,14 @@ var labelColor = '#e0e6ff';
         x: {{ ticks: {{ color: tickColor, maxRotation: 45, font: {{ size: 10 }} }}, grid: {{ display: false }} }}
       }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": f"{v:.0f}/100"} for n, v in zip(regime_names, regime_scores)])};
+}});
 
 // ── 11. Confidence Radar ───────────────────────────────────────
-(function() {{
-  var ctx = document.getElementById('confidenceChart');
-  if (!ctx) return;
-  new Chart(ctx, {{
+registerChart('confidenceChart', function() {{
+  return {{
     type: 'radar',
     data: {{
       labels: {json.dumps(conf_labels)},
@@ -1347,19 +1444,32 @@ var labelColor = '#e0e6ff';
       plugins: {{ legend: {{ labels: {{ color: labelColor }} }}, tooltip: ttOpts }},
       scales: {{ r: {{ ticks: {{ color: tickColor, backdropColor: 'transparent' }}, grid: {{ color: gridColor }}, beginAtZero: true }} }}
     }}
-  }});
-}})();
+  }};
+}}, function() {{
+  return {json.dumps([{"label": n, "value": f"{v:.2f}"} for n, v in zip(conf_labels, conf_values)])};
+}});
 
 // ── ALPACA PAGE ────────────────────────────────────────────────
 var alpacaConnected = false;
 var alpacaPreviewData = null;
+var alpMsgTimer = null;
 
-function alpMsg(text, color) {{
+function alpMsg(text, color, persist) {{
   var el = document.getElementById('alpActionMsg');
   if (!el) return;
+  if (alpMsgTimer) {{
+    clearTimeout(alpMsgTimer);
+    alpMsgTimer = null;
+  }}
   el.style.display = 'block';
   el.style.color = color || 'var(--text-dim)';
   el.textContent = text;
+  if (!persist) {{
+    alpMsgTimer = setTimeout(function() {{
+      el.style.display = 'none';
+      el.textContent = '';
+    }}, 8000);
+  }}
 }}
 
 function fmtUSD(n) {{
@@ -1729,6 +1839,8 @@ setInterval(autoRefresh, 30000);
 // Auto-connect when user clicks the Alpaca tab for the first time
 var alpacaAutoTried = false;
 document.addEventListener('DOMContentLoaded', function() {{
+  var initialPage = document.querySelector('.page.active');
+  ensureChartsForPage(initialPage ? initialPage.id : 'overview');
   var alpacaNav = document.querySelector('.nav-item[data-page="alpaca"]');
   if (alpacaNav) {{
     alpacaNav.addEventListener('click', function() {{
@@ -1738,6 +1850,11 @@ document.addEventListener('DOMContentLoaded', function() {{
       }}
     }});
   }}
+}});
+
+window.addEventListener('resize', function() {{
+  var activePage = document.querySelector('.page.active');
+  if (activePage) ensureChartsForPage(activePage.id);
 }});
 
 </script>"""

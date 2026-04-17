@@ -263,20 +263,23 @@ class StrategyFactoryClient:
 
             strategy = dict(row)
 
-            # Get aggregated performance metrics from history
+            # Use the latest performance snapshot for current dashboard metrics.
+            # Summing historical cumulative fields like total_trades inflates counts.
             cursor.execute("""
                 SELECT
-                    AVG(win_rate) as win_rate,
-                    SUM(total_trades) as total_trades,
-                    SUM(pnl) as net_profit,
-                    MIN(drawdown) as max_drawdown,
-                    AVG(sharpe_ratio) as sharpe_ratio,
-                    AVG(profit_factor) as profit_factor,
-                    AVG(avg_win) as avg_win,
-                    AVG(avg_loss) as avg_loss,
-                    MAX(consecutive_losses) as consecutive_losses
+                    win_rate,
+                    total_trades,
+                    pnl as net_profit,
+                    drawdown as max_drawdown,
+                    sharpe_ratio,
+                    profit_factor,
+                    avg_win,
+                    avg_loss,
+                    consecutive_losses
                 FROM performance_history
                 WHERE strategy_id = ?
+                ORDER BY date DESC
+                LIMIT 1
             """, (strategy_id,))
             perf = cursor.fetchone()
             if perf:

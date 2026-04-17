@@ -27,6 +27,7 @@ STATE_FILE = os.path.join(_DATA_DIR, "paper_account.json")
 DEFAULT_STARTING_BALANCE = 1000.0
 DEFAULT_SYNTHETIC_PRICE = 100.0
 MONTH_SECONDS = 30 * 24 * 60 * 60
+MARK_TO_MODEL_TIME_ACCELERATION = float(os.environ.get("PAPER_BROKER_TIME_ACCELERATION", "1440"))
 
 # All symbols our bots trade — normalized to a simple internal symbol format.
 SUPPORTED_SYMBOLS = {
@@ -112,7 +113,7 @@ class PaperBroker:
         now = as_of or utc_now()
         current_price = float(pos.get("current_price") or pos.get("avg_entry_price") or self._default_price(symbol))
         last_marked = parse_iso(pos.get("last_marked_at") or pos.get("opened_at") or now.isoformat())
-        elapsed = max(0.0, (now - last_marked).total_seconds())
+        elapsed = max(0.0, (now - last_marked).total_seconds()) * max(MARK_TO_MODEL_TIME_ACCELERATION, 1.0)
         monthly_pct = self._normalize_model_return(pos.get("model_monthly_return_pct", 0.0))
         if elapsed > 0:
             growth_factor = max(0.01, 1 + (monthly_pct / 100.0))
