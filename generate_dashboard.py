@@ -1392,9 +1392,8 @@ async function loadLastRefresh() {{
     trigEl.style.display = 'none';
   }}
 }}
-// Refresh the badge when page loads and every 60s
+// Refresh the badge on page load (periodic refresh handled by liveTick)
 loadLastRefresh();
-setInterval(loadLastRefresh, 60000);
 
 // ── Live Overview Paper Account Stats ─────────────────────────
 async function loadOverviewAccount() {{
@@ -1429,12 +1428,14 @@ async function loadOverviewAccount() {{
   }} catch (e) {{ /* server not running — leave placeholders */ }}
 }}
 loadOverviewAccount();
-setInterval(loadOverviewAccount, 30000);
 
 // ── Navigation ──────────────────────────────────────────────────
 var allPages = {json.dumps([p[0] for p in self.pages])};
 
+var _currentPage = 'overview';
+
 function showPage(name) {{
+  _currentPage = name;
   allPages.forEach(function(p) {{
     var el = document.getElementById(p);
     if (el) el.classList.remove('active');
@@ -1447,7 +1448,60 @@ function showPage(name) {{
     if (navs[i].getAttribute('data-page') === name) navs[i].classList.add('active');
   }}
   setTimeout(function() {{ ensureChartsForPage(name); }}, 0);
+  // Refresh data for the page being shown
+  refreshPageData(name);
 }}
+
+// ── LIVE REFRESH ENGINE ─────────────────────────────────────────
+// Refreshes the active page's data every 30s so numbers feel alive.
+function refreshPageData(page) {{
+  if (page === 'overview') {{
+    loadOverviewAccount();
+    loadLastRefresh();
+  }} else if (page === 'alpaca') {{
+    // Paper Trading page
+    if (alpacaConnected) {{
+      alpacaLoadPositions();
+      alpacaLoadOrders();
+      updatePaperAccountFromAPI();
+    }}
+    autoRefresh();
+  }} else if (page === 'alpaca-live') {{
+    // Alpaca Live page
+    if (alpLiveConnected) {{
+      alpLiveRefreshPositions();
+      alpLiveRefreshOrders();
+    }}
+    alpAutoLoadStatus();
+  }} else if (page === 'portfolio') {{
+    ganttLoad();
+  }}
+  // Calendar is on overview, refresh it too
+  if (page === 'overview') {{
+    calLoadData();
+  }}
+}}
+
+async function updatePaperAccountFromAPI() {{
+  try {{
+    var data = await apiGet('/api/broker/account');
+    if (data) updateAccountCards(data);
+    var statusEl = document.getElementById('alpacaConnMsg');
+    if (statusEl && data) {{
+      var pl = data.total_pl || 0;
+      var plStr = (pl >= 0 ? '+$' : '-$') + Math.abs(pl).toFixed(2);
+      statusEl.textContent = 'Account ' + (data.account_number||'') + ' · Starting $' + (data.starting_balance || 1000).toFixed(2) + ' · Total P&L: ' + plStr;
+    }}
+  }} catch(e) {{}}
+}}
+
+// Global tick — runs every 30 seconds, refreshes the ACTIVE page
+var _liveTickCount = 0;
+function liveTick() {{
+  _liveTickCount++;
+  refreshPageData(_currentPage);
+}}
+setInterval(liveTick, 30000);
 
 // ── Quantum Filter ──────────────────────────────────────────────
 function filterQuantum(verdict) {{
@@ -2154,29 +2208,72 @@ async function autoRunNow() {{
   }}
 }}
 
-// Auto-refresh status every 30s
+// Initial auto-refresh load (periodic refresh handled by liveTick)
 autoRefresh();
-setInterval(autoRefresh, 30000);
 
-// Auto-connect when user clicks the Alpaca tab for the first time
+// Auto-connect brokers and set up page navigation
 var alpacaAutoTried = false;
 document.addEventListener('DOMContentLoaded', function() {{
   var initialPage = document.querySelector('.page.active');
   var initialPageId = initialPage ? initialPage.id : 'overview';
+  _currentPage = initialPageId;
   ensureChartsForPage(initialPageId);
-  // Re-trigger after short delay to handle layout stabilization
   setTimeout(function() {{ ensureChartsForPage(initialPageId); }}, 200);
   setTimeout(function() {{ ensureChartsForPage(initialPageId); }}, 800);
-  var alpacaNav = document.querySelector('.nav-item[data-page="alpaca"]');
-  if (alpacaNav) {{
-    alpacaNav.addEventListener('click', function() {{
-      if (!alpacaAutoTried && !alpacaConnected) {{
-        alpacaAutoTried = true;
-        setTimeout(alpacaConnect, 300);
-      }}
-    }});
-  }}
+
+  // Auto-connect Paper Trading simulator on page load (background)
+  setTimeout(function() {{
+    if (!alpacaConnected) {{
+      alpacaAutoTried = true;
+      alpacaConnect();
+    }}
+  }}, 800);
+
+  // Auto-connect Alpaca Live on page load (if keys are configured)
+  setTimeout(function() {{
+    alpLiveAutoReconnect();
+  }}, 1500);
 }});
+
+// Alpaca Live: auto-reconnect on page load so user doesn't have to click Connect every refresh
+async function alpLiveAutoReconnect() {{
+  try {{
+    var data = await apiGet('/api/alpaca/status');
+    if (data.configured) {{
+      // Keys are set — auto-connect silently
+      var statusEl = document.getElementById('alpLiveConnStatus');
+      var msgEl = document.getElementById('alpLiveConnMsg');
+      if (statusEl) {{
+        statusEl.textContent = '🟡 Auto-connecting...';
+        statusEl.style.color = 'var(--amber)';
+      }}
+      var connData = await apiPost('/api/alpaca/connect', {{}});
+      if (connData.connected) {{
+        alpLiveConnected = true;
+        if (statusEl) {{
+          statusEl.textContent = '🟢 Connected';
+          statusEl.style.color = 'var(--lime)';
+        }}
+        if (msgEl) {{
+          msgEl.textContent = 'Account ' + (connData.account.account_number || '') + ' · ' + (connData.account.status || '');
+        }}
+        var btn = document.getElementById('alpLiveConnBtn');
+        if (btn) {{
+          btn.textContent = '✅ Connected';
+          btn.style.borderColor = 'var(--lime)';
+          btn.style.color = 'var(--lime)';
+          btn.disabled = true;
+        }}
+        document.getElementById('alpLiveAccountSection').style.display = 'block';
+        alpLiveUpdateAccount(connData.account);
+        alpLiveRefreshPositions();
+        alpLiveRefreshOrders();
+      }}
+    }}
+  }} catch(e) {{
+    // Silent — will show "Not Connected" until user clicks Connect
+  }}
+}}
 
 window.addEventListener('resize', function() {{
   var activePage = document.querySelector('.page.active');
