@@ -2471,7 +2471,7 @@ async function alpLiveRefreshPositions() {{
         '<td>' + fmtUSD(p.market_value) + '</td>' +
         '<td style="color:' + plColor + ';">' + plSign + fmtUSD(p.unrealized_pl) + '</td>' +
         '<td style="color:' + plColor + ';">' + plSign + p.unrealized_plpc.toFixed(2) + '%</td>' +
-        '<td><button onclick="alpLiveClosePos(\'' + p.symbol + '\')" class="filter-btn" style="padding:4px 10px;font-size:0.8em;color:var(--red);border-color:var(--red);">Close</button></td>' +
+        '<td><button onclick="alpLiveClosePos(\\x27' + p.symbol + '\\x27)" class="filter-btn" style="padding:4px 10px;font-size:0.8em;color:var(--red);border-color:var(--red);">Close</button></td>' +
         '</tr>';
     }});
     if (data.summary) {{
