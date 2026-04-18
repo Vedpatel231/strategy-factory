@@ -1,6 +1,6 @@
 """
 Strategy Factory Bot Manager — Database Seeder
-Initializes SQLite database and populates with 18 sample bots and strategies
+Initializes SQLite database and populates with ~200 bots and strategies
 with 30 days of realistic simulated performance history.
 
 Usage: python seed_data.py
@@ -22,27 +22,66 @@ G = "\033[92m"; R = "\033[91m"; Y = "\033[93m"; C = "\033[96m"
 B = "\033[1m"; X = "\033[0m"; D = "\033[90m"
 
 
-# ── Strategy definitions ─────────────────────────────────────────────
-STRATEGIES = [
-    {"name": "BTC Scalper Alpha",       "type": "scalping",        "timeframe": "1m",  "pair": "BTC/USDT",   "desc": "High-frequency BTC scalping on 1-minute candles"},
-    {"name": "ETH Momentum Wave",       "type": "momentum",        "timeframe": "15m", "pair": "ETH/USDT",   "desc": "ETH momentum breakout strategy on 15m"},
-    {"name": "SOL Trend Rider",         "type": "trend_following",  "timeframe": "4h",  "pair": "SOL/USDT",   "desc": "SOL trend following on 4-hour timeframe"},
-    {"name": "BNB Mean Reverter",       "type": "mean_reversion",   "timeframe": "1h",  "pair": "BNB/USDT",   "desc": "BNB mean reversion on 1-hour candles"},
-    {"name": "ADA Breakout Hunter",     "type": "breakout",         "timeframe": "30m", "pair": "ADA/USDT",   "desc": "ADA breakout detection on 30-minute chart"},
-    {"name": "XRP Grid Master",         "type": "grid",             "timeframe": "5m",  "pair": "XRP/USDT",   "desc": "XRP grid trading on 5-minute candles"},
-    {"name": "DOT Swing Trader",        "type": "swing",            "timeframe": "4h",  "pair": "DOT/USDT",   "desc": "DOT swing trading on 4-hour chart"},
-    {"name": "AVAX Scalper Pro",        "type": "scalping",         "timeframe": "1m",  "pair": "AVAX/USDT",  "desc": "AVAX high-frequency scalping strategy"},
-    {"name": "LINK Trend Surfer",       "type": "trend_following",  "timeframe": "1h",  "pair": "LINK/USDT",  "desc": "LINK trend following on 1-hour candles"},
-    {"name": "MATIC Momentum Beta",     "type": "momentum",         "timeframe": "15m", "pair": "MATIC/USDT", "desc": "MATIC momentum strategy on 15m"},
-    {"name": "DOGE Breakout Blitz",     "type": "breakout",         "timeframe": "15m", "pair": "DOGE/USDT",  "desc": "DOGE breakout strategy with tight stops"},
-    {"name": "UNI Mean Reverter Pro",   "type": "mean_reversion",   "timeframe": "30m", "pair": "UNI/USDT",   "desc": "UNI mean reversion with Bollinger Bands"},
-    {"name": "ATOM Swing Elite",        "type": "swing",            "timeframe": "4h",  "pair": "ATOM/USDT",  "desc": "ATOM swing trading with RSI confirmation"},
-    {"name": "FTM Grid Optimizer",      "type": "grid",             "timeframe": "5m",  "pair": "FTM/USDT",   "desc": "FTM grid trading with dynamic levels"},
-    {"name": "NEAR Scalper Gamma",      "type": "scalping",         "timeframe": "1m",  "pair": "NEAR/USDT",  "desc": "NEAR quick scalps on 1-minute chart"},
-    {"name": "ALGO Trend Catcher",      "type": "trend_following",  "timeframe": "1h",  "pair": "ALGO/USDT",  "desc": "ALGO trend following with EMA crossover"},
-    {"name": "APE Momentum Surge",      "type": "momentum",         "timeframe": "30m", "pair": "APE/USDT",   "desc": "APE momentum surge detection on 30m"},
-    {"name": "CRV Breakout Seeker",     "type": "breakout",         "timeframe": "15m", "pair": "CRV/USDT",   "desc": "CRV breakout with volume confirmation"},
+# ── All tradeable crypto pairs (Alpaca-supported + a few extra) ──────
+COINS = [
+    "BTC", "ETH", "SOL", "XRP", "AVAX", "DOGE", "SHIB", "DOT", "UNI",
+    "LINK", "LTC", "BCH", "AAVE", "ADA", "ALGO", "ATOM", "CRV", "NEAR",
+    "MKR", "GRT", "SUSHI", "YFI", "BAT", "XTZ",
+    # Unsupported on Alpaca but included for learning engine diversity
+    "BNB", "FTM", "APE", "MATIC",
 ]
+
+STRATEGY_TYPES = [
+    ("scalping",        "1m"),
+    ("momentum",        "15m"),
+    ("trend_following",  "4h"),
+    ("mean_reversion",   "1h"),
+    ("breakout",         "30m"),
+    ("grid",             "5m"),
+    ("swing",            "4h"),
+]
+
+# Strategy name templates — maps type to a name suffix
+_NAME_SUFFIXES = {
+    "scalping":        "Scalper",
+    "momentum":        "Momentum",
+    "trend_following":  "Trend",
+    "mean_reversion":   "MeanRev",
+    "breakout":         "Breakout",
+    "grid":             "Grid",
+    "swing":            "Swing",
+}
+
+# Extra timeframe variants for top coins (to push from ~196 → ~200+)
+_EXTRA_VARIANTS = [
+    {"name": "BTC Scalper 5m",        "type": "scalping",        "timeframe": "5m",  "pair": "BTC/USDT",  "desc": "BTC scalping on 5-minute candles"},
+    {"name": "BTC Trend 1h",          "type": "trend_following",  "timeframe": "1h",  "pair": "BTC/USDT",  "desc": "BTC trend following on 1-hour candles"},
+    {"name": "ETH Scalper 5m",        "type": "scalping",        "timeframe": "5m",  "pair": "ETH/USDT",  "desc": "ETH scalping on 5-minute candles"},
+    {"name": "ETH Breakout 1h",       "type": "breakout",        "timeframe": "1h",  "pair": "ETH/USDT",  "desc": "ETH breakout detection on 1-hour chart"},
+    {"name": "SOL Momentum 1h",       "type": "momentum",        "timeframe": "1h",  "pair": "SOL/USDT",  "desc": "SOL momentum strategy on 1-hour candles"},
+    {"name": "XRP Swing 1h",          "type": "swing",           "timeframe": "1h",  "pair": "XRP/USDT",  "desc": "XRP swing trading on 1-hour chart"},
+]
+
+
+def _build_strategies():
+    """Generate ~200 strategies from all coin × strategy type combinations + extras."""
+    strategies = []
+    for coin in COINS:
+        for stype, tf in STRATEGY_TYPES:
+            suffix = _NAME_SUFFIXES[stype]
+            name = f"{coin} {suffix} {tf}"
+            pair = f"{coin}/USDT"
+            desc = f"{coin} {stype.replace('_', ' ')} strategy on {tf} timeframe"
+            strategies.append({
+                "name": name, "type": stype, "timeframe": tf,
+                "pair": pair, "desc": desc,
+            })
+    # Add extra timeframe variants
+    strategies.extend(_EXTRA_VARIANTS)
+    return strategies
+
+
+STRATEGIES = _build_strategies()
 
 # Strategy type → performance characteristics
 TYPE_PROFILES = {
@@ -83,10 +122,10 @@ TYPE_PROFILES = {
     },
 }
 
-# Bots that start paused (indices)
-PAUSED_BOTS = {4, 10, 14}  # ADA, DOGE, NEAR
-# Bots with very few trades (for INSUFFICIENT_DATA testing)
-LOW_TRADE_BOTS = {14, 17}  # NEAR, CRV
+# Bots that start paused (~5% of total, spread across the list)
+PAUSED_BOTS = {4, 10, 14, 22, 35, 48, 63, 77, 91, 105, 119, 133, 147, 161, 175, 189}
+# Bots with very few trades (for INSUFFICIENT_DATA testing, ~3%)
+LOW_TRADE_BOTS = {14, 17, 55, 82, 110, 140, 170}
 
 
 def create_tables(conn):
@@ -148,7 +187,7 @@ def create_tables(conn):
 
 
 def seed_strategies(conn):
-    """Insert all 18 strategies."""
+    """Insert all strategies (~200)."""
     for s in STRATEGIES:
         try:
             conn.execute(

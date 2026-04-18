@@ -7,12 +7,12 @@ across active strategies based on quantum scores, risk metrics, and diversificat
 import math
 
 
-def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocation_pct=25.0):
+def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocation_pct=25.0):
     """
-    Allocate capital across strategies based on performance and risk.
+    Allocate capital equally across all eligible strategies.
 
     Args:
-        capital: Total starting capital (e.g. 1000)
+        capital: Total starting capital (e.g. 100000)
         evaluations: List of evaluation dicts from daily_runner
         min_allocation_pct: Minimum % per strategy (avoids dust positions)
         max_allocation_pct: Maximum % per strategy (avoids over-concentration)
@@ -48,26 +48,13 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
             excluded.append({"bot_name": ev.get("bot_name"), "reason": "Zero or negative profit factor"})
             continue
 
-        # Compute a composite score for allocation weight
-        # Higher = deserves more capital
+        # Compute a composite score (used for ranking/display, NOT allocation weight)
         score = 0
-
-        # Win rate contribution (0-25 points)
         score += min(25, max(0, (win_rate - 40) * 0.625))
-
-        # Profit factor contribution (0-25 points)
         score += min(25, max(0, (pf - 0.8) * 17.86))
-
-        # Sharpe ratio contribution (0-20 points)
         score += min(20, max(0, sharpe * 13.33))
-
-        # Low drawdown bonus (0-15 points) — less drawdown = more allocation
         score += min(15, max(0, (20 - dd) * 0.75))
-
-        # Adaptation score contribution (0-15 points)
         score += min(15, max(0, (adapt - 30) * 0.214))
-
-        # Risk penalty for very high drawdown
         if dd > 20:
             score *= 0.7
         elif dd > 15:
@@ -77,7 +64,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
             "bot_name": ev.get("bot_name", "?"),
             "pair": ev.get("pair", ""),
             "strategy_type": ev.get("strategy_type", ""),
-            "score": max(1, score),  # floor at 1
+            "score": max(1, score),
             "metrics": m,
             "adaptation_score": adapt,
             "verdict": verdict,
@@ -96,24 +83,14 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
             }
         }
 
-    # Normalize scores to get raw weights
-    total_score = sum(e["score"] for e in eligible)
+    # ── Equal-weight allocation ──────────────────────────────────────
+    equal_pct = 100.0 / len(eligible)
     for e in eligible:
-        e["raw_weight"] = e["score"] / total_score * 100  # as percentage
+        e["final_pct"] = equal_pct
+        e["allocation_usd"] = round(capital * equal_pct / 100, 2)
 
-    # Apply min/max constraints and re-normalize
-    # First pass: clip to bounds
-    for e in eligible:
-        e["clipped_weight"] = max(min_allocation_pct, min(max_allocation_pct, e["raw_weight"]))
-
-    # Re-normalize to sum to 100%
-    total_clipped = sum(e["clipped_weight"] for e in eligible)
-    for e in eligible:
-        e["final_pct"] = e["clipped_weight"] / total_clipped * 100
-        e["allocation_usd"] = round(capital * e["final_pct"] / 100, 2)
-
-    # Sort by allocation (highest first)
-    eligible.sort(key=lambda x: x["allocation_usd"], reverse=True)
+    # Sort by score (highest first) for display ranking
+    eligible.sort(key=lambda x: x["score"], reverse=True)
 
     # Build allocations list with reasoning
     allocations = []
