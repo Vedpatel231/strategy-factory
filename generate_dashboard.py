@@ -892,7 +892,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
   <!-- Account Summary (hidden until connected) -->
   <div id="alpLiveAccountSection" style="display:none;">
-    <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;">
+    <div class="cards-row" style="margin-bottom:24px;">
       <div class="card"><div class="card-sub">Equity</div><div id="alpLiveEquity" class="card-value">—</div></div>
       <div class="card"><div class="card-sub">Cash (Buying Power)</div><div id="alpLiveCash" class="card-value">—</div></div>
       <div class="card"><div class="card-sub">Today's P&L</div><div id="alpLivePL" class="card-value">—</div></div>
