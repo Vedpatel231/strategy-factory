@@ -38,7 +38,7 @@ class DashboardGenerator:
             ("portfolio", "Portfolio", "💼"),
             ("alpaca-live", "Alpaca", "🔗"),
             ("quantum", "Strategy Scorecard", "⚛️"),
-            ("bots", "Bot Status", "🤖"),
+            ("bots", "Bot Signals", "📡"),
             ("performance", "Performance", "📈"),
             ("learning", "Learning Engine", "🧠"),
             ("regime", "Market Regime", "🌊"),
@@ -491,54 +491,10 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>
   </div>
 
-  <!-- STRATEGY METRICS (from backtest history, not paper account) -->
-  <h3 style="color:var(--text-dim);margin-top:12px;margin-bottom:14px;font-size:1em;text-transform:uppercase;letter-spacing:1px;">📈 Strategy Metrics <span style="font-weight:400;font-size:0.8em;color:var(--text-dim);">— aggregated across all {total} bots (backtest data, not your paper account)</span></h3>
-  <div class="cards-row">
-    <div class="card">
-      <div class="card-label">Active Bots</div>
-      <div class="card-value">{active_count}</div>
-      <div class="card-sub">{paused_count} paused · {total} total tracked</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Backtest Cumulative P&L</div>
-      <div class="card-value" style="color:var(--{pnl_color});font-size:1.6em;">${total_pnl:,.0f} {pnl_arrow}</div>
-      <div class="card-sub">Sum of 30-day strategy backtests</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Avg Win Rate</div>
-      <div class="card-value">{avg_wr:.1f}%</div>
-      <div class="card-sub">Across all bots</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Avg Profit Factor</div>
-      <div class="card-value">{avg_pf:.2f}</div>
-      <div class="card-sub">Target &gt; 1.20</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Verdicts</div>
-      <div class="card-value" style="font-size:1em;">
-        <span style="color:var(--red);">{vc.get('PAUSE',0)}P</span> ·
-        <span style="color:var(--amber);">{vc.get('HOLD',0)}H</span> ·
-        <span style="color:var(--lime);">{vc.get('REACTIVATE',0)}R</span>
-      </div>
-      <div class="card-sub">Pause · Hold · Reactivate</div>
-    </div>
-    <div class="card">
-      <div class="card-label">Expected Monthly</div>
-      <div id="ovExpReturn" class="card-value" style="color:var(--lime);font-size:1.3em;">—</div>
-      <div class="card-sub">⚠️ Estimate only, not guaranteed</div>
-    </div>
-  </div>
-
-  <div class="chart-grid">
-    <div class="chart-box">
-      <h3>Backtest P&L by Strategy</h3>
-      <canvas id="overviewPnlChart"></canvas>
-    </div>
-    <div class="chart-box">
-      <h3>Verdict Distribution</h3>
-      <canvas id="verdictPieChart"></canvas>
-    </div>
+  <!-- POSITIONS SUMMARY (populated via JS from Alpaca) -->
+  <h3 style="color:var(--cyan);margin-top:12px;margin-bottom:14px;font-size:1em;text-transform:uppercase;letter-spacing:1px;">📈 Your Positions</h3>
+  <div id="ovPositionsTable" style="margin-bottom:20px;">
+    <div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">Loading positions...</div>
   </div>
   <!-- P&L CALENDAR -->
   <div class="pnl-calendar" id="pnlCalendarSection">
@@ -591,61 +547,34 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
     # ── PAGE: PORTFOLIO ──────────────────────────────────────────────────
     def _page_portfolio(self, evaluations, portfolio):
-        portfolio = portfolio or {}
-        allocations = portfolio.get("allocations", [])
-        excluded = portfolio.get("excluded", [])
-        summary = portfolio.get("summary", {})
-        total_capital = summary.get("total_capital", 1000)
-        total_allocated = summary.get("allocated", sum(a.get("allocation_usd", 0) for a in allocations))
+        return """<div class="page" id="portfolio">
+  <div class="page-title"><span class="accent">💼</span> Portfolio</div>
 
-        # Build allocation table rows using correct keys from portfolio_allocator.py
-        alloc_rows = ""
-        for a in allocations:
-            name = a.get("bot_name", a.get("strategy", "Unknown"))
-            pair = a.get("pair", "N/A")
-            usd = a.get("allocation_usd", a.get("allocated_usd", 0))
-            usd = abs(usd) if abs(usd) < 0.005 else usd  # avoid $-0.00
-            pct = a.get("allocation_pct", 0)
-            exp_ret = a.get("expected_monthly_return", 0)
-            exp_ret = abs(exp_ret) if abs(exp_ret) < 0.005 else exp_ret  # avoid $-0.00
-            score = a.get("score", 0)
-            reasoning = a.get("reasoning", "")
-            alloc_rows += f"""<tr>
-      <td><strong>{name}</strong></td>
-      <td>{pair}</td>
-      <td style="color:var(--cyan);font-family:'Courier New',monospace;">${usd:,.2f}</td>
-      <td>{pct:.1f}%</td>
-      <td style="color:var(--lime);">${exp_ret:,.2f}</td>
-      <td>{score:.0f}</td>
-      <td style="font-size:0.82em;color:var(--text-dim);">{reasoning}</td>
-    </tr>"""
-
-        # Build excluded section
-        excluded_html = ""
-        if excluded:
-            excluded_html = '<div class="portfolio-excluded"><h3>⚠️ Excluded Strategies</h3>'
-            for exc in excluded:
-                ename = exc.get("bot_name", exc.get("strategy", "Unknown"))
-                excluded_html += f'<div class="excluded-item"><strong>{ename}</strong>: {exc.get("reason", "N/A")}</div>'
-            excluded_html += "</div>"
-
-        div_score = summary.get("diversification_score", 0)
-        exp_monthly_usd = summary.get("expected_monthly_return_usd", 0)
-        exp_monthly_pct = summary.get("expected_monthly_return_pct", 0)
-        n_strats = summary.get("num_strategies", len(allocations))
-
-        return f"""<div class="page" id="portfolio">
-  <div class="page-title"><span class="accent">💼</span> Portfolio Allocation</div>
+  <!-- LIVE ACCOUNT HERO (populated via JS from Alpaca) -->
   <div class="portfolio-hero">
-    <div class="portfolio-hero-subtitle">Starting Capital</div>
-    <div class="portfolio-hero-value">${total_capital:,.0f}</div>
-    <div class="portfolio-hero-subtitle">Allocated across {n_strats} strategies</div>
+    <div class="portfolio-hero-subtitle">Alpaca Account Equity</div>
+    <div class="portfolio-hero-value" id="pfEquity">$—</div>
+    <div class="portfolio-hero-subtitle" id="pfPLsub">Loading...</div>
+  </div>
+
+  <!-- Account cards -->
+  <div class="cards-row" style="margin-bottom:24px;">
+    <div class="card"><div class="card-label">Buying Power</div><div id="pfCash" class="card-value">$—</div><div class="card-sub">Available to trade</div></div>
+    <div class="card"><div class="card-label">Unrealized P&L</div><div id="pfPL" class="card-value">$—</div><div class="card-sub">Open positions vs cost</div></div>
+    <div class="card"><div class="card-label">Open Positions</div><div id="pfPosCount" class="card-value">—</div><div class="card-sub">Currently held</div></div>
+    <div class="card"><div class="card-label">Today's P&L</div><div id="pfDayPL" class="card-value">$—</div><div class="card-sub">Since last close</div></div>
+  </div>
+
+  <!-- Live Positions Table (populated via JS) -->
+  <h3 style="margin-bottom:16px;">Current Holdings</h3>
+  <div id="pfPositionsTable" style="margin-bottom:28px;">
+    <div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">Loading positions from Alpaca...</div>
   </div>
 
   <!-- Bot Activity Timeline (Gantt) -->
   <div class="chart-box" style="margin-bottom:28px;">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
-      <h3>📊 Bot Activity Timeline</h3>
+      <h3>📊 Trade Timeline</h3>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <label style="font-size:0.8em;color:var(--text-dim);">From:</label>
         <input type="date" id="ganttFrom" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:0.85em;" />
@@ -655,46 +584,28 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       </div>
     </div>
     <div id="ganttContainer" style="overflow-x:auto;min-height:200px;">
-      <div style="padding:30px;text-align:center;color:var(--text-dim);font-size:0.9em;">Connect to the paper broker to see bot activity timeline.</div>
+      <div style="padding:30px;text-align:center;color:var(--text-dim);font-size:0.9em;">Loading trade timeline...</div>
     </div>
   </div>
 
-  <h3 style="margin-bottom:16px;">Allocation Breakdown</h3>
-  <table class="data-table" style="margin-bottom:28px;">
-    <thead><tr>
-      <th>Strategy</th><th>Pair</th><th>Allocated</th><th>%</th>
-      <th>Est. Monthly</th><th>Score</th><th>Reasoning</th>
-    </tr></thead>
-    <tbody>{alloc_rows}</tbody>
-  </table>
-  {excluded_html}
-  <div class="portfolio-summary">
-    <h3 style="margin-bottom:16px;">Portfolio Summary</h3>
-    <div class="summary-row"><span class="summary-label">Total Allocated</span><span class="summary-value">${total_allocated:,.2f}</span></div>
-    <div class="summary-row"><span class="summary-label">Expected Monthly Return</span><span class="summary-value">${exp_monthly_usd:,.2f} ({exp_monthly_pct:+.1f}%) ⚠️ estimate only</span></div>
-    <div class="summary-row"><span class="summary-label">Diversification Score</span><span class="summary-value">{div_score:.0f} / 100</span></div>
-    <div class="summary-row"><span class="summary-label">Strategies Included</span><span class="summary-value">{n_strats}</span></div>
-    <div class="summary-row"><span class="summary-label">Strategies Excluded</span><span class="summary-value">{len(excluded)}</span></div>
-  </div>
-  <div class="disclaimer">⚠️ Past performance does not guarantee future results. This allocation is for educational purposes only.</div>
+  <div class="disclaimer">⚠️ Alpaca paper trading account — no real money. Past performance does not guarantee future results.</div>
 </div>"""
 
     # ── PAGE: PAPER TRADING ──────────────────────────────────────────────
     def _page_alpaca(self):
         return """<div class="page" id="alpaca">
-  <div class="page-title"><span class="accent">💵</span> Paper Trading</div>
+  <div class="page-title"><span class="accent">🔗</span> Alpaca Trading</div>
 
-  <!-- Simulator Status -->
+  <!-- Connection Status -->
   <div id="alpacaConnCard" class="card" style="margin-bottom:24px;">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
       <div>
-        <div class="card-label">Simulator Status</div>
-        <div id="alpacaConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);">⚪ Not Initialized</div>
-        <div id="alpacaConnMsg" class="card-sub">Click Connect to initialize the $1,000 paper account (synthetic math-based pricing)</div>
+        <div class="card-label">Alpaca Connection</div>
+        <div id="alpacaConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);">⚪ Not Connected</div>
+        <div id="alpacaConnMsg" class="card-sub">Connect to your Alpaca paper trading account</div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
         <button class="filter-btn" style="padding:12px 22px;font-weight:600;" onclick="alpacaConnect()">🔌 Connect</button>
-        <button class="filter-btn" style="padding:12px 22px;font-weight:600;" onclick="alpacaConfirmReset()">🔄 Reset to $1000</button>
       </div>
     </div>
   </div>
@@ -828,7 +739,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   </div>
 
   <div class="disclaimer">
-    ⚠️ Paper trading only — no real money is involved. Starts with $1,000 virtual capital. Positions are valued with an internal math model, and all orders are simulated locally. The "expected monthly return" on the Portfolio page is a projection from historical backtests, not a guarantee.
+    ⚠️ Alpaca paper trading — no real money is involved. Orders are executed via the Alpaca API. Past performance does not guarantee future results.
   </div>
 </div>
 
@@ -847,8 +758,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     # ── PAGE: ALPACA LIVE ────────────────────────────────────────────────
     def _page_alpaca_live(self):
         return """<div class="page" id="alpaca-live">
-  <div class="page-title"><span class="accent">🔗</span> Alpaca Paper Trading</div>
-  <p class="page-sub" style="color:var(--text-dim);margin-bottom:24px;">Connect to your real Alpaca paper trading account with live market prices</p>
+  <div class="page-title"><span class="accent">🔗</span> Alpaca Trading</div>
+  <p class="page-sub" style="color:var(--text-dim);margin-bottom:24px;">Live connection to your Alpaca paper trading account</p>
 
   <!-- Broker Selector -->
   <div class="card" style="margin-bottom:24px;">
@@ -1051,7 +962,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </tr>"""
 
         return f"""<div class="page" id="quantum">
-  <div class="page-title"><span class="accent">⚛️</span> Strategy Scorecard</div>
+  <div class="page-title"><span class="accent">⚛️</span> Strategy Scorecard <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
   <div class="filter-buttons">
     <button class="filter-btn active" onclick="filterQuantum('ALL')">Show All</button>
     <button class="filter-btn" onclick="filterQuantum('PAUSE')">Pause</button>
@@ -1112,14 +1023,17 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>"""
 
         return f"""<div class="page" id="bots">
-  <div class="page-title"><span class="accent">🤖</span> Bot Status</div>
+  <div class="page-title"><span class="accent">🤖</span> Bot Signals</div>
+  <div style="background:rgba(0,212,255,0.08);border:1px solid var(--cyan);border-radius:12px;padding:16px 20px;margin-bottom:20px;font-size:0.9em;color:var(--text-dim);line-height:1.6;">
+    <strong style="color:var(--cyan);">📡 Signal Generators</strong> — These {len(bots_data)} bots analyze market data and generate buy/sell signals. Only signals for Alpaca-supported symbols result in actual trades on your account. Bot metrics below are from backtested simulation data, not live trading results. For real P&L, see the <a href="#" onclick="showPage('portfolio');return false;" style="color:var(--cyan);text-decoration:underline;">Portfolio</a> or <a href="#" onclick="showPage('alpaca-live');return false;" style="color:var(--cyan);text-decoration:underline;">Alpaca Trading</a> pages.
+  </div>
   <div class="bot-grid">{cards}</div>
 </div>"""
 
     # ── PAGE: PERFORMANCE ────────────────────────────────────────────────
     def _page_performance(self, evaluations):
         return """<div class="page" id="performance">
-  <div class="page-title"><span class="accent">📈</span> Performance Analytics</div>
+  <div class="page-title"><span class="accent">📈</span> Performance Analytics <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
   <div class="chart-grid">
     <div class="chart-box"><h3>Cumulative P&L (Top Strategies)</h3><canvas id="pnlChart"></canvas></div>
     <div class="chart-box"><h3>Win Rate Distribution</h3><canvas id="winrateChart"></canvas></div>
@@ -1157,7 +1071,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>"""
 
         return f"""<div class="page" id="learning">
-  <div class="page-title"><span class="accent">🧠</span> Learning Engine</div>
+  <div class="page-title"><span class="accent">🧠</span> Learning Engine <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
   <div class="adapt-cards">{cards}</div>
   <div class="chart-grid">
     <div class="chart-box"><h3>Adaptation Score Distribution</h3><canvas id="adaptationChart"></canvas></div>
@@ -1182,7 +1096,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         vol_ratio = self._fmt_metric(details.get("coefficient_of_variation", details.get("volatility_ratio")), 2)
 
         return f"""<div class="page" id="regime">
-  <div class="page-title"><span class="accent">🌊</span> Market Regime Analysis</div>
+  <div class="page-title"><span class="accent">🌊</span> Market Regime Analysis <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
   <div class="regime-badge-large regime-{regime}">
     {emoji} {regime.replace('_',' ').title()} — {confidence:.0f}% Confidence
   </div>
@@ -1219,7 +1133,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>"""
 
         return f"""<div class="page" id="decisions">
-  <div class="page-title"><span class="accent">📋</span> Decision Log</div>
+  <div class="page-title"><span class="accent">📋</span> Decision Log <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
   <div class="decision-timeline">{items}</div>
 </div>"""
 
@@ -1451,6 +1365,95 @@ async function loadOverviewAccount() {{
 }}
 loadOverviewAccount();
 
+// ── Portfolio page data from Alpaca ─────────────────────────────
+async function loadPortfolioData() {{
+  var fmt = function(n) {{ return '$' + Number(n || 0).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}}); }};
+  var setText = function(id, val) {{ var el = document.getElementById(id); if(el) {{ el.textContent = val; autoSizeCardValue(el); }} }};
+  try {{
+    var a = await apiGet('/api/alpaca/account');
+    setText('pfEquity', fmt(a.equity));
+    setText('pfCash', fmt(a.buying_power !== undefined ? a.buying_power : a.cash));
+    var pl = a.total_pl || 0;
+    var plEl = document.getElementById('pfDayPL');
+    if (plEl) {{
+      plEl.textContent = (pl >= 0 ? '+' : '') + fmt(pl);
+      plEl.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
+      autoSizeCardValue(plEl);
+    }}
+    var plSub = document.getElementById('pfPLsub');
+    if (plSub) {{
+      var plPct = a.total_pl_pct || 0;
+      plSub.textContent = (pl >= 0 ? '+' : '') + fmt(pl) + ' (' + (plPct >= 0 ? '+' : '') + plPct.toFixed(2) + '%) today';
+      plSub.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
+    }}
+  }} catch(e) {{}}
+  try {{
+    var pd = await apiGet('/api/alpaca/positions');
+    var positions = pd.positions || [];
+    setText('pfPosCount', positions.length);
+    var totalPL = 0;
+    positions.forEach(function(p) {{ totalPL += Number(p.unrealized_pl || 0); }});
+    var plTotalEl = document.getElementById('pfPL');
+    if (plTotalEl) {{
+      plTotalEl.textContent = (totalPL >= 0 ? '+' : '') + fmt(totalPL);
+      plTotalEl.style.color = totalPL >= 0 ? 'var(--lime)' : 'var(--red)';
+      autoSizeCardValue(plTotalEl);
+    }}
+    // Build positions table
+    var container = document.getElementById('pfPositionsTable');
+    if (container && positions.length > 0) {{
+      var totalMV = 0;
+      positions.forEach(function(p) {{ totalMV += Number(p.market_value || 0); }});
+      var html = '<table class="data-table"><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current Price</th><th>Market Value</th><th>Unrealized P&L</th><th>% of Portfolio</th></tr></thead><tbody>';
+      positions.forEach(function(p) {{
+        var upl = Number(p.unrealized_pl || 0);
+        var mv = Number(p.market_value || 0);
+        var pct = totalMV > 0 ? (mv / totalMV * 100) : 0;
+        var plColor = upl >= 0 ? 'var(--lime)' : 'var(--red)';
+        var uplPct = Number(p.unrealized_plpc || 0) * 100;
+        html += '<tr>';
+        html += '<td><strong>' + (p.symbol || '?') + '</strong></td>';
+        html += '<td>' + (p.side || 'long') + '</td>';
+        html += '<td style="font-family:Courier New,monospace;">' + Number(p.qty || 0).toFixed(4) + '</td>';
+        html += '<td style="font-family:Courier New,monospace;">' + fmt(p.avg_entry_price || p.cost_basis / (p.qty || 1)) + '</td>';
+        html += '<td style="font-family:Courier New,monospace;">' + fmt(p.current_price) + '</td>';
+        html += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + fmt(mv) + '</td>';
+        html += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + fmt(upl) + ' (' + (uplPct >= 0 ? '+' : '') + uplPct.toFixed(2) + '%)</td>';
+        html += '<td>' + pct.toFixed(1) + '%</td>';
+        html += '</tr>';
+      }});
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }} else if (container) {{
+      container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">No open positions. Use the Alpaca Trading page to execute trades.</div>';
+    }}
+    // Also populate overview positions table
+    var ovContainer = document.getElementById('ovPositionsTable');
+    if (ovContainer && positions.length > 0) {{
+      var totalMV2 = 0;
+      positions.forEach(function(p) {{ totalMV2 += Number(p.market_value || 0); }});
+      var ovHtml = '<table class="data-table"><thead><tr><th>Symbol</th><th>Market Value</th><th>P&L</th><th>% of Portfolio</th></tr></thead><tbody>';
+      positions.forEach(function(p) {{
+        var upl = Number(p.unrealized_pl || 0);
+        var mv = Number(p.market_value || 0);
+        var pct = totalMV2 > 0 ? (mv / totalMV2 * 100) : 0;
+        var plColor = upl >= 0 ? 'var(--lime)' : 'var(--red)';
+        ovHtml += '<tr>';
+        ovHtml += '<td><strong>' + (p.symbol || '?') + '</strong></td>';
+        ovHtml += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + fmt(mv) + '</td>';
+        ovHtml += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + fmt(upl) + '</td>';
+        ovHtml += '<td>' + pct.toFixed(1) + '%</td>';
+        ovHtml += '</tr>';
+      }});
+      ovHtml += '</tbody></table>';
+      ovContainer.innerHTML = ovHtml;
+    }} else if (ovContainer) {{
+      ovContainer.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">No positions yet.</div>';
+    }}
+  }} catch(e) {{}}
+}}
+loadPortfolioData();
+
 // ── Navigation ──────────────────────────────────────────────────
 var allPages = {json.dumps([p[0] for p in self.pages])};
 
@@ -1489,6 +1492,7 @@ function refreshPageData(page) {{
     }}
     alpAutoLoadStatus();
   }} else if (page === 'portfolio') {{
+    loadPortfolioData();
     ganttLoad();
   }}
 }}
