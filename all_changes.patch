@@ -1,0 +1,470 @@
+diff --git a/alpaca_client.py b/alpaca_client.py
+index b1da467..c009f24 100644
+--- a/alpaca_client.py
++++ b/alpaca_client.py
+@@ -84 +84 @@ class AlpacaPaperClient:
+-            "status": str(acct.status),
++            "status": str(acct.status).split('.')[-1],
+@@ -90 +90 @@ class AlpacaPaperClient:
+-            "currency": str(acct.currency) if acct.currency else "USD",
++            "currency": str(acct.currency).split('.')[-1] if acct.currency else "USD",
+@@ -98 +98 @@ class AlpacaPaperClient:
+-            "crypto_status": getattr(acct, "crypto_status", "ACTIVE"),
++            "crypto_status": str(getattr(acct, "crypto_status", "ACTIVE")).split('.')[-1],
+@@ -127,2 +127,2 @@ class AlpacaPaperClient:
+-                "side": str(p.side).lower() if p.side else "long",
+-                "asset_class": str(p.asset_class) if p.asset_class else "crypto",
++                "side": str(p.side).split('.')[-1].lower() if p.side else "long",
++                "asset_class": str(p.asset_class).split('.')[-1].lower() if p.asset_class else "crypto",
+@@ -178,2 +178,2 @@ class AlpacaPaperClient:
+-            "side": str(o.side).lower(),
+-            "type": str(o.type) if o.type else "market",
++            "side": str(o.side).split('.')[-1].lower(),
++            "type": str(o.type).split('.')[-1].lower() if o.type else "market",
+@@ -184 +184 @@ class AlpacaPaperClient:
+-            "status": str(o.status),
++            "status": str(o.status).split('.')[-1].lower(),
+diff --git a/alpaca_trader.py b/alpaca_trader.py
+index de62ca2..4007678 100644
+--- a/alpaca_trader.py
++++ b/alpaca_trader.py
+@@ -23,0 +24,11 @@ REBALANCE_THRESHOLD_PCT = 15.0  # only trade if position drifts >15% from target
++# Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
++# If a portfolio symbol isn't in this set, its allocation gets redistributed.
++ALPACA_SUPPORTED_CRYPTO = {
++    "BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOGE/USD",
++    "SHIB/USD", "DOT/USD", "UNI/USD", "LINK/USD", "LTC/USD",
++    "BCH/USD", "AAVE/USD", "XRP/USD", "ADA/USD", "ALGO/USD",
++    "ATOM/USD", "CRV/USD", "NEAR/USD", "MKR/USD", "GRT/USD",
++    "SUSHI/USD", "YFI/USD", "BAT/USD", "XTZ/USD", "USDT/USD",
++    "USDC/USD", "DAI/USD",
++}
++
+@@ -103,2 +114,3 @@ class AlpacaTrader:
+-        target_by_symbol = {}
+-
++        # --- Pre-filter: identify supported vs unsupported allocations ---
++        supported_allocs = []
++        unsupported_allocs = []
+@@ -106 +117,0 @@ class AlpacaTrader:
+-            bot_name = alloc.get("bot_name", "?")
+@@ -108,2 +118,0 @@ class AlpacaTrader:
+-            dollar_alloc = alloc.get("allocation_usd", 0) * scale
+-
+@@ -111 +120,5 @@ class AlpacaTrader:
+-            if not sym:
++            if sym and sym in ALPACA_SUPPORTED_CRYPTO:
++                supported_allocs.append((alloc, sym))
++            else:
++                bot_name = alloc.get("bot_name", "?")
++                reason = f"Symbol {pair} → {sym or '?'} not supported on Alpaca"
+@@ -113,2 +126 @@ class AlpacaTrader:
+-                    "bot": bot_name, "pair": pair,
+-                    "reason": f"Symbol {pair} not supported on Alpaca"
++                    "bot": bot_name, "pair": pair, "reason": reason,
+@@ -116 +128,16 @@ class AlpacaTrader:
+-                continue
++                unsupported_allocs.append(alloc)
++
++        # Redistribute unsupported capital proportionally to supported allocations
++        unsupported_total = sum(a.get("allocation_usd", 0) for a in unsupported_allocs)
++        supported_total = sum(a.get("allocation_usd", 0) for a, _ in supported_allocs)
++        redistribution_factor = 1.0
++        if unsupported_total > 0 and supported_total > 0:
++            redistribution_factor = (supported_total + unsupported_total) / supported_total
++            logger.info(f"Redistributing ${unsupported_total:.2f} from {len(unsupported_allocs)} "
++                        f"unsupported symbols (factor {redistribution_factor:.3f}x)")
++
++        target_by_symbol = {}
++
++        for alloc, sym in supported_allocs:
++            bot_name = alloc.get("bot_name", "?")
++            dollar_alloc = alloc.get("allocation_usd", 0) * redistribution_factor * scale
+@@ -120 +147 @@ class AlpacaTrader:
+-                    "bot": bot_name, "pair": pair,
++                    "bot": bot_name, "pair": sym,
+diff --git a/generate_dashboard.py b/generate_dashboard.py
+index 3707d41..bc5f47d 100644
+--- a/generate_dashboard.py
++++ b/generate_dashboard.py
+@@ -895 +895 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
+-    <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px;">
++    <div class="cards-row" style="margin-bottom:24px;">
+@@ -977,10 +977,5 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
+-      <!-- Manual controls -->
+-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+-        <button onclick="alpAutoPreview()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;">
+-          👁 Preview Rebalance
+-        </button>
+-        <button onclick="alpAutoExecuteNow()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;background:rgba(0,212,255,0.1);border-color:var(--cyan);color:var(--cyan);">
+-          ▶ Execute Portfolio Now
+-        </button>
+-        <button onclick="alpAutoRunNow()" class="filter-btn" style="padding:8px 18px;font-size:0.9em;background:rgba(57,255,20,0.1);border-color:var(--lime);color:var(--lime);">
+-          🔄 Full Cycle (Analyze + Trade)
++      <!-- One-click run -->
++      <div style="margin-bottom:16px;">
++        <button id="alpAutoRunBtn" onclick="alpAutoOneClick()" class="filter-btn"
++                style="padding:12px 28px;font-size:1.05em;background:rgba(57,255,20,0.12);border-color:var(--lime);color:var(--lime);font-weight:700;border-radius:10px;">
++          🚀 Run Now
+@@ -990,4 +985,4 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
+-      <!-- Preview results area -->
+-      <div id="alpAutoPreviewResult" style="display:none;margin-bottom:16px;padding:14px;background:rgba(0,212,255,0.05);border:1px solid var(--border);border-radius:8px;">
+-        <div style="font-weight:600;margin-bottom:8px;color:var(--cyan);">Rebalance Preview (dry run)</div>
+-        <div id="alpAutoPreviewBody" style="font-size:0.9em;color:var(--text-dim);"></div>
++      <!-- Progress + results area -->
++      <div id="alpAutoProgressArea" style="display:none;margin-bottom:16px;padding:16px;background:rgba(0,212,255,0.05);border:1px solid var(--border);border-radius:10px;">
++        <div id="alpAutoProgressSteps" style="font-size:0.9em;"></div>
++        <div id="alpAutoProgressResult" style="margin-top:10px;font-size:0.9em;color:var(--text-dim);"></div>
+@@ -1018 +1013 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
+-      <div id="alpAutoLogsEmpty" style="color:var(--text-dim);font-size:0.85em;">No auto-runs yet. Enable auto-trade or click "Full Cycle" to start.</div>
++      <div id="alpAutoLogsEmpty" style="color:var(--text-dim);font-size:0.85em;">No auto-runs yet. Enable auto-trade or click "Run Now" to start.</div>
+@@ -2301,0 +2297,2 @@ async function alpLiveAutoReconnect() {{
++        document.getElementById('alpLiveNotConfigured').style.display = 'none';
++        document.getElementById('alpLiveConnCard').style.display = 'block';
+@@ -2304,0 +2302 @@ async function alpLiveAutoReconnect() {{
++        alpAutoLoadStatus();
+@@ -2369 +2367,2 @@ function ganttRender() {{
+-      if (o.side === 'buy') {{
++      var oSide = (o.side || '').toLowerCase().split('.').pop();
++      if (oSide === 'buy') {{
+@@ -2373 +2372 @@ function ganttRender() {{
+-      }} else if (o.side === 'sell' && currentSpan) {{
++      }} else if (oSide === 'sell' && currentSpan) {{
+@@ -2574,0 +2574,3 @@ function calRender() {{
++    // Remove first-day notice if it exists
++    var notice = document.getElementById('calFirstDayNotice');
++    if (notice) notice.style.display = 'none';
+@@ -2576,0 +2579,12 @@ function calRender() {{
++    // Show first-day notice
++    var notice = document.getElementById('calFirstDayNotice');
++    if (!notice) {{
++      notice = document.createElement('div');
++      notice.id = 'calFirstDayNotice';
++      notice.style.cssText = 'text-align:center;padding:16px;color:var(--text-dim);font-size:0.9em;margin-top:8px;background:rgba(0,212,255,0.05);border:1px solid var(--border);border-radius:8px;';
++      notice.innerHTML = '📊 <strong>No daily P&L data yet.</strong> Alpaca needs at least one full trading day to generate history. Check back tomorrow!';
++      var calSection = document.getElementById('pnlCalendarSection');
++      if (calSection) calSection.appendChild(notice);
++    }} else {{
++      notice.style.display = 'block';
++    }}
+@@ -2628,0 +2643 @@ async function alpLiveConnect() {{
++      document.getElementById('alpLiveNotConfigured').style.display = 'none';
+@@ -2631,0 +2647 @@ async function alpLiveConnect() {{
++      alpAutoLoadStatus();
+@@ -2728 +2744,3 @@ async function alpLiveRefreshOrders() {{
+-      var sideColor = o.side === 'buy' ? 'var(--lime)' : 'var(--red)';
++      var cleanSide = (o.side || '').toLowerCase().split('.').pop();
++      var cleanStatus = (o.status || '').split('.').pop();
++      var sideColor = cleanSide === 'buy' ? 'var(--lime)' : 'var(--red)';
+@@ -2731,0 +2750 @@ async function alpLiveRefreshOrders() {{
++      var statusColor = cleanStatus === 'filled' ? 'var(--lime)' : (cleanStatus === 'canceled' || cleanStatus === 'cancelled' ? 'var(--red)' : 'var(--amber)');
+@@ -2735 +2754 @@ async function alpLiveRefreshOrders() {{
+-        '<td style="color:' + sideColor + ';font-weight:600;">' + (o.side || '').toUpperCase() + '</td>' +
++        '<td style="color:' + sideColor + ';font-weight:600;">' + cleanSide.toUpperCase() + '</td>' +
+@@ -2738 +2757 @@ async function alpLiveRefreshOrders() {{
+-        '<td>' + (o.status || '—') + '</td>' +
++        '<td style="color:' + statusColor + ';">' + cleanStatus.toUpperCase() + '</td>' +
+@@ -2888,5 +2907,33 @@ async function alpAutoToggle() {{
+-async function alpAutoPreview() {{
+-  var resultEl = document.getElementById('alpAutoPreviewResult');
+-  var bodyEl = document.getElementById('alpAutoPreviewBody');
+-  resultEl.style.display = 'block';
+-  bodyEl.textContent = '⏳ Running dry-run preview...';
++async function alpAutoOneClick() {{
++  var btn = document.getElementById('alpAutoRunBtn');
++  var area = document.getElementById('alpAutoProgressArea');
++  var steps = document.getElementById('alpAutoProgressSteps');
++  var result = document.getElementById('alpAutoProgressResult');
++  area.style.display = 'block';
++  result.innerHTML = '';
++  btn.disabled = true;
++  btn.textContent = '⏳ Running...';
++  btn.style.opacity = '0.6';
++
++  function step(num, text, status) {{
++    var id = 'alpStep' + num;
++    var el = document.getElementById(id);
++    var icon = status === 'done' ? '✅' : (status === 'error' ? '❌' : (status === 'running' ? '⏳' : '⬜'));
++    var color = status === 'done' ? 'var(--lime)' : (status === 'error' ? 'var(--red)' : (status === 'running' ? 'var(--amber)' : 'var(--text-dim)'));
++    if (!el) {{
++      el = document.createElement('div');
++      el.id = id;
++      el.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);';
++      steps.appendChild(el);
++    }}
++    el.innerHTML = '<span style="margin-right:8px;">' + icon + '</span><span style="color:' + color + ';">' + text + '</span>';
++  }}
++
++  steps.innerHTML = '';
++
++  // Step 1: Preview (dry run)
++  step(1, 'Previewing rebalance...', 'running');
++  step(2, 'Execute trades', 'pending');
++  step(3, 'Refresh dashboard', 'pending');
++
++  var previewData = null;
+@@ -2894,3 +2941,4 @@ async function alpAutoPreview() {{
+-    var data = await apiGet('/api/alpaca/auto/preview');
+-    if (data.error) {{
+-      bodyEl.innerHTML = '<span style="color:var(--red);">❌ ' + data.error + '</span>';
++    previewData = await apiGet('/api/alpaca/auto/preview');
++    if (previewData.error) {{
++      step(1, 'Preview failed: ' + previewData.error, 'error');
++      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
+@@ -2899,4 +2947,6 @@ async function alpAutoPreview() {{
+-    var orders = data.orders || [];
+-    var skipped = data.skipped || [];
+-    var s = data.summary || {{}};
+-    var html = '<div style="margin-bottom:8px;"><strong>' + (s.buys||0) + '</strong> buys, <strong>' + (s.sells||0) + '</strong> sells, <strong>' + (s.closes||0) + '</strong> closes, <strong>' + (s.skipped||0) + '</strong> skipped</div>';
++    var s = previewData.summary || {{}};
++    var orderCount = (s.buys||0) + (s.sells||0) + (s.closes||0);
++    step(1, 'Preview: ' + (s.buys||0) + ' buys, ' + (s.sells||0) + ' sells, ' + (s.closes||0) + ' closes, ' + (s.skipped||0) + ' skipped', 'done');
++
++    // Show preview details
++    var orders = previewData.orders || [];
+@@ -2904 +2954 @@ async function alpAutoPreview() {{
+-      html += '<table style="width:100%;font-size:0.85em;"><tr style="color:var(--text-dim);"><th style="text-align:left;">Symbol</th><th>Side</th><th>Amount</th><th>Bot</th></tr>';
++      var html = '<table style="width:100%;font-size:0.85em;margin-top:8px;"><tr style="color:var(--text-dim);"><th style="text-align:left;">Symbol</th><th>Side</th><th>Amount</th><th>Bot</th></tr>';
+@@ -2906 +2956,2 @@ async function alpAutoPreview() {{
+-        var sColor = o.side === 'buy' ? 'var(--lime)' : 'var(--red)';
++        var cSide = (o.side || '').toLowerCase().split('.').pop();
++        var sColor = cSide === 'buy' ? 'var(--lime)' : 'var(--red)';
+@@ -2908 +2959 @@ async function alpAutoPreview() {{
+-          '<td style="color:' + sColor + ';">' + (o.side||'').toUpperCase() + '</td>' +
++          '<td style="color:' + sColor + ';">' + cSide.toUpperCase() + '</td>' +
+@@ -2912,0 +2964 @@ async function alpAutoPreview() {{
++      result.innerHTML = html;
+@@ -2914,2 +2966,6 @@ async function alpAutoPreview() {{
+-    if (skipped.length > 0) {{
+-      html += '<div style="margin-top:8px;color:var(--text-dim);font-size:0.85em;">' + skipped.length + ' positions skipped (within rebalance threshold)</div>';
++
++    if (orderCount === 0) {{
++      step(2, 'No trades needed — portfolio is balanced', 'done');
++      step(3, 'Done', 'done');
++      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
++      return;
+@@ -2917 +2972,0 @@ async function alpAutoPreview() {{
+-    bodyEl.innerHTML = html;
+@@ -2919 +2974,3 @@ async function alpAutoPreview() {{
+-    bodyEl.innerHTML = '<span style="color:var(--red);">❌ ' + e.message + '</span>';
++    step(1, 'Preview error: ' + e.message, 'error');
++    btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
++    return;
+@@ -2921 +2977,0 @@ async function alpAutoPreview() {{
+-}}
+@@ -2923,2 +2979,2 @@ async function alpAutoPreview() {{
+-async function alpAutoExecuteNow() {{
+-  if (!confirm('Execute portfolio rebalance on Alpaca NOW? This will place real paper trades.')) return;
++  // Step 2: Execute
++  step(2, 'Executing trades...', 'running');
+@@ -2926,7 +2982,5 @@ async function alpAutoExecuteNow() {{
+-    var data = await apiPost('/api/alpaca/auto/execute', {{ confirm: true }});
+-    if (data.error) {{
+-      alert('Error: ' + data.error);
+-    }} else {{
+-      var s = data.summary || {{}};
+-      alert('Executed: ' + (s.buys||0) + ' buys, ' + (s.sells||0) + ' sells, ' + (s.closes||0) + ' closes');
+-      setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); alpAutoLoadStatus(); }}, 3000);
++    var execData = await apiPost('/api/alpaca/auto/execute', {{ confirm: true }});
++    if (execData.error) {{
++      step(2, 'Execute failed: ' + execData.error, 'error');
++      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
++      return;
+@@ -2934,2 +2988,7 @@ async function alpAutoExecuteNow() {{
+-  }} catch(e) {{ alert('Error: ' + e.message); }}
+-}}
++    var es = execData.summary || {{}};
++    step(2, 'Executed: ' + (es.buys||0) + ' buys, ' + (es.sells||0) + ' sells, ' + (es.closes||0) + ' closes — ' + fmtUSD(es.total_capital_deployed_usd||0) + ' deployed', 'done');
++  }} catch(e) {{
++    step(2, 'Execute error: ' + e.message, 'error');
++    btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
++    return;
++  }}
+@@ -2937,2 +2996,2 @@ async function alpAutoExecuteNow() {{
+-async function alpAutoRunNow() {{
+-  if (!confirm('Run full cycle (analyze + trade) on Alpaca NOW?')) return;
++  // Step 3: Refresh everything
++  step(3, 'Refreshing positions & orders...', 'running');
+@@ -2940,6 +2999,13 @@ async function alpAutoRunNow() {{
+-    var data = await apiPost('/api/alpaca/auto/run-now', {{ confirm: true }});
+-    if (data.triggered) {{
+-      alert('Full cycle triggered! It will take 1-2 minutes. Check the auto-runs log for results.');
+-      setTimeout(alpAutoLoadStatus, 60000);
+-    }}
+-  }} catch(e) {{ alert('Error: ' + e.message); }}
++    await new Promise(function(r) {{ setTimeout(r, 2000); }});
++    await alpLiveRefreshPositions();
++    await alpLiveRefreshOrders();
++    await alpAutoLoadStatus();
++    await loadOverviewAccount();
++    step(3, 'Dashboard refreshed', 'done');
++  }} catch(e) {{
++    step(3, 'Refresh done (some data may still update)', 'done');
++  }}
++
++  btn.disabled = false;
++  btn.textContent = '🚀 Run Now';
++  btn.style.opacity = '';
+diff --git a/portfolio_allocator.py b/portfolio_allocator.py
+index 5568af0..83e6856 100644
+--- a/portfolio_allocator.py
++++ b/portfolio_allocator.py
+@@ -10 +10 @@ import math
+-def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocation_pct=25.0):
++def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocation_pct=25.0):
+@@ -12 +12 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-    Allocate capital across strategies based on performance and risk.
++    Allocate capital equally across all eligible strategies.
+@@ -15 +15 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-        capital: Total starting capital (e.g. 1000)
++        capital: Total starting capital (e.g. 100000)
+@@ -51,2 +51 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-        # Compute a composite score for allocation weight
+-        # Higher = deserves more capital
++        # Compute a composite score (used for ranking/display, NOT allocation weight)
+@@ -54,2 +52,0 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-
+-        # Win rate contribution (0-25 points)
+@@ -57,2 +53,0 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-
+-        # Profit factor contribution (0-25 points)
+@@ -60,2 +54,0 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-
+-        # Sharpe ratio contribution (0-20 points)
+@@ -63,2 +55,0 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-
+-        # Low drawdown bonus (0-15 points) — less drawdown = more allocation
+@@ -66,2 +56,0 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-
+-        # Adaptation score contribution (0-15 points)
+@@ -69,2 +57,0 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-
+-        # Risk penalty for very high drawdown
+@@ -80 +67 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-            "score": max(1, score),  # floor at 1
++            "score": max(1, score),
+@@ -99,12 +86,2 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-    # Normalize scores to get raw weights
+-    total_score = sum(e["score"] for e in eligible)
+-    for e in eligible:
+-        e["raw_weight"] = e["score"] / total_score * 100  # as percentage
+-
+-    # Apply min/max constraints and re-normalize
+-    # First pass: clip to bounds
+-    for e in eligible:
+-        e["clipped_weight"] = max(min_allocation_pct, min(max_allocation_pct, e["raw_weight"]))
+-
+-    # Re-normalize to sum to 100%
+-    total_clipped = sum(e["clipped_weight"] for e in eligible)
++    # ── Equal-weight allocation ──────────────────────────────────────
++    equal_pct = 100.0 / len(eligible)
+@@ -112,2 +89,2 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-        e["final_pct"] = e["clipped_weight"] / total_clipped * 100
+-        e["allocation_usd"] = round(capital * e["final_pct"] / 100, 2)
++        e["final_pct"] = equal_pct
++        e["allocation_usd"] = round(capital * equal_pct / 100, 2)
+@@ -115,2 +92,2 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=3.0, max_allocat
+-    # Sort by allocation (highest first)
+-    eligible.sort(key=lambda x: x["allocation_usd"], reverse=True)
++    # Sort by score (highest first) for display ranking
++    eligible.sort(key=lambda x: x["score"], reverse=True)
+diff --git a/seed_data.py b/seed_data.py
+index c4c25cc..711710e 100644
+--- a/seed_data.py
++++ b/seed_data.py
+@@ -3 +3 @@ Strategy Factory Bot Manager — Database Seeder
+-Initializes SQLite database and populates with 18 sample bots and strategies
++Initializes SQLite database and populates with ~200 bots and strategies
+@@ -25,20 +25,7 @@ B = "\033[1m"; X = "\033[0m"; D = "\033[90m"
+-# ── Strategy definitions ─────────────────────────────────────────────
+-STRATEGIES = [
+-    {"name": "BTC Scalper Alpha",       "type": "scalping",        "timeframe": "1m",  "pair": "BTC/USDT",   "desc": "High-frequency BTC scalping on 1-minute candles"},
+-    {"name": "ETH Momentum Wave",       "type": "momentum",        "timeframe": "15m", "pair": "ETH/USDT",   "desc": "ETH momentum breakout strategy on 15m"},
+-    {"name": "SOL Trend Rider",         "type": "trend_following",  "timeframe": "4h",  "pair": "SOL/USDT",   "desc": "SOL trend following on 4-hour timeframe"},
+-    {"name": "BNB Mean Reverter",       "type": "mean_reversion",   "timeframe": "1h",  "pair": "BNB/USDT",   "desc": "BNB mean reversion on 1-hour candles"},
+-    {"name": "ADA Breakout Hunter",     "type": "breakout",         "timeframe": "30m", "pair": "ADA/USDT",   "desc": "ADA breakout detection on 30-minute chart"},
+-    {"name": "XRP Grid Master",         "type": "grid",             "timeframe": "5m",  "pair": "XRP/USDT",   "desc": "XRP grid trading on 5-minute candles"},
+-    {"name": "DOT Swing Trader",        "type": "swing",            "timeframe": "4h",  "pair": "DOT/USDT",   "desc": "DOT swing trading on 4-hour chart"},
+-    {"name": "AVAX Scalper Pro",        "type": "scalping",         "timeframe": "1m",  "pair": "AVAX/USDT",  "desc": "AVAX high-frequency scalping strategy"},
+-    {"name": "LINK Trend Surfer",       "type": "trend_following",  "timeframe": "1h",  "pair": "LINK/USDT",  "desc": "LINK trend following on 1-hour candles"},
+-    {"name": "MATIC Momentum Beta",     "type": "momentum",         "timeframe": "15m", "pair": "MATIC/USDT", "desc": "MATIC momentum strategy on 15m"},
+-    {"name": "DOGE Breakout Blitz",     "type": "breakout",         "timeframe": "15m", "pair": "DOGE/USDT",  "desc": "DOGE breakout strategy with tight stops"},
+-    {"name": "UNI Mean Reverter Pro",   "type": "mean_reversion",   "timeframe": "30m", "pair": "UNI/USDT",   "desc": "UNI mean reversion with Bollinger Bands"},
+-    {"name": "ATOM Swing Elite",        "type": "swing",            "timeframe": "4h",  "pair": "ATOM/USDT",  "desc": "ATOM swing trading with RSI confirmation"},
+-    {"name": "FTM Grid Optimizer",      "type": "grid",             "timeframe": "5m",  "pair": "FTM/USDT",   "desc": "FTM grid trading with dynamic levels"},
+-    {"name": "NEAR Scalper Gamma",      "type": "scalping",         "timeframe": "1m",  "pair": "NEAR/USDT",  "desc": "NEAR quick scalps on 1-minute chart"},
+-    {"name": "ALGO Trend Catcher",      "type": "trend_following",  "timeframe": "1h",  "pair": "ALGO/USDT",  "desc": "ALGO trend following with EMA crossover"},
+-    {"name": "APE Momentum Surge",      "type": "momentum",         "timeframe": "30m", "pair": "APE/USDT",   "desc": "APE momentum surge detection on 30m"},
+-    {"name": "CRV Breakout Seeker",     "type": "breakout",         "timeframe": "15m", "pair": "CRV/USDT",   "desc": "CRV breakout with volume confirmation"},
++# ── All tradeable crypto pairs (Alpaca-supported + a few extra) ──────
++COINS = [
++    "BTC", "ETH", "SOL", "XRP", "AVAX", "DOGE", "SHIB", "DOT", "UNI",
++    "LINK", "LTC", "BCH", "AAVE", "ADA", "ALGO", "ATOM", "CRV", "NEAR",
++    "MKR", "GRT", "SUSHI", "YFI", "BAT", "XTZ",
++    # Unsupported on Alpaca but included for learning engine diversity
++    "BNB", "FTM", "APE", "MATIC",
+@@ -46,0 +34,52 @@ STRATEGIES = [
++STRATEGY_TYPES = [
++    ("scalping",        "1m"),
++    ("momentum",        "15m"),
++    ("trend_following",  "4h"),
++    ("mean_reversion",   "1h"),
++    ("breakout",         "30m"),
++    ("grid",             "5m"),
++    ("swing",            "4h"),
++]
++
++# Strategy name templates — maps type to a name suffix
++_NAME_SUFFIXES = {
++    "scalping":        "Scalper",
++    "momentum":        "Momentum",
++    "trend_following":  "Trend",
++    "mean_reversion":   "MeanRev",
++    "breakout":         "Breakout",
++    "grid":             "Grid",
++    "swing":            "Swing",
++}
++
++# Extra timeframe variants for top coins (to push from ~196 → ~200+)
++_EXTRA_VARIANTS = [
++    {"name": "BTC Scalper 5m",        "type": "scalping",        "timeframe": "5m",  "pair": "BTC/USDT",  "desc": "BTC scalping on 5-minute candles"},
++    {"name": "BTC Trend 1h",          "type": "trend_following",  "timeframe": "1h",  "pair": "BTC/USDT",  "desc": "BTC trend following on 1-hour candles"},
++    {"name": "ETH Scalper 5m",        "type": "scalping",        "timeframe": "5m",  "pair": "ETH/USDT",  "desc": "ETH scalping on 5-minute candles"},
++    {"name": "ETH Breakout 1h",       "type": "breakout",        "timeframe": "1h",  "pair": "ETH/USDT",  "desc": "ETH breakout detection on 1-hour chart"},
++    {"name": "SOL Momentum 1h",       "type": "momentum",        "timeframe": "1h",  "pair": "SOL/USDT",  "desc": "SOL momentum strategy on 1-hour candles"},
++    {"name": "XRP Swing 1h",          "type": "swing",           "timeframe": "1h",  "pair": "XRP/USDT",  "desc": "XRP swing trading on 1-hour chart"},
++]
++
++
++def _build_strategies():
++    """Generate ~200 strategies from all coin × strategy type combinations + extras."""
++    strategies = []
++    for coin in COINS:
++        for stype, tf in STRATEGY_TYPES:
++            suffix = _NAME_SUFFIXES[stype]
++            name = f"{coin} {suffix} {tf}"
++            pair = f"{coin}/USDT"
++            desc = f"{coin} {stype.replace('_', ' ')} strategy on {tf} timeframe"
++            strategies.append({
++                "name": name, "type": stype, "timeframe": tf,
++                "pair": pair, "desc": desc,
++            })
++    # Add extra timeframe variants
++    strategies.extend(_EXTRA_VARIANTS)
++    return strategies
++
++
++STRATEGIES = _build_strategies()
++
+@@ -86,4 +125,4 @@ TYPE_PROFILES = {
+-# Bots that start paused (indices)
+-PAUSED_BOTS = {4, 10, 14}  # ADA, DOGE, NEAR
+-# Bots with very few trades (for INSUFFICIENT_DATA testing)
+-LOW_TRADE_BOTS = {14, 17}  # NEAR, CRV
++# Bots that start paused (~5% of total, spread across the list)
++PAUSED_BOTS = {4, 10, 14, 22, 35, 48, 63, 77, 91, 105, 119, 133, 147, 161, 175, 189}
++# Bots with very few trades (for INSUFFICIENT_DATA testing, ~3%)
++LOW_TRADE_BOTS = {14, 17, 55, 82, 110, 140, 170}
+@@ -151 +190 @@ def seed_strategies(conn):
+-    """Insert all 18 strategies."""
++    """Insert all strategies (~200)."""
