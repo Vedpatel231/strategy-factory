@@ -135,6 +135,15 @@ class LearningEngine:
         regime = regime_scores["best_regime"]
         confidence = regime_scores["confidence"]
 
+        # Regime persistence: require 3 consecutive identical readings before switching
+        recent_regimes = [entry["regime"] for entry in self.state["regime_history"][-2:]]
+        if len(recent_regimes) >= 2:
+            candidate_regimes = recent_regimes + [regime]
+            if not all(r == regime for r in candidate_regimes):
+                # Last 3 readings (including current) are not unanimous; keep previous regime
+                regime = self.state.get("current_regime", regime)
+                confidence = min(confidence, 0.5)
+
         # Track transitions
         transition_probs = self._compute_transition_probs(regime)
 
@@ -256,7 +265,7 @@ class LearningEngine:
             regime_scores["low_volatility"] = 0.0
 
         # Choppy (neutral between mean revert and trending)
-        if 1.5 <= cv <= 1.5 and abs(autocorr) < 0.3:
+        if 1.0 <= cv <= 3.0 and abs(autocorr) < 0.2:
             regime_scores["choppy"] = 0.6
         else:
             regime_scores["choppy"] = 0.0
@@ -320,24 +329,29 @@ class LearningEngine:
 
         # Component 1: Regime-specific performance
         regime_trades = regime_perf.get("trades", 0)
-        if regime_trades >= 10:
+        if regime_trades >= 3:
+            confidence = min(1.0, regime_trades / 10)
             win_rate = metrics.get("win_rate", 0)
             if win_rate > 55:
-                score += 15
-                breakdown["regime_performance"] = 15
+                adj = int(15 * confidence)
+                score += adj
+                breakdown["regime_performance"] = adj
             elif win_rate < 42:
-                score -= 20
-                breakdown["regime_performance"] = -20
+                adj = int(-20 * confidence)
+                score += adj
+                breakdown["regime_performance"] = adj
             else:
                 breakdown["regime_performance"] = 0
 
             profit_factor = metrics.get("profit_factor", 0)
             if profit_factor > 1.3:
-                score += 10
-                breakdown["profit_factor"] = 10
+                adj = int(10 * confidence)
+                score += adj
+                breakdown["profit_factor"] = adj
             elif profit_factor < 0.9:
-                score -= 15
-                breakdown["profit_factor"] = -15
+                adj = int(-15 * confidence)
+                score += adj
+                breakdown["profit_factor"] = adj
             else:
                 breakdown["profit_factor"] = 0
         else:
@@ -538,7 +552,7 @@ class LearningEngine:
         calibration = self.state["calibration"]
 
         # Override 1: PAUSE but high adaptation → HOLD
-        if base_verdict == "PAUSE" and score >= 70:
+        if base_verdict == "PAUSE" and score >= 80:
             verdict = "HOLD"
             reasons.append(
                 f"Learning override: adaptation score {score} suggests drawdown is noise rather than edge decay"
@@ -546,7 +560,7 @@ class LearningEngine:
             learning_insights["override_1"] = "high_adaptation_override"
 
         # Override 2: PAUSE with history of regret → HOLD
-        if base_verdict == "PAUSE" and score >= 55:
+        if base_verdict == "PAUSE" and score >= 70:
             regretted_pauses = sum(
                 1 for event in strategy_state["pause_events"]
                 if event.get("outcome") == "REGRET"
@@ -561,9 +575,9 @@ class LearningEngine:
         # Override 3: PAUSE and high global regret rate → HOLD
         if (
             base_verdict == "PAUSE"
-            and calibration["total_decisions"] > 5
-            and calibration["pause_regret_rate"] > 0.30
-            and score >= 50
+            and calibration["total_decisions"] > 10
+            and calibration["pause_regret_rate"] > 0.50
+            and score >= 70
         ):
             verdict = "HOLD"
             regret_pct = calibration["pause_regret_rate"] * 100

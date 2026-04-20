@@ -18,6 +18,7 @@ import subprocess
 import datetime
 
 import config
+from risk_manager import RiskManager
 
 logger = logging.getLogger("alpaca_auto_trader")
 
@@ -26,7 +27,7 @@ DATA_DIR = config.DATA_DIR
 REPORT_DIR = config.REPORT_DIR
 FLAG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.enabled")
 LOG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.log.json")
-DEFAULT_INTERVAL_MIN = int(os.environ.get("ALPACA_AUTO_TRADE_INTERVAL_MIN", "30"))
+DEFAULT_INTERVAL_MIN = int(os.environ.get("ALPACA_AUTO_TRADE_INTERVAL_MIN", "1440"))
 
 
 def utc_now():
@@ -133,6 +134,31 @@ class AlpacaAutoTrader:
             "broker": "alpaca",
             "steps": {},
         }
+
+        # Risk checks before any trading
+        try:
+            rm = RiskManager()
+            from alpaca_client import AlpacaPaperClient
+            client = AlpacaPaperClient()
+            acct = client.get_account()
+            equity = float(acct.get("equity", 0))
+
+            ok, reasons = rm.pre_trade_check(equity)
+            if not ok:
+                logger.warning(f"Risk manager blocked trading: {reasons}")
+                entry["status"] = "risk_blocked"
+                entry["risk_reasons"] = reasons
+                self._append_log(entry)
+                self._last_result = entry
+                return
+
+            # Enforce position stop losses before rebalancing
+            closed = rm.enforce_position_stops(client)
+            if closed:
+                logger.info(f"Stop-loss closed {len(closed)} positions: {closed}")
+                entry["steps"]["stop_losses"] = closed
+        except Exception as e:
+            logger.error(f"Risk manager check failed: {e}", exc_info=True)
 
         # Step 1: Run daily_runner (refresh analysis + dashboard)
         env = dict(os.environ)

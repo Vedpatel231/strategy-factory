@@ -15,11 +15,12 @@ import datetime
 
 import config
 from alpaca_client import AlpacaPaperClient
+from risk_manager import RiskManager
 
 logger = logging.getLogger("alpaca_trader")
 
 ALPACA_TRADE_HISTORY = os.path.join(config.DATA_DIR, "alpaca_trade_runs.json")
-REBALANCE_THRESHOLD_PCT = 15.0  # only trade if position drifts >15% from target
+REBALANCE_THRESHOLD_PCT = 25.0  # only trade if position drifts >25% from target
 
 # Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
 # If a portfolio symbol isn't in this set, its allocation gets redistributed.
@@ -90,6 +91,23 @@ class AlpacaTrader:
         positions_list = self.client.get_positions()
         positions = {p["symbol"]: p for p in positions_list}
 
+        # Apply risk controls
+        try:
+            rm = RiskManager()
+            ok, reasons = rm.pre_trade_check(float(acct.get("equity", 0)))
+            if not ok:
+                return {"status": "risk_blocked", "reasons": reasons, "orders": []}
+
+            # Get exposure multiplier (cooldown)
+            cooldown_mult = rm.get_exposure_multiplier()
+            if cooldown_mult < 1.0:
+                logger.info(f"Cooldown active: exposure multiplier {cooldown_mult}")
+        except ImportError:
+            cooldown_mult = 1.0
+        except Exception as e:
+            logger.warning(f"Risk manager unavailable: {e}")
+            cooldown_mult = 1.0
+
         # Scale by CURRENT EQUITY so profits get reinvested
         dashboard_capital = portfolio.get("summary", {}).get("total_capital", 1000)
         effective_capital = capital_override or acct.get("equity", acct.get("cash", 1000))
@@ -110,6 +128,18 @@ class AlpacaTrader:
             "skipped": [],
             "summary": {},
         }
+
+        # Position stop losses
+        try:
+            closed_stops = rm.enforce_position_stops(self.client)
+            if closed_stops:
+                for cs in closed_stops:
+                    results["orders"].append({"symbol": cs["symbol"], "side": "close", "status": "stop_loss", "loss_pct": cs["loss_pct"]})
+                # Re-fetch positions after stop-loss closures
+                positions_list = self.client.get_positions()
+                positions = {p["symbol"]: p for p in positions_list}
+        except Exception:
+            pass
 
         # --- Pre-filter: identify supported vs unsupported allocations ---
         supported_allocs = []
@@ -165,6 +195,16 @@ class AlpacaTrader:
         logger.info(f"Aggregated {len(supported_allocs)} bot allocations into "
                     f"{len(target_by_symbol)} unique symbols")
 
+        # Apply exposure limits
+        try:
+            rm.apply_exposure_limits(target_by_symbol, float(acct.get("equity", effective_capital)))
+            # Apply cooldown multiplier
+            if cooldown_mult < 1.0:
+                for sym in target_by_symbol:
+                    target_by_symbol[sym]["target_usd"] *= cooldown_mult
+        except Exception:
+            pass
+
         # --- Execute trades per symbol (not per bot) ---
         for sym, target in target_by_symbol.items():
             dollar_alloc = target["target_usd"]
@@ -182,6 +222,14 @@ class AlpacaTrader:
                               f"{pct_diff:.1f}% drift — below threshold)"
                 })
                 continue
+
+            # Check trade frequency limit
+            try:
+                if not rm.can_place_order(sym):
+                    results["skipped"].append({"bot": label, "pair": sym, "reason": "Trade frequency limit reached"})
+                    continue
+            except Exception:
+                pass
 
             side = "buy" if diff > 0 else "sell"
             order_usd = abs(diff)
@@ -214,6 +262,10 @@ class AlpacaTrader:
                     results["orders"].append(order_result)
                     if side == "buy":
                         remaining_cash -= order_usd
+                    try:
+                        rm.record_order(sym)
+                    except Exception:
+                        pass
                 except Exception as e:
                     results["orders"].append({
                         "bot": label, "symbol": sym, "side": side,

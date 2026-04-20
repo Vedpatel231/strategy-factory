@@ -578,6 +578,67 @@ def alpaca_auto_execute():
         return jsonify({"error": str(e)}), 500
 
 
+# ── EMERGENCY KILL SWITCH & RISK ──────────────────────────────────────
+@app.route("/api/emergency/kill", methods=["POST"])
+@require_auth
+def emergency_kill():
+    """Emergency: close all positions, disable all auto-trading."""
+    results = {"timestamp": datetime.utcnow().isoformat(), "actions": []}
+
+    # Disable auto-trading
+    try:
+        AlpacaAutoTrader.set_enabled(False)
+        trader = AlpacaAutoTrader.get()
+        trader.stop()
+        results["actions"].append("Alpaca auto-trading disabled")
+    except Exception as e:
+        results["actions"].append(f"Error disabling auto-trade: {e}")
+
+    # Close all Alpaca positions
+    try:
+        from alpaca_client import AlpacaPaperClient
+        client = AlpacaPaperClient()
+        positions = client.get_positions()
+        for pos in positions:
+            try:
+                client.close_position(pos["symbol"])
+                results["actions"].append(f"Closed {pos['symbol']} (${pos.get('market_value', 0):.2f})")
+            except Exception as e:
+                results["actions"].append(f"Failed to close {pos['symbol']}: {e}")
+        results["positions_closed"] = len(positions)
+    except Exception as e:
+        results["actions"].append(f"Error closing positions: {e}")
+
+    # Log the kill event
+    kill_log = os.path.join(DATA_DIR, "kill_switch.log.json")
+    try:
+        existing = []
+        if os.path.exists(kill_log):
+            with open(kill_log) as f:
+                existing = json.load(f)
+        existing.append(results)
+        with open(kill_log, "w") as f:
+            json.dump(existing[-50:], f, indent=2, default=str)
+    except Exception:
+        pass
+
+    return jsonify(results)
+
+
+@app.route("/api/risk/status")
+@require_auth
+def risk_status():
+    """Return current risk control states."""
+    try:
+        from risk_manager import RiskManager
+        rm = RiskManager()
+        return jsonify(rm.get_status())
+    except ImportError:
+        return jsonify({"error": "risk_manager not available", "controls_active": False})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 # ── AUTO-TRADER ENDPOINTS ──────────────────────────────────────────────
 @app.route("/api/auto/status")
 @require_auth
