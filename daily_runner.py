@@ -272,7 +272,16 @@ def run_analysis(args, logger):
         b["pair"] = b.get("pair", "")
         bots_for_dashboard.append(b)
 
-    learning_stats = {"calibration": learner.state.get("calibration", {})}
+    # Include per-bot adaptation scores so Learning Engine page shows real data
+    learning_stats = {}
+    for bd in bot_data_list:
+        bot_name = bd["bot"].get("name", "")
+        if bot_name:
+            learning_stats[bot_name] = {
+                "adaptation_score": bd.get("adaptation_score", 50),
+                "adaptation_label": bd.get("adaptation_label", "NEUTRAL"),
+            }
+    learning_stats["_calibration"] = learner.state.get("calibration", {})
     execution_summary = counts
 
     html = dashboard_gen.generate(bots_for_dashboard, evaluations, regime_info,

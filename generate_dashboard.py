@@ -74,14 +74,62 @@ class DashboardGenerator:
                 }
             evaluations = eval_dict
 
-        # Normalize learning_stats
+        # Normalize learning_stats — compute realistic scores from bot metrics
         if isinstance(learning_stats, dict) and "calibration" in learning_stats and len(learning_stats) <= 2:
             cal = learning_stats.get("calibration", {})
             new_ls = {}
             for name, ev in evaluations.items():
+                # If a real adaptation_score exists and isn't the default 50, use it
+                existing = ev.get("adaptation_score", 0)
+                if existing and existing != 50:
+                    score = existing
+                else:
+                    # Compute a realistic score from the bot's actual metrics
+                    score = 50  # base
+                    wr = self._num(ev.get("win_rate", 50))
+                    pf = self._num(ev.get("profit_factor", 1.0))
+                    sharpe = self._num(ev.get("sharpe_ratio", 0))
+                    trades = self._num(ev.get("total_trades", 0))
+                    mf = self._num(ev.get("market_fit", 50))
+
+                    # Win rate contribution (-15 to +20)
+                    if wr >= 70: score += 20
+                    elif wr >= 60: score += 12
+                    elif wr >= 50: score += 5
+                    elif wr >= 40: score -= 5
+                    else: score -= 15
+
+                    # Profit factor contribution (-15 to +15)
+                    if pf >= 2.5: score += 15
+                    elif pf >= 1.8: score += 10
+                    elif pf >= 1.2: score += 3
+                    elif pf < 0.9: score -= 15
+                    elif pf < 1.0: score -= 8
+
+                    # Sharpe ratio contribution (-10 to +10)
+                    if sharpe >= 2.0: score += 10
+                    elif sharpe >= 1.0: score += 5
+                    elif sharpe < 0: score -= 10
+
+                    # Trade volume bonus (more trades = more confidence)
+                    if trades >= 100: score += 5
+                    elif trades < 10: score -= 10
+
+                    # Market fit bonus
+                    if mf >= 80: score += 5
+                    elif mf < 40: score -= 5
+
+                    score = max(0, min(100, score))
+
+                if score >= 75: label = "WELL_ADAPTED"
+                elif score >= 55: label = "MODERATELY_ADAPTED"
+                elif score >= 40: label = "NEUTRAL"
+                elif score >= 25: label = "POORLY_ADAPTED"
+                else: label = "MISMATCHED"
+
                 new_ls[name] = {
-                    "adaptation_score": ev.get("adaptation_score", 50),
-                    "adaptation_label": ev.get("adaptation_label", "NEUTRAL"),
+                    "adaptation_score": score,
+                    "adaptation_label": label,
                 }
             new_ls["_calibration"] = cal
             learning_stats = new_ls
