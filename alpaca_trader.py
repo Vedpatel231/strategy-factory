@@ -136,6 +136,7 @@ class AlpacaTrader:
             logger.info(f"Redistributing ${unsupported_total:.2f} from {len(unsupported_allocs)} "
                         f"unsupported symbols (factor {redistribution_factor:.3f}x)")
 
+        # --- Aggregate allocations: multiple bots can target the same symbol ---
         target_by_symbol = {}
 
         for alloc, sym in supported_allocs:
@@ -149,11 +150,25 @@ class AlpacaTrader:
                 })
                 continue
 
-            target_by_symbol[sym] = {
-                "bot_name": bot_name,
-                "target_usd": round(dollar_alloc, 2),
-                "allocation_pct": alloc.get("allocation_pct", 0),
-            }
+            if sym in target_by_symbol:
+                # Accumulate: add this bot's allocation to existing target
+                target_by_symbol[sym]["target_usd"] += round(dollar_alloc, 2)
+                target_by_symbol[sym]["allocation_pct"] += alloc.get("allocation_pct", 0)
+                target_by_symbol[sym]["bot_names"].append(bot_name)
+            else:
+                target_by_symbol[sym] = {
+                    "bot_names": [bot_name],
+                    "target_usd": round(dollar_alloc, 2),
+                    "allocation_pct": alloc.get("allocation_pct", 0),
+                }
+
+        logger.info(f"Aggregated {len(supported_allocs)} bot allocations into "
+                    f"{len(target_by_symbol)} unique symbols")
+
+        # --- Execute trades per symbol (not per bot) ---
+        for sym, target in target_by_symbol.items():
+            dollar_alloc = target["target_usd"]
+            label = f"{sym} ({len(target['bot_names'])} bots)"
 
             existing = positions.get(sym)
             current_value = existing["market_value"] if existing else 0
@@ -162,7 +177,7 @@ class AlpacaTrader:
 
             if existing and pct_diff < REBALANCE_THRESHOLD_PCT:
                 results["skipped"].append({
-                    "bot": bot_name, "pair": sym,
+                    "bot": label, "pair": sym,
                     "reason": f"Already allocated (${current_value:.2f} vs target ${dollar_alloc:.2f}, "
                               f"{pct_diff:.1f}% drift — below threshold)"
                 })
@@ -175,14 +190,14 @@ class AlpacaTrader:
                 order_usd = min(order_usd, remaining_cash)
                 if order_usd < 1.0:
                     results["skipped"].append({
-                        "bot": bot_name, "pair": sym,
+                        "bot": label, "pair": sym,
                         "reason": f"Buying power ${remaining_cash:.2f} insufficient"
                     })
                     continue
 
             if dry_run:
                 results["orders"].append({
-                    "bot": bot_name, "symbol": sym, "side": side,
+                    "bot": label, "symbol": sym, "side": side,
                     "notional": round(order_usd, 2),
                     "status": "DRY_RUN",
                     "target_usd": dollar_alloc,
@@ -193,7 +208,7 @@ class AlpacaTrader:
             else:
                 try:
                     order_result = self.client.submit_order(sym, order_usd, side=side)
-                    order_result["bot"] = bot_name
+                    order_result["bot"] = label
                     order_result["target_usd"] = dollar_alloc
                     order_result["current_usd"] = current_value
                     results["orders"].append(order_result)
@@ -201,7 +216,7 @@ class AlpacaTrader:
                         remaining_cash -= order_usd
                 except Exception as e:
                     results["orders"].append({
-                        "bot": bot_name, "symbol": sym, "side": side,
+                        "bot": label, "symbol": sym, "side": side,
                         "notional": round(order_usd, 2),
                         "status": "error",
                         "error": str(e),
