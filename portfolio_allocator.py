@@ -4,21 +4,19 @@ Takes a starting capital (e.g. $1,000) and intelligently distributes it
 across active strategies based on quantum scores, risk metrics, and diversification.
 """
 
-import math
-
 ACTIVE_COINS = {"BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "DOGE", "ADA"}
 ACTIVE_STRATEGIES = {"grid", "mean_reversion", "momentum"}
 
 
 def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocation_pct=25.0):
     """
-    Allocate capital equally across all eligible strategies.
+    Allocate capital across eligible strategies using score-weighted sizing.
 
     Args:
         capital: Total starting capital (e.g. 100000)
         evaluations: List of evaluation dicts from daily_runner
-        min_allocation_pct: Minimum % per strategy (avoids dust positions)
-        max_allocation_pct: Maximum % per strategy (avoids over-concentration)
+        min_allocation_pct: Reserved for future dust-position filtering.
+        max_allocation_pct: Reserved for future concentration filtering.
 
     Returns:
         dict with:
@@ -64,7 +62,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
             excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Below quality threshold (WR={win_rate:.0f}%, PF={pf:.2f}, Sharpe={sharpe:.2f})"})
             continue
 
-        # Compute a composite score (used for ranking/display, NOT allocation weight)
+        # Compute a composite score for ranking and allocation weight.
         score = 0
         score += min(25, max(0, (win_rate - 40) * 0.625))
         score += min(25, max(0, (pf - 0.8) * 17.86))

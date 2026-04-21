@@ -639,6 +639,51 @@ def risk_status():
         return jsonify({"error": str(e)})
 
 
+@app.route("/api/intraday/state")
+@require_auth
+def intraday_state():
+    """Return latest intraday signal/regime evaluations by symbol."""
+    try:
+        from intraday_engine import load_intraday_state
+        return jsonify({
+            "source": "live_intraday_signal_engine",
+            "seeded_metrics_included": False,
+            "symbols": load_intraday_state(),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "symbols": {}})
+
+
+@app.route("/api/trade-journal")
+@require_auth
+def trade_journal():
+    """Return real paper-trading decisions/fills recorded by AlpacaTrader."""
+    try:
+        limit = int(request.args.get("limit", 200))
+        from trade_journal import load_trade_journal
+        return jsonify({
+            "source": "alpaca_paper_trade_journal",
+            "seeded_metrics_included": False,
+            "events": load_trade_journal(limit=limit),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "events": []})
+
+
+@app.route("/api/position-risk")
+@require_auth
+def position_risk():
+    """Return per-position SL/TP/trailing/timeout metadata."""
+    try:
+        from trade_journal import load_position_risk_state
+        return jsonify({
+            "source": "position_risk_book",
+            "positions": load_position_risk_state(),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "positions": {}})
+
+
 # ── AUTO-TRADER ENDPOINTS ──────────────────────────────────────────────
 @app.route("/api/auto/status")
 @require_auth

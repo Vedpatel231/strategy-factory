@@ -16,11 +16,18 @@ import datetime
 import config
 from alpaca_client import AlpacaPaperClient
 from risk_manager import RiskManager
+from intraday_engine import IntradaySignalEngine
+from trade_journal import PositionRiskBook, TradeJournal
 
 logger = logging.getLogger("alpaca_trader")
 
 ALPACA_TRADE_HISTORY = os.path.join(config.DATA_DIR, "alpaca_trade_runs.json")
 REBALANCE_THRESHOLD_PCT = 25.0  # only trade if position drifts >25% from target
+INTRADAY_GATE_ENABLED = os.environ.get("INTRADAY_GATE_ENABLED", "true").lower() != "false"
+MAX_HOLD_HOURS = float(os.environ.get("INTRADAY_MAX_HOLD_HOURS", "18"))
+BASE_STOP_LOSS_PCT = float(os.environ.get("INTRADAY_BASE_STOP_LOSS_PCT", "2.2"))
+BASE_TAKE_PROFIT_PCT = float(os.environ.get("INTRADAY_BASE_TAKE_PROFIT_PCT", "4.2"))
+BASE_TRAILING_STOP_PCT = float(os.environ.get("INTRADAY_BASE_TRAILING_STOP_PCT", "1.6"))
 
 # Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
 # If a portfolio symbol isn't in this set, its allocation gets redistributed.
@@ -66,6 +73,9 @@ class AlpacaTrader:
     def __init__(self):
         self.client = AlpacaPaperClient()
         self.runs = self._load_runs()
+        self.journal = TradeJournal()
+        self.risk_book = PositionRiskBook()
+        self.signal_engine = IntradaySignalEngine()
 
     def _load_runs(self):
         if os.path.exists(ALPACA_TRADE_HISTORY):
@@ -126,8 +136,21 @@ class AlpacaTrader:
             "scale_factor": scale,
             "orders": [],
             "skipped": [],
+            "signals": {},
+            "intraday_gate_enabled": INTRADAY_GATE_ENABLED,
             "summary": {},
         }
+
+        # Soft exits (TP/SL/trailing/timeout) before new entries or rebalances.
+        if not dry_run:
+            try:
+                exit_orders = self._enforce_intraday_exits(positions)
+                if exit_orders:
+                    results["orders"].extend(exit_orders)
+                    positions_list = self.client.get_positions()
+                    positions = {p["symbol"]: p for p in positions_list}
+            except Exception as e:
+                logger.warning(f"Intraday exit check failed: {e}")
 
         # Position stop losses
         try:
@@ -195,6 +218,12 @@ class AlpacaTrader:
         logger.info(f"Aggregated {len(supported_allocs)} bot allocations into "
                     f"{len(target_by_symbol)} unique symbols")
 
+        # Intraday quality gate: keep the allocator, but require a live setup for
+        # new long exposure. Existing positions can be held if there is no strong
+        # opposite signal, which avoids solving risk by simply never trading.
+        if INTRADAY_GATE_ENABLED:
+            self._apply_intraday_gate(target_by_symbol, positions, results)
+
         # Apply exposure limits
         try:
             rm.apply_exposure_limits(target_by_symbol, float(acct.get("equity", effective_capital)))
@@ -208,6 +237,8 @@ class AlpacaTrader:
         # --- Execute trades per symbol (not per bot) ---
         for sym, target in target_by_symbol.items():
             dollar_alloc = target["target_usd"]
+            if dollar_alloc <= 0:
+                dollar_alloc = 0
             label = f"{sym} ({len(target['bot_names'])} bots)"
 
             existing = positions.get(sym)
@@ -233,6 +264,13 @@ class AlpacaTrader:
 
             side = "buy" if diff > 0 else "sell"
             order_usd = abs(diff)
+
+            try:
+                if not rm.can_submit_order(sym, side):
+                    results["skipped"].append({"bot": label, "pair": sym, "reason": f"Duplicate {side} order blocked"})
+                    continue
+            except Exception:
+                pass
 
             if side == "buy":
                 order_usd = min(order_usd, remaining_cash)
@@ -260,10 +298,12 @@ class AlpacaTrader:
                     order_result["target_usd"] = dollar_alloc
                     order_result["current_usd"] = current_value
                     results["orders"].append(order_result)
+                    self._record_trade_event(order_result, target, side, order_usd, results)
                     if side == "buy":
                         remaining_cash -= order_usd
                     try:
                         rm.record_order(sym)
+                        rm.record_submitted_order(sym, side)
                     except Exception:
                         pass
                 except Exception as e:
@@ -290,6 +330,14 @@ class AlpacaTrader:
                         close_result["reason"] = "No longer in target portfolio"
                         close_result["side"] = "close"
                         results["orders"].append(close_result)
+                        self.risk_book.remove(sym)
+                        self.journal.append({
+                            "event": "position_closed",
+                            "symbol": sym,
+                            "side": "close",
+                            "reason": "No longer in target portfolio",
+                            "order": close_result,
+                        })
                     except Exception as e:
                         results["orders"].append({
                             "symbol": sym, "side": "close",
@@ -323,3 +371,162 @@ class AlpacaTrader:
             self._save_runs()
 
         return results
+
+    def _apply_intraday_gate(self, target_by_symbol, positions, results):
+        for sym in list(target_by_symbol.keys()):
+            target = target_by_symbol[sym]
+            existing = positions.get(sym)
+            signal = self.signal_engine.evaluate_symbol(sym)
+            results["signals"][sym] = signal
+            target["signal"] = signal
+
+            if signal.get("action") == "sell" and signal.get("confidence", 0) >= 0.56:
+                if existing:
+                    target["target_usd"] = 0.0
+                    target["intraday_reason"] = "Strong opposite intraday signal"
+                    self.journal.append({
+                        "event": "target_downweighted",
+                        "symbol": sym,
+                        "reason": "Strong opposite intraday signal",
+                        "signal": signal,
+                    })
+                else:
+                    del target_by_symbol[sym]
+                continue
+
+            if signal.get("accepted") and signal.get("action") == "buy":
+                confidence = float(signal.get("confidence", 0.0))
+                multiplier = max(0.55, min(1.25, 0.55 + confidence * 0.8))
+                target["target_usd"] = round(target["target_usd"] * multiplier, 2)
+                target["intraday_reason"] = signal.get("reason", "")
+                continue
+
+            if existing:
+                # No fresh long setup: hold existing exposure without churn unless
+                # normal risk controls or exit rules fire.
+                target["target_usd"] = existing.get("market_value", target["target_usd"])
+                target["intraday_reason"] = f"Held existing position: {signal.get('reason')}"
+            else:
+                results["skipped"].append({
+                    "bot": f"{sym} ({len(target.get('bot_names', []))} bots)",
+                    "pair": sym,
+                    "reason": f"Intraday gate rejected new entry: {signal.get('reason')}",
+                })
+                self.journal.append({
+                    "event": "entry_rejected",
+                    "symbol": sym,
+                    "reason": signal.get("reason"),
+                    "signal": signal,
+                    "bot_names": target.get("bot_names", []),
+                })
+                del target_by_symbol[sym]
+
+    def _risk_params(self, signal):
+        features = signal.get("features", {}) if isinstance(signal, dict) else {}
+        atr_pct = float(features.get("atr_pct_15m", 0.0) or 0.0)
+        confidence = float(signal.get("confidence", 0.0) or 0.0) if isinstance(signal, dict) else 0.0
+        stop = max(BASE_STOP_LOSS_PCT, min(5.0, atr_pct * 1.4 if atr_pct else BASE_STOP_LOSS_PCT))
+        take = max(BASE_TAKE_PROFIT_PCT, stop * (1.45 + confidence * 0.6))
+        trail = max(BASE_TRAILING_STOP_PCT, min(3.8, stop * 0.75))
+        return round(stop, 2), round(take, 2), round(trail, 2)
+
+    def _record_trade_event(self, order_result, target, side, order_usd, results):
+        sym = order_result.get("symbol")
+        signal = target.get("signal", {})
+        event = {
+            "event": "order_submitted",
+            "symbol": sym,
+            "side": side,
+            "notional": round(order_usd, 2),
+            "status": order_result.get("status"),
+            "bot_names": target.get("bot_names", []),
+            "strategy": self._top_strategy(signal),
+            "regime": signal.get("setup_regime", {}).get("label"),
+            "confidence": signal.get("confidence"),
+            "entry_reason": target.get("intraday_reason") or signal.get("reason"),
+            "order": order_result,
+        }
+        self.journal.append(event)
+
+        if side == "buy" and not order_result.get("error"):
+            entry_price = order_result.get("filled_avg_price") or self.client.get_latest_price(sym)
+            stop, take, trail = self._risk_params(signal)
+            self.risk_book.register_entry(
+                symbol=sym,
+                strategy=event["strategy"],
+                regime=event["regime"],
+                confidence=event["confidence"],
+                entry_price=entry_price,
+                notional=order_usd,
+                stop_loss_pct=stop,
+                take_profit_pct=take,
+                trailing_stop_pct=trail,
+                max_hold_hours=MAX_HOLD_HOURS,
+                reason=event["entry_reason"],
+            )
+        elif side in ("sell", "close") and not order_result.get("error"):
+            self.risk_book.remove(sym)
+
+    def _top_strategy(self, signal):
+        strategies = signal.get("strategy_signals", []) if isinstance(signal, dict) else []
+        if not strategies:
+            return "portfolio_rebalance"
+        best = sorted(
+            strategies,
+            key=lambda s: float(s.get("confidence", 0) or 0) * float(s.get("regime_fit", 1) or 1),
+            reverse=True,
+        )[0]
+        return best.get("strategy", "unknown")
+
+    def _enforce_intraday_exits(self, positions):
+        orders = []
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for sym, pos in positions.items():
+            state = self.risk_book.get(sym)
+            if not state:
+                continue
+
+            current_price = float(pos.get("current_price", 0) or 0)
+            entry_price = float(state.get("entry_price") or pos.get("avg_entry_price") or 0)
+            if current_price <= 0 or entry_price <= 0:
+                continue
+
+            self.risk_book.update_high_water(sym, current_price)
+            state = self.risk_book.get(sym) or state
+            high_water = float(state.get("high_water_price", current_price) or current_price)
+            pl_pct = (current_price - entry_price) / entry_price * 100.0
+            trail_dd = (high_water - current_price) / high_water * 100.0 if high_water > 0 else 0.0
+
+            reason = None
+            if pl_pct <= -float(state.get("stop_loss_pct", BASE_STOP_LOSS_PCT)):
+                reason = f"Stop loss hit ({pl_pct:.2f}%)"
+            elif pl_pct >= float(state.get("take_profit_pct", BASE_TAKE_PROFIT_PCT)):
+                reason = f"Take profit hit ({pl_pct:.2f}%)"
+            elif trail_dd >= float(state.get("trailing_stop_pct", BASE_TRAILING_STOP_PCT)) and pl_pct > 0:
+                reason = f"Trailing stop hit ({trail_dd:.2f}% from high)"
+            else:
+                opened_at = state.get("opened_at", "")
+                try:
+                    opened = datetime.datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+                    age_hours = (now - opened).total_seconds() / 3600
+                    if age_hours >= float(state.get("max_hold_hours", MAX_HOLD_HOURS)) and pl_pct <= 0:
+                        reason = f"Timeout exit after {age_hours:.1f}h without profit"
+                except Exception:
+                    pass
+
+            if reason:
+                close_result = self.client.close_position(sym)
+                close_result["reason"] = reason
+                close_result["side"] = "close"
+                orders.append(close_result)
+                self.risk_book.remove(sym)
+                self.journal.append({
+                    "event": "position_closed",
+                    "symbol": sym,
+                    "side": "close",
+                    "reason": reason,
+                    "entry_state": state,
+                    "unrealized_pl_pct": round(pl_pct, 2),
+                    "order": close_result,
+                })
+        return orders

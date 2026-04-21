@@ -290,6 +290,17 @@ class ExposureLimits:
     MAX_SINGLE_PCT = 12.0
     MAX_TOTAL_PCT = 90.0
 
+    def _get_target_usd(self, value):
+        if isinstance(value, dict):
+            return float(value.get("target_usd", 0.0) or 0.0)
+        return float(value or 0.0)
+
+    def _set_target_usd(self, target_by_symbol: dict, symbol: str, value: float):
+        if isinstance(target_by_symbol.get(symbol), dict):
+            target_by_symbol[symbol]["target_usd"] = round(value, 2)
+        else:
+            target_by_symbol[symbol] = round(value, 2)
+
     def apply(self, target_by_symbol: dict, total_equity: float) -> dict:
         """
         Modify *target_by_symbol* (symbol -> notional USD) in place,
@@ -303,24 +314,29 @@ class ExposureLimits:
         max_total = total_equity * self.MAX_TOTAL_PCT / 100.0
 
         # Cap individual positions
-        for sym in target_by_symbol:
-            if target_by_symbol[sym] > max_single:
+        for sym in list(target_by_symbol.keys()):
+            target_usd = self._get_target_usd(target_by_symbol[sym])
+            if target_usd > max_single:
                 logger.info(
                     "ExposureLimits: capping %s from $%.2f to $%.2f (%.0f%% of equity)",
-                    sym, target_by_symbol[sym], max_single, self.MAX_SINGLE_PCT,
+                    sym, target_usd, max_single, self.MAX_SINGLE_PCT,
                 )
-                target_by_symbol[sym] = max_single
+                self._set_target_usd(target_by_symbol, sym, max_single)
 
         # Cap total exposure
-        total = sum(target_by_symbol.values())
+        total = sum(self._get_target_usd(v) for v in target_by_symbol.values())
         if total > max_total and total > 0:
             scale = max_total / total
             logger.info(
                 "ExposureLimits: scaling total from $%.2f to $%.2f (%.0f%% cap)",
                 total, max_total, self.MAX_TOTAL_PCT,
             )
-            for sym in target_by_symbol:
-                target_by_symbol[sym] = round(target_by_symbol[sym] * scale, 2)
+            for sym in list(target_by_symbol.keys()):
+                self._set_target_usd(
+                    target_by_symbol,
+                    sym,
+                    self._get_target_usd(target_by_symbol[sym]) * scale,
+                )
 
         return target_by_symbol
 
@@ -390,6 +406,45 @@ class TradeFrequencyLimiter:
     def daily_total(self):
         self._maybe_reset()
         return self._total
+
+
+# ---------------------------------------------------------------------------
+# 5b. DuplicateOrderGuard
+# ---------------------------------------------------------------------------
+
+class DuplicateOrderGuard:
+    """
+    Block repeated same-symbol/same-side orders inside a short time window.
+    This catches accidental double-clicks, retries, and runaway loops without
+    preventing the bot from taking fresh intraday setups later.
+    """
+
+    STATE_FILE = os.path.join(config.DATA_DIR, "duplicate_order_guard.json")
+    MIN_REPEAT_SECONDS = 20 * 60
+
+    def __init__(self):
+        self._state = _read_json(self.STATE_FILE, {})
+        if not isinstance(self._state, dict):
+            self._state = {}
+
+    def can_submit(self, symbol: str, side: str) -> bool:
+        key = f"{symbol}:{side.lower()}"
+        last_ts = self._state.get(key)
+        if not last_ts:
+            return True
+        try:
+            last = datetime.fromisoformat(last_ts)
+            if _utcnow() - last < timedelta(seconds=self.MIN_REPEAT_SECONDS):
+                logger.warning("DuplicateOrderGuard: blocked duplicate %s", key)
+                return False
+        except Exception:
+            return True
+        return True
+
+    def record(self, symbol: str, side: str):
+        key = f"{symbol}:{side.lower()}"
+        self._state[key] = _utcnow().isoformat()
+        _write_json(self.STATE_FILE, self._state)
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +611,7 @@ class RiskManager:
         self.position_stop_loss = PositionStopLoss(max_loss_pct=max_position_loss_pct)
         self.exposure_limits = ExposureLimits()
         self.frequency_limiter = TradeFrequencyLimiter()
+        self.duplicate_guard = DuplicateOrderGuard()
         self.cooldown = CooldownManager()
         self.strategy_disabler = StrategyDisabler()
         logger.info("RiskManager initialised")
@@ -608,6 +664,14 @@ class RiskManager:
         """Record that an order was placed for *symbol*."""
         self.frequency_limiter.record_trade(symbol)
 
+    def can_submit_order(self, symbol: str, side: str) -> bool:
+        """Check duplicate order guard for a symbol/side pair."""
+        return self.duplicate_guard.can_submit(symbol, side)
+
+    def record_submitted_order(self, symbol: str, side: str):
+        """Record duplicate guard state for the submitted symbol/side pair."""
+        self.duplicate_guard.record(symbol, side)
+
     # ── Cooldown multiplier ────────────────────────────────────────────
     def get_exposure_multiplier(self) -> float:
         """Return the current cooldown exposure multiplier (0.0 – 1.0)."""
@@ -646,6 +710,9 @@ class RiskManager:
                 "daily_total": self.frequency_limiter.daily_total,
                 "max_daily_total": TradeFrequencyLimiter.MAX_DAILY_TOTAL,
                 "max_per_symbol": TradeFrequencyLimiter.MAX_DAILY_PER_SYMBOL,
+            },
+            "duplicate_order_guard": {
+                "min_repeat_seconds": DuplicateOrderGuard.MIN_REPEAT_SECONDS,
             },
             "cooldown": {
                 "exposure_multiplier": self.cooldown.get_multiplier(),

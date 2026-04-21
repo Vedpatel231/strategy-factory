@@ -869,7 +869,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         <table class="data-table">
           <thead><tr>
             <th>Symbol</th><th>Qty</th><th>Avg Entry</th><th>Current</th>
-            <th>Market Value</th><th>P&L</th><th>P&L %</th><th>Action</th>
+            <th>Market Value</th><th>P&L</th><th>P&L %</th>
+            <th>Strategy / Regime</th><th>SL</th><th>TP</th><th>Trail</th><th>Action</th>
           </tr></thead>
           <tbody id="alpLivePositionsBody"></tbody>
         </table>
@@ -915,6 +916,16 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
           <tbody id="alpLiveOrdersBody"></tbody>
         </table>
       </div>
+    </div>
+
+    <!-- Real Paper Journal -->
+    <div class="card" style="margin-top:24px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-weight:600;font-size:1.1em;">Trade & Decision Journal</span>
+        <button onclick="alpLiveRefreshJournal()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+      </div>
+      <div style="font-size:0.82em;color:var(--text-dim);margin-bottom:12px;">Real Alpaca paper decisions only. Seeded/backtest metrics are not included here.</div>
+      <div id="alpLiveJournalBody" style="max-height:280px;overflow:auto;color:var(--text-dim);font-size:0.88em;">No journal events loaded.</div>
     </div>
 
     <!-- Auto-Trade Controls -->
@@ -1537,6 +1548,7 @@ function refreshPageData(page) {{
     if (alpLiveConnected) {{
       alpLiveRefreshPositions();
       alpLiveRefreshOrders();
+      alpLiveRefreshJournal();
     }}
     alpAutoLoadStatus();
   }} else if (page === 'portfolio') {{
@@ -1570,6 +1582,7 @@ setInterval(liveTick, 30000);
 function alpacaFastTick() {{
   if (_currentPage === 'alpaca-live' && alpLiveConnected) {{
     alpLiveRefreshPositions();
+    alpLiveRefreshJournal();
   }}
 }}
 setInterval(alpacaFastTick, 10000);
@@ -2732,6 +2745,8 @@ async function alpLiveRefreshPositions() {{
   if (!alpLiveConnected) return;
   try {{
     var data = await apiGet('/api/alpaca/positions');
+    var riskData = await apiGet('/api/position-risk').catch(function() {{ return {{positions: {{}}}}; }});
+    var riskMap = riskData.positions || {{}};
     var positions = data.positions || [];
     var emptyEl = document.getElementById('alpLivePositionsEmpty');
     var tableEl = document.getElementById('alpLivePositionsTable');
@@ -2748,6 +2763,7 @@ async function alpLiveRefreshPositions() {{
     var body = document.getElementById('alpLivePositionsBody');
     body.innerHTML = '';
     positions.forEach(function(p) {{
+      var r = riskMap[p.symbol] || {{}};
       var plColor = p.unrealized_pl >= 0 ? 'var(--lime)' : 'var(--red)';
       var plSign = p.unrealized_pl >= 0 ? '+' : '';
       body.innerHTML += '<tr>' +
@@ -2758,6 +2774,10 @@ async function alpLiveRefreshPositions() {{
         '<td>' + fmtUSD(p.market_value) + '</td>' +
         '<td style="color:' + plColor + ';">' + plSign + fmtUSD(p.unrealized_pl) + '</td>' +
         '<td style="color:' + plColor + ';">' + plSign + p.unrealized_plpc.toFixed(2) + '%</td>' +
+        '<td><span style="color:var(--text);">' + (r.strategy || 'manual/legacy') + '</span><br><span style="color:var(--text-dim);font-size:0.82em;">' + (r.regime || 'unknown') + '</span></td>' +
+        '<td>' + (r.stop_loss_pct ? r.stop_loss_pct + '%' : '—') + '</td>' +
+        '<td>' + (r.take_profit_pct ? r.take_profit_pct + '%' : '—') + '</td>' +
+        '<td>' + (r.trailing_stop_pct ? r.trailing_stop_pct + '%' : '—') + '</td>' +
         '<td><button onclick="alpLiveClosePos(\\x27' + p.symbol + '\\x27)" class="filter-btn" style="padding:4px 10px;font-size:0.8em;color:var(--red);border-color:var(--red);">Close</button></td>' +
         '</tr>';
     }});
@@ -2774,6 +2794,32 @@ async function alpLiveRefreshPositions() {{
   }} catch(e) {{
     console.error('Positions refresh error:', e);
   }}
+}}
+
+async function alpLiveRefreshJournal() {{
+  try {{
+    var data = await apiGet('/api/trade-journal?limit=60');
+    var events = data.events || [];
+    var body = document.getElementById('alpLiveJournalBody');
+    if (!body) return;
+    if (events.length === 0) {{
+      body.innerHTML = 'No real paper-trading journal events yet.';
+      return;
+    }}
+    body.innerHTML = events.slice(0, 60).map(function(e) {{
+      var ts = (e.timestamp || '').replace('T', ' ').slice(0, 19);
+      var sym = e.symbol || '—';
+      var event = e.event || 'event';
+      var reason = e.reason || e.entry_reason || '';
+      var conf = e.confidence !== undefined && e.confidence !== null ? ' · conf ' + Number(e.confidence).toFixed(2) : '';
+      return '<div style="padding:8px 0;border-bottom:1px solid var(--border);">' +
+        '<span style="color:var(--cyan);font-weight:600;">' + sym + '</span> ' +
+        '<span style="color:var(--text);">' + event + '</span>' +
+        '<span style="color:var(--text-dim);"> · ' + ts + conf + '</span><br>' +
+        '<span>' + reason + '</span>' +
+        '</div>';
+    }}).join('');
+  }} catch(e) {{}}
 }}
 
 async function alpLiveRefreshOrders() {{
