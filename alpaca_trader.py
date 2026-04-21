@@ -14,7 +14,7 @@ import logging
 import datetime
 
 import config
-from alpaca_client import AlpacaPaperClient
+from alpaca_client import AlpacaPaperClient, normalize_crypto_symbol
 from risk_manager import RiskManager
 from intraday_engine import IntradaySignalEngine
 from trade_journal import PositionRiskBook, TradeJournal
@@ -99,7 +99,7 @@ class AlpacaTrader:
 
         acct = self.client.get_account()
         positions_list = self.client.get_positions()
-        positions = {p["symbol"]: p for p in positions_list}
+        positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
 
         # Apply risk controls
         try:
@@ -148,7 +148,7 @@ class AlpacaTrader:
                 if exit_orders:
                     results["orders"].extend(exit_orders)
                     positions_list = self.client.get_positions()
-                    positions = {p["symbol"]: p for p in positions_list}
+                    positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
             except Exception as e:
                 logger.warning(f"Intraday exit check failed: {e}")
 
@@ -160,7 +160,7 @@ class AlpacaTrader:
                     results["orders"].append({"symbol": cs["symbol"], "side": "close", "status": "stop_loss", "loss_pct": cs["loss_pct"]})
                 # Re-fetch positions after stop-loss closures
                 positions_list = self.client.get_positions()
-                positions = {p["symbol"]: p for p in positions_list}
+                positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
         except Exception:
             pass
 

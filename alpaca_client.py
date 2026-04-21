@@ -48,6 +48,27 @@ def _get_data_client():
     )
 
 
+def normalize_crypto_symbol(symbol):
+    """Return the dashboard's canonical Alpaca crypto pair format."""
+    if not symbol:
+        return symbol
+    s = str(symbol).upper().replace(" ", "")
+    if s.endswith("/USDT"):
+        return f"{s[:-5]}/USD"
+    if s.endswith("USDT") and "/" not in s:
+        return f"{s[:-4]}/USD"
+    if s.endswith("USD") and "/" not in s:
+        return f"{s[:-3]}/USD"
+    return s
+
+
+def compact_crypto_symbol(symbol):
+    """Return Alpaca's compact position/order variant, e.g. BTCUSD."""
+    if not symbol:
+        return symbol
+    return str(symbol).upper().replace(" ", "").replace("/", "")
+
+
 class AlpacaPaperClient:
     """
     Alpaca paper trading client.
@@ -108,6 +129,7 @@ class AlpacaPaperClient:
         positions = self._trading.get_all_positions()
         out = []
         for p in positions:
+            symbol = normalize_crypto_symbol(p.symbol)
             qty = float(p.qty)
             avg_entry = float(p.avg_entry_price)
             current_price = float(p.current_price)
@@ -116,7 +138,8 @@ class AlpacaPaperClient:
             unrealized_pl = float(p.unrealized_pl)
             unrealized_plpc = float(p.unrealized_plpc) * 100 if p.unrealized_plpc else 0
             out.append({
-                "symbol": p.symbol,
+                "symbol": symbol,
+                "raw_symbol": p.symbol,
                 "qty": qty,
                 "avg_entry_price": round(avg_entry, 4),
                 "cost_basis": round(cost_basis, 2),
@@ -132,7 +155,8 @@ class AlpacaPaperClient:
 
     def get_position(self, symbol):
         try:
-            p = self._trading.get_open_position(symbol)
+            p = self._get_open_position_with_fallback(symbol)
+            formatted_symbol = normalize_crypto_symbol(p.symbol)
             qty = float(p.qty)
             avg_entry = float(p.avg_entry_price)
             current_price = float(p.current_price)
@@ -141,7 +165,8 @@ class AlpacaPaperClient:
             unrealized_pl = float(p.unrealized_pl)
             unrealized_plpc = float(p.unrealized_plpc) * 100 if p.unrealized_plpc else 0
             return {
-                "symbol": p.symbol,
+                "symbol": formatted_symbol,
+                "raw_symbol": p.symbol,
                 "qty": qty,
                 "avg_entry_price": round(avg_entry, 4),
                 "cost_basis": round(cost_basis, 2),
@@ -153,6 +178,22 @@ class AlpacaPaperClient:
             }
         except Exception:
             return None
+
+    def _get_open_position_with_fallback(self, symbol):
+        candidates = []
+        canonical = normalize_crypto_symbol(symbol)
+        compact = compact_crypto_symbol(symbol)
+        for candidate in (symbol, canonical, compact):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        last_error = None
+        for candidate in candidates:
+            try:
+                return self._trading.get_open_position(candidate)
+            except Exception as e:
+                last_error = e
+        raise last_error
 
     # ── ORDERS ──────────────────────────────────────────────────────────
     def submit_order(self, symbol, notional_usd, side="buy"):
@@ -174,7 +215,8 @@ class AlpacaPaperClient:
     def _format_order(self, o):
         return {
             "id": str(o.id),
-            "symbol": o.symbol,
+            "symbol": normalize_crypto_symbol(o.symbol),
+            "raw_symbol": o.symbol,
             "side": str(o.side).split('.')[-1].lower(),
             "type": str(o.type).split('.')[-1].lower() if o.type else "market",
             "notional": float(o.notional) if o.notional else 0,
@@ -249,16 +291,33 @@ class AlpacaPaperClient:
 
     # ── CLOSE ───────────────────────────────────────────────────────────
     def close_position(self, symbol):
-        try:
-            result = self._trading.close_position(symbol)
-            return self._format_order(result)
-        except Exception as e:
-            return {"error": str(e), "symbol": symbol}
+        candidates = []
+        canonical = normalize_crypto_symbol(symbol)
+        compact = compact_crypto_symbol(symbol)
+        for candidate in (symbol, canonical, compact):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        last_error = None
+        for candidate in candidates:
+            try:
+                result = self._trading.close_position(candidate)
+                return self._format_order(result)
+            except Exception as e:
+                last_error = e
+        return {"error": str(last_error), "symbol": canonical or symbol}
 
     def close_all_positions(self):
         try:
             results = self._trading.close_all_positions(cancel_orders=True)
-            return [{"symbol": str(r), "status": "closing"} for r in results]
+            return [
+                {
+                    "symbol": normalize_crypto_symbol(getattr(r, "symbol", str(r))),
+                    "raw_symbol": getattr(r, "symbol", str(r)),
+                    "status": "closing",
+                }
+                for r in results
+            ]
         except Exception as e:
             return [{"error": str(e)}]
 
@@ -268,10 +327,19 @@ class AlpacaPaperClient:
         try:
             from alpaca.data.requests import CryptoLatestQuoteRequest
             data_client = _get_data_client()
-            req = CryptoLatestQuoteRequest(symbol_or_symbols=symbol)
-            quotes = data_client.get_crypto_latest_quote(req)
-            if symbol in quotes:
-                return float(quotes[symbol].ask_price)
+            canonical = normalize_crypto_symbol(symbol)
+            compact = compact_crypto_symbol(symbol)
+            last_error = None
+            for candidate in [s for s in (canonical, compact) if s]:
+                try:
+                    req = CryptoLatestQuoteRequest(symbol_or_symbols=candidate)
+                    quotes = data_client.get_crypto_latest_quote(req)
+                    if candidate in quotes:
+                        return float(quotes[candidate].ask_price)
+                except Exception as e:
+                    last_error = e
+            if last_error:
+                raise last_error
         except Exception as e:
             logger.warning(f"Could not get price for {symbol}: {e}")
         return None

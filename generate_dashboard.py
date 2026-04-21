@@ -2782,6 +2782,14 @@ async function alpLiveRefreshPositions() {{
     var data = await apiGet('/api/alpaca/positions');
     var riskData = await apiGet('/api/position-risk').catch(function() {{ return {{positions: {{}}}}; }});
     var riskMap = riskData.positions || {{}};
+    function canonCryptoSymbol(sym) {{
+      if (!sym) return sym;
+      var s = String(sym).toUpperCase().replace(/\\s+/g, '');
+      if (s.endsWith('/USDT')) return s.slice(0, -5) + '/USD';
+      if (s.indexOf('/') < 0 && s.endsWith('USDT')) return s.slice(0, -4) + '/USD';
+      if (s.indexOf('/') < 0 && s.endsWith('USD')) return s.slice(0, -3) + '/USD';
+      return s;
+    }}
     var positions = data.positions || [];
     var emptyEl = document.getElementById('alpLivePositionsEmpty');
     var tableEl = document.getElementById('alpLivePositionsTable');
@@ -2798,11 +2806,13 @@ async function alpLiveRefreshPositions() {{
     var body = document.getElementById('alpLivePositionsBody');
     body.innerHTML = '';
     positions.forEach(function(p) {{
-      var r = riskMap[p.symbol] || {{}};
+      var sym = canonCryptoSymbol(p.symbol);
+      var rawSym = p.raw_symbol || (p.symbol ? String(p.symbol).replace('/', '') : '');
+      var r = riskMap[sym] || riskMap[p.symbol] || riskMap[rawSym] || {{}};
       var plColor = p.unrealized_pl >= 0 ? 'var(--lime)' : 'var(--red)';
       var plSign = p.unrealized_pl >= 0 ? '+' : '';
       body.innerHTML += '<tr>' +
-        '<td style="font-weight:600;color:var(--cyan);">' + p.symbol + '</td>' +
+        '<td style="font-weight:600;color:var(--cyan);">' + sym + '</td>' +
         '<td>' + Number(p.qty).toFixed(4) + '</td>' +
         '<td>' + fmtUSD(p.avg_entry_price) + '</td>' +
         '<td>' + fmtUSD(p.current_price) + '</td>' +
@@ -2813,7 +2823,7 @@ async function alpLiveRefreshPositions() {{
         '<td>' + (r.stop_loss_pct ? r.stop_loss_pct + '%' : '—') + '</td>' +
         '<td>' + (r.take_profit_pct ? r.take_profit_pct + '%' : '—') + '</td>' +
         '<td>' + (r.trailing_stop_pct ? r.trailing_stop_pct + '%' : '—') + '</td>' +
-        '<td><button onclick="alpLiveClosePos(\\x27' + p.symbol + '\\x27)" class="filter-btn" style="padding:4px 10px;font-size:0.8em;color:var(--red);border-color:var(--red);">Close</button></td>' +
+        '<td><button onclick="alpLiveClosePos(\\x27' + sym + '\\x27)" class="filter-btn" style="padding:4px 10px;font-size:0.8em;color:var(--red);border-color:var(--red);">Close</button></td>' +
         '</tr>';
     }});
     if (data.summary) {{
