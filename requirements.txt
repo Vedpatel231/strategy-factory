@@ -3,3 +3,4 @@ gunicorn>=21.2.0
 numpy>=1.21.0
 requests>=2.28.0
 alpaca-py>=0.21.0
+pytz>=2024.1

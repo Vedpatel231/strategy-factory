@@ -155,12 +155,21 @@ class MarketDataProvider:
     def get_candles(self, symbol, timeframe, limit=160):
         candles = self._get_alpaca_candles(symbol, timeframe, limit)
         if candles:
-            return self._clean(candles, limit)
+            cleaned = self._clean(candles, limit)
+            logger.info("Loaded %d %s candles for %s from alpaca_sdk", len(cleaned), timeframe, symbol)
+            return cleaned
         candles = self._get_alpaca_rest_candles(symbol, timeframe, limit)
         if candles:
-            return self._clean(candles, limit)
+            cleaned = self._clean(candles, limit)
+            logger.info("Loaded %d %s candles for %s from alpaca_rest", len(cleaned), timeframe, symbol)
+            return cleaned
         candles = self._get_binance_candles(symbol, timeframe, limit)
-        return self._clean(candles, limit)
+        cleaned = self._clean(candles, limit)
+        if cleaned:
+            logger.info("Loaded %d %s candles for %s from binance", len(cleaned), timeframe, symbol)
+        else:
+            logger.warning("No candles loaded for %s %s from any provider", symbol, timeframe)
+        return cleaned
 
     def _get_alpaca_candles(self, symbol, timeframe, limit):
         try:
