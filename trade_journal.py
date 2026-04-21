@@ -79,6 +79,7 @@ class PositionRiskBook:
         trailing_stop_pct,
         max_hold_hours,
         reason,
+        bot_names=None,
     ):
         existing = self.state.get(symbol, {})
         high_water = max(float(existing.get("high_water_price", 0) or 0), float(entry_price or 0))
@@ -97,6 +98,7 @@ class PositionRiskBook:
             "trailing_stop_pct": trailing_stop_pct,
             "max_hold_hours": max_hold_hours,
             "entry_reason": reason,
+            "bot_names": list(bot_names or []),
         }
         self.save()
         return self.state[symbol]
@@ -131,3 +133,86 @@ def load_trade_journal(limit=200):
 
 def load_position_risk_state():
     return PositionRiskBook().all()
+
+
+def summarize_real_paper_performance(limit=2000):
+    """
+    Summarize real Alpaca paper-trading outcomes by bot name.
+
+    This intentionally ignores seeded/backtest metrics. It uses journaled paper
+    order/exit events only. Scores remain neutral until enough closed trades
+    exist, so the dashboard does not pretend that missing data is evidence.
+    """
+    events = TradeJournal().recent(limit=limit)
+    by_bot = {}
+
+    def ensure(bot_name):
+        if bot_name not in by_bot:
+            by_bot[bot_name] = {
+                "entries": 0,
+                "closed_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "total_pl_pct": 0.0,
+                "avg_pl_pct": 0.0,
+                "score": None,
+                "label": "NO_REAL_DATA",
+                "source": "alpaca_paper_journal",
+            }
+        return by_bot[bot_name]
+
+    for event in reversed(events):
+        event_type = event.get("event")
+        if event_type == "order_submitted" and event.get("side") == "buy":
+            for bot_name in event.get("bot_names", []) or []:
+                ensure(bot_name)["entries"] += 1
+            continue
+
+        if event_type != "position_closed":
+            continue
+
+        entry_state = event.get("entry_state") or {}
+        bot_names = entry_state.get("bot_names") or event.get("bot_names") or []
+        try:
+            pl_pct = float(event.get("unrealized_pl_pct", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            pl_pct = 0.0
+
+        for bot_name in bot_names:
+            row = ensure(bot_name)
+            row["closed_trades"] += 1
+            row["total_pl_pct"] += pl_pct
+            if pl_pct > 0:
+                row["wins"] += 1
+            else:
+                row["losses"] += 1
+
+    for row in by_bot.values():
+        closed = row["closed_trades"]
+        if closed <= 0:
+            continue
+        win_rate = row["wins"] / closed
+        avg_pl = row["total_pl_pct"] / closed
+        row["avg_pl_pct"] = round(avg_pl, 2)
+
+        # Neutral baseline 50. Reward win rate and average realized/exit P&L,
+        # penalize thin samples so 1 lucky trade does not look like skill.
+        sample_conf = min(1.0, closed / 10.0)
+        raw_score = 50 + ((win_rate - 0.5) * 45) + (avg_pl * 4)
+        raw_score = 50 + ((raw_score - 50) * sample_conf)
+        score = max(0, min(100, round(raw_score, 1)))
+        row["score"] = score
+        row["win_rate"] = round(win_rate * 100, 1)
+
+        if closed < 3:
+            row["label"] = "TOO_FEW_REAL_TRADES"
+        elif score >= 70:
+            row["label"] = "REAL_PAPER_STRONG"
+        elif score >= 55:
+            row["label"] = "REAL_PAPER_OK"
+        elif score >= 40:
+            row["label"] = "REAL_PAPER_WEAK"
+        else:
+            row["label"] = "REAL_PAPER_POOR"
+
+    return by_bot

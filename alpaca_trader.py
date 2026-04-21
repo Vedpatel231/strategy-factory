@@ -463,6 +463,7 @@ class AlpacaTrader:
                 trailing_stop_pct=trail,
                 max_hold_hours=MAX_HOLD_HOURS,
                 reason=event["entry_reason"],
+                bot_names=target.get("bot_names", []),
             )
         elif side in ("sell", "close") and not order_result.get("error"):
             self.risk_book.remove(sym)

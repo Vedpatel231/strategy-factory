@@ -274,12 +274,26 @@ def run_analysis(args, logger):
 
     # Include per-bot adaptation scores so Learning Engine page shows real data
     learning_stats = {}
+    try:
+        from trade_journal import summarize_real_paper_performance
+        real_paper_stats = summarize_real_paper_performance()
+    except Exception:
+        real_paper_stats = {}
+
     for bd in bot_data_list:
         bot_name = bd["bot"].get("name", "")
         if bot_name:
+            real_stats = real_paper_stats.get(bot_name, {})
             learning_stats[bot_name] = {
                 "adaptation_score": bd.get("adaptation_score", 50),
                 "adaptation_label": bd.get("adaptation_label", "NEUTRAL"),
+                "score_source": "seeded_simulated_history",
+                "real_paper_score": real_stats.get("score"),
+                "real_paper_label": real_stats.get("label", "NO_REAL_DATA"),
+                "real_paper_closed_trades": real_stats.get("closed_trades", 0),
+                "real_paper_entries": real_stats.get("entries", 0),
+                "real_paper_win_rate": real_stats.get("win_rate"),
+                "real_paper_avg_pl_pct": real_stats.get("avg_pl_pct"),
             }
     learning_stats["_calibration"] = learner.state.get("calibration", {})
     execution_summary = counts

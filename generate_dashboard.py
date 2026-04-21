@@ -1110,6 +1110,12 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
             if bot_name.startswith("_"):
                 continue
             adapt = stats.get("adaptation_score", 0)
+            real_score = stats.get("real_paper_score")
+            real_label = stats.get("real_paper_label", "NO_REAL_DATA")
+            real_closed = int(stats.get("real_paper_closed_trades", 0) or 0)
+            real_entries = int(stats.get("real_paper_entries", 0) or 0)
+            real_wr = stats.get("real_paper_win_rate")
+            real_avg = stats.get("real_paper_avg_pl_pct")
             if adapt >= 75:
                 sc, label = "score-well", "Excellent"
             elif adapt >= 60:
@@ -1120,21 +1126,50 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
                 sc, label = "score-poor", "Poor"
             bar_color = "lime" if adapt >= 75 else "cyan" if adapt >= 60 else "amber" if adapt >= 40 else "red"
 
+            if real_score is None:
+                real_html = f"""<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+        <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Real Paper Score</div>
+        <div style="font-size:1.1em;font-weight:700;color:var(--gray);">Collecting Data</div>
+        <div style="font-size:0.78em;color:var(--text-dim);">Entries: {real_entries} · Closed: {real_closed}</div>
+      </div>"""
+            else:
+                if real_score >= 70:
+                    real_color = "lime"
+                elif real_score >= 55:
+                    real_color = "cyan"
+                elif real_score >= 40:
+                    real_color = "amber"
+                else:
+                    real_color = "red"
+                wr_text = f"{real_wr:.1f}%" if real_wr is not None else "—"
+                avg_text = f"{real_avg:+.2f}%" if real_avg is not None else "—"
+                real_html = f"""<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+        <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Real Paper Score</div>
+        <div style="font-size:1.55em;font-weight:800;color:var(--{real_color});">{real_score:.0f}</div>
+        <div style="font-size:0.78em;color:var(--text-dim);">{real_label.replace('_', ' ').title()}</div>
+        <div style="font-size:0.78em;color:var(--text-dim);">Closed: {real_closed} · WR: {wr_text} · Avg: {avg_text}</div>
+      </div>"""
+
             cards += f"""<div class="adapt-card">
       <div style="font-weight:600;">{bot_name}</div>
+      <div style="font-size:0.72em;color:var(--amber);text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;">Seed / Simulated Score</div>
       <div class="adapt-score {sc}">{adapt:.0f}</div>
       <div class="adapt-label">{label}</div>
       <div class="progress-bar" style="margin-top:10px;">
         <div class="progress-fill" style="width:{adapt}%;background:var(--{bar_color});"></div>
       </div>
+      {real_html}
     </div>"""
 
         return f"""<div class="page" id="learning">
-  <div class="page-title"><span class="accent">🧠</span> Learning Engine <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
+  <div class="page-title"><span class="accent">🧠</span> Learning Engine <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">SEED SCORES + REAL PAPER TRACKING</span></div>
+  <div style="background:rgba(255,183,0,0.08);border:1px solid rgba(255,183,0,0.25);border-radius:8px;padding:14px 16px;margin-bottom:18px;color:var(--text-dim);">
+    <strong style="color:var(--amber);">Important:</strong> Seed / Simulated Score comes from generated strategy history and is only an initial ranking. Real Paper Score is calculated from Alpaca paper journal exits and should become the trusted score after enough closed trades exist.
+  </div>
   <div class="adapt-cards">{cards}</div>
   <div class="chart-grid">
-    <div class="chart-box"><h3>Adaptation Score Distribution</h3><canvas id="adaptationChart"></canvas></div>
-    <div class="chart-box"><h3>Adaptation vs Win Rate</h3><canvas id="adaptWinrateChart"></canvas></div>
+    <div class="chart-box"><h3>Seed Score Distribution</h3><canvas id="adaptationChart"></canvas></div>
+    <div class="chart-box"><h3>Seed Score vs Seed Win Rate</h3><canvas id="adaptWinrateChart"></canvas></div>
   </div>
 </div>"""
 
