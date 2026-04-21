@@ -1408,154 +1408,203 @@ async function loadLastRefresh() {{
 // Refresh the badge on page load (periodic refresh handled by liveTick)
 loadLastRefresh();
 
-// ── Live Overview Paper Account Stats ─────────────────────────
-async function loadOverviewAccount() {{
-  var fmt = function(n) {{ return '$' + Number(n || 0).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}}); }};
-  var setText = function(id, val) {{ var el = document.getElementById(id); if(el) {{ el.textContent = val; autoSizeCardValue(el); }} }};
+// ── Shared Live Alpaca Snapshot ────────────────────────────────
+var _alpacaAccountCache = null;
+var _alpacaAccountFetchedAt = 0;
+var _alpacaAccountPromise = null;
+var _alpacaPositionsPromise = null;
+var _lastLivePositions = null;
+
+function money(n) {{
+  return '$' + Number(n || 0).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}});
+}}
+
+function setCardText(id, val, color) {{
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = val;
+  if (color) el.style.color = color;
+  autoSizeCardValue(el);
+}}
+
+async function getAlpacaAccountCached(maxAgeMs) {{
+  maxAgeMs = maxAgeMs === undefined ? 10000 : maxAgeMs;
+  if (_alpacaAccountCache && (Date.now() - _alpacaAccountFetchedAt) < maxAgeMs) return _alpacaAccountCache;
+  if (_alpacaAccountPromise) return _alpacaAccountPromise;
+  _alpacaAccountPromise = apiGet('/api/alpaca/account').then(function(a) {{
+    _alpacaAccountCache = a;
+    _alpacaAccountFetchedAt = Date.now();
+    _alpacaAccountPromise = null;
+    return a;
+  }}).catch(function(e) {{
+    _alpacaAccountPromise = null;
+    throw e;
+  }});
+  return _alpacaAccountPromise;
+}}
+
+async function getLivePositionsSnapshot() {{
+  if (_alpacaPositionsPromise) return _alpacaPositionsPromise;
+  _alpacaPositionsPromise = apiGet('/api/alpaca/positions?live=1').then(function(pd) {{
+    _lastLivePositions = pd;
+    _alpacaPositionsPromise = null;
+    return pd;
+  }}).catch(function(e) {{
+    _alpacaPositionsPromise = null;
+    throw e;
+  }});
+  return _alpacaPositionsPromise;
+}}
+
+function liveAccountMetrics(acct, pd) {{
+  acct = acct || {{}};
+  pd = pd || {{}};
+  var s = pd.summary || {{}};
+  var cash = Number(acct.buying_power !== undefined ? acct.buying_power : acct.cash || 0);
+  var positionValue = Number(s.total_market_value || 0);
+  var liveEquity = positionValue > 0 ? cash + positionValue : Number(acct.equity || cash);
+  var lastEquity = Number(acct.last_equity || liveEquity);
+  var dayPL = liveEquity - lastEquity;
+  var dayPLPct = lastEquity > 0 ? dayPL / lastEquity * 100 : 0;
+  return {{
+    cash: cash,
+    liveEquity: liveEquity,
+    lastEquity: lastEquity,
+    dayPL: dayPL,
+    dayPLPct: dayPLPct,
+    openPL: Number(s.total_unrealized_pl || 0),
+    openValue: positionValue,
+    count: Number(s.count || (pd.positions || []).length || 0),
+  }};
+}}
+
+function renderOverviewPositions(positions) {{
+  var ovContainer = document.getElementById('ovPositionsTable');
+  if (!ovContainer) return;
+  positions = positions || [];
+  if (!positions.length) {{
+    ovContainer.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">No positions yet.</div>';
+    return;
+  }}
+  var totalMV = 0;
+  positions.forEach(function(p) {{ totalMV += Number(p.market_value || 0); }});
+  var html = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th>Live Price</th><th>Market Value</th><th>P&L</th><th>% of Portfolio</th></tr></thead><tbody>';
+  positions.forEach(function(p) {{
+    var upl = Number(p.unrealized_pl || 0);
+    var mv = Number(p.market_value || 0);
+    var pct = totalMV > 0 ? (mv / totalMV * 100) : 0;
+    var plColor = upl >= 0 ? 'var(--lime)' : 'var(--red)';
+    html += '<tr>';
+    html += '<td><strong>' + (p.symbol || '?') + '</strong></td>';
+    html += '<td style="font-family:Courier New,monospace;">' + money(p.current_price) + '</td>';
+    html += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + money(mv) + '</td>';
+    html += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + money(upl) + '</td>';
+    html += '<td>' + pct.toFixed(1) + '%</td>';
+    html += '</tr>';
+  }});
+  html += '</tbody></table></div>';
+  ovContainer.innerHTML = html;
+}}
+
+function renderPortfolioPositions(positions) {{
+  var container = document.getElementById('pfPositionsTable');
+  if (!container) return;
+  positions = positions || [];
+  if (!positions.length) {{
+    container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">No open positions. Use the Alpaca Trading page to execute trades.</div>';
+    return;
+  }}
+  var totalMV = 0;
+  positions.forEach(function(p) {{ totalMV += Number(p.market_value || 0); }});
+  var html = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th>Live Price</th><th>Market Value</th><th>P&L</th><th>Allocation</th></tr></thead><tbody>';
+  positions.forEach(function(p) {{
+    var upl = Number(p.unrealized_pl || 0);
+    var mv = Number(p.market_value || 0);
+    var pct = totalMV > 0 ? (mv / totalMV * 100) : 0;
+    var plColor = upl >= 0 ? 'var(--lime)' : 'var(--red)';
+    var uplPct = Number(p.unrealized_plpc || 0);
+    html += '<tr>';
+    html += '<td><strong>' + (p.symbol || '?') + '</strong><span class="muted-line">Qty ' + Number(p.qty || 0).toFixed(4) + ' · Entry ' + money(p.avg_entry_price || p.cost_basis / (p.qty || 1)) + '</span></td>';
+    html += '<td style="font-family:Courier New,monospace;">' + money(p.current_price) + '</td>';
+    html += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + money(mv) + '</td>';
+    html += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + money(upl) + ' (' + (uplPct >= 0 ? '+' : '') + uplPct.toFixed(2) + '%)</td>';
+    html += '<td>' + pct.toFixed(1) + '%</td>';
+    html += '</tr>';
+  }});
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}}
+
+function applyLiveSnapshotToOverview(acct, pd) {{
+  var m = liveAccountMetrics(acct, pd);
+  setCardText('ovEquity', money(m.liveEquity));
+  setCardText('ovCash', money(m.cash));
+  setCardText('ovStart', money(m.lastEquity));
+  setCardText('ovPositions', String(m.count));
+  var plColor = m.dayPL >= 0 ? 'var(--lime)' : 'var(--red)';
+  setCardText('ovTotalPL', (m.dayPL >= 0 ? '+' : '') + money(m.dayPL), plColor);
+  var plSub = document.getElementById('ovTotalPLsub');
+  if (plSub) {{
+    plSub.textContent = (m.dayPLPct >= 0 ? '+' : '') + m.dayPLPct.toFixed(2) + '% today · live quotes';
+    plSub.style.color = plColor;
+  }}
+  renderOverviewPositions(pd.positions || []);
+}}
+
+function applyLiveSnapshotToPortfolio(acct, pd) {{
+  var m = liveAccountMetrics(acct, pd);
+  setCardText('pfEquity', money(m.liveEquity));
+  setCardText('pfCash', money(m.cash));
+  setCardText('pfPosCount', String(m.count));
+  setCardText('pfPL', (m.openPL >= 0 ? '+' : '') + money(m.openPL), m.openPL >= 0 ? 'var(--lime)' : 'var(--red)');
+  setCardText('pfDayPL', (m.dayPL >= 0 ? '+' : '') + money(m.dayPL), m.dayPL >= 0 ? 'var(--lime)' : 'var(--red)');
+  var plSub = document.getElementById('pfPLsub');
+  if (plSub) {{
+    plSub.textContent = (m.dayPL >= 0 ? '+' : '') + money(m.dayPL) + ' (' + (m.dayPLPct >= 0 ? '+' : '') + m.dayPLPct.toFixed(2) + '%) today · live quotes';
+    plSub.style.color = m.dayPL >= 0 ? 'var(--lime)' : 'var(--red)';
+  }}
+  renderPortfolioPositions(pd.positions || []);
+}}
+
+async function loadOverviewAccount(opts) {{
+  opts = opts || {{}};
   try {{
-    // Try Alpaca real account first
-    var a = await apiGet('/api/alpaca/account');
-    setText('ovEquity', fmt(a.equity));
-    setText('ovCash', fmt(a.buying_power !== undefined ? a.buying_power : a.cash));
-    setText('ovStart', fmt(a.last_equity || a.equity));
-    var pl = a.total_pl || 0;
-    var plPct = a.total_pl_pct || 0;
-    var plEl = document.getElementById('ovTotalPL');
-    if (plEl) {{
-      plEl.textContent = (pl >= 0 ? '+' : '') + fmt(pl);
-      plEl.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
-      autoSizeCardValue(plEl);
-    }}
-    var plSub = document.getElementById('ovTotalPLsub');
-    if (plSub) plSub.textContent = (plPct >= 0 ? '+' : '') + plPct.toFixed(2) + '% today (Alpaca live)';
-    try {{
-      var pd = await apiGet('/api/alpaca/positions');
-      if (pd.summary) setText('ovPositions', pd.summary.count);
-    }} catch (posErr) {{
-      setText('ovPositions', '—');
-    }}
+    var acct = await getAlpacaAccountCached(opts.forceAccount ? 0 : 10000);
+    var pd = opts.snapshot || await getLivePositionsSnapshot();
+    applyLiveSnapshotToOverview(acct, pd);
   }} catch (e) {{
-    // Alpaca not available — try simulator as fallback
     try {{
       var d2 = await apiGet('/api/broker/connect');
       if (d2.connected && d2.account) {{
-        var a2 = d2.account;
-        setText('ovEquity', fmt(a2.equity));
-        setText('ovCash', fmt(a2.cash));
-        setText('ovStart', fmt(a2.starting_balance));
-        var plEl2 = document.getElementById('ovTotalPL');
-        if (plEl2) {{
-          plEl2.textContent = (a2.total_pl >= 0 ? '+' : '') + fmt(a2.total_pl);
-          plEl2.style.color = a2.total_pl >= 0 ? 'var(--lime)' : 'var(--red)';
-          autoSizeCardValue(plEl2);
-        }}
-        var plSub2 = document.getElementById('ovTotalPLsub');
-        if (plSub2) plSub2.textContent = (a2.total_pl_pct >= 0 ? '+' : '') + Number(a2.total_pl_pct || 0).toFixed(2) + '% total (simulator fallback)';
-        try {{
-          var pd2 = await apiGet('/api/broker/positions');
-          if (pd2.summary) setText('ovPositions', pd2.summary.count);
-        }} catch (posErr2) {{
-          setText('ovPositions', '—');
-        }}
+        setCardText('ovEquity', money(d2.account.equity));
+        setCardText('ovCash', money(d2.account.cash));
+        setCardText('ovStart', money(d2.account.starting_balance));
+        setCardText('ovTotalPL', (d2.account.total_pl >= 0 ? '+' : '') + money(d2.account.total_pl), d2.account.total_pl >= 0 ? 'var(--lime)' : 'var(--red)');
       }}
     }} catch(e2) {{}}
   }}
-  // Expected monthly from status (independent of broker)
-  try {{
-    var sr = await fetch('/api/status');
-    var sd = await sr.json();
-    if (sd.expected_monthly_return_pct !== undefined) {{
-      setText('ovExpReturn', '+' + (sd.expected_monthly_return_pct || 0).toFixed(1) + '%');
-    }}
-  }} catch(e3) {{}}
+  if (!opts.skipSlow) {{
+    try {{
+      var sr = await fetch('/api/status');
+      var sd = await sr.json();
+      if (sd.expected_monthly_return_pct !== undefined) {{
+        setCardText('ovExpReturn', '+' + (sd.expected_monthly_return_pct || 0).toFixed(1) + '%');
+      }}
+    }} catch(e3) {{}}
+  }}
 }}
-loadOverviewAccount();
+loadOverviewAccount({{forceAccount:true}});
 
 // ── Portfolio page data from Alpaca ─────────────────────────────
-async function loadPortfolioData() {{
-  var fmt = function(n) {{ return '$' + Number(n || 0).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}}); }};
-  var setText = function(id, val) {{ var el = document.getElementById(id); if(el) {{ el.textContent = val; autoSizeCardValue(el); }} }};
+async function loadPortfolioData(opts) {{
+  opts = opts || {{}};
   try {{
-    var a = await apiGet('/api/alpaca/account');
-    setText('pfEquity', fmt(a.equity));
-    setText('pfCash', fmt(a.buying_power !== undefined ? a.buying_power : a.cash));
-    var pl = a.total_pl || 0;
-    var plEl = document.getElementById('pfDayPL');
-    if (plEl) {{
-      plEl.textContent = (pl >= 0 ? '+' : '') + fmt(pl);
-      plEl.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
-      autoSizeCardValue(plEl);
-    }}
-    var plSub = document.getElementById('pfPLsub');
-    if (plSub) {{
-      var plPct = a.total_pl_pct || 0;
-      plSub.textContent = (pl >= 0 ? '+' : '') + fmt(pl) + ' (' + (plPct >= 0 ? '+' : '') + plPct.toFixed(2) + '%) today';
-      plSub.style.color = pl >= 0 ? 'var(--lime)' : 'var(--red)';
-    }}
-  }} catch(e) {{}}
-  try {{
-    var pd = await apiGet('/api/alpaca/positions');
-    var positions = pd.positions || [];
-    setText('pfPosCount', positions.length);
-    var totalPL = 0;
-    positions.forEach(function(p) {{ totalPL += Number(p.unrealized_pl || 0); }});
-    var plTotalEl = document.getElementById('pfPL');
-    if (plTotalEl) {{
-      plTotalEl.textContent = (totalPL >= 0 ? '+' : '') + fmt(totalPL);
-      plTotalEl.style.color = totalPL >= 0 ? 'var(--lime)' : 'var(--red)';
-      autoSizeCardValue(plTotalEl);
-    }}
-    // Build positions table
-    var container = document.getElementById('pfPositionsTable');
-    if (container && positions.length > 0) {{
-      var totalMV = 0;
-      positions.forEach(function(p) {{ totalMV += Number(p.market_value || 0); }});
-      var html = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th>Live Price</th><th>Market Value</th><th>P&L</th><th>Allocation</th></tr></thead><tbody>';
-      positions.forEach(function(p) {{
-        var upl = Number(p.unrealized_pl || 0);
-        var mv = Number(p.market_value || 0);
-        var pct = totalMV > 0 ? (mv / totalMV * 100) : 0;
-        var plColor = upl >= 0 ? 'var(--lime)' : 'var(--red)';
-        var uplPct = Number(p.unrealized_plpc || 0);
-        html += '<tr>';
-        html += '<td><strong>' + (p.symbol || '?') + '</strong><span class="muted-line">Qty ' + Number(p.qty || 0).toFixed(4) + ' · Entry ' + fmt(p.avg_entry_price || p.cost_basis / (p.qty || 1)) + '</span></td>';
-        html += '<td style="font-family:Courier New,monospace;">' + fmt(p.current_price) + '</td>';
-        html += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + fmt(mv) + '</td>';
-        html += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + fmt(upl) + ' (' + (uplPct >= 0 ? '+' : '') + uplPct.toFixed(2) + '%)</td>';
-        html += '<td>' + pct.toFixed(1) + '%</td>';
-        html += '</tr>';
-      }});
-      html += '</tbody></table></div>';
-      container.innerHTML = html;
-    }} else if (container) {{
-      container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">No open positions. Use the Alpaca Trading page to execute trades.</div>';
-    }}
-    // Also populate overview positions table
-    var ovContainer = document.getElementById('ovPositionsTable');
-    if (ovContainer && positions.length > 0) {{
-      var totalMV2 = 0;
-      positions.forEach(function(p) {{ totalMV2 += Number(p.market_value || 0); }});
-      var ovHtml = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th>Market Value</th><th>P&L</th><th>% of Portfolio</th></tr></thead><tbody>';
-      positions.forEach(function(p) {{
-        var upl = Number(p.unrealized_pl || 0);
-        var mv = Number(p.market_value || 0);
-        var pct = totalMV2 > 0 ? (mv / totalMV2 * 100) : 0;
-        var plColor = upl >= 0 ? 'var(--lime)' : 'var(--red)';
-        ovHtml += '<tr>';
-        ovHtml += '<td><strong>' + (p.symbol || '?') + '</strong></td>';
-        ovHtml += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + fmt(mv) + '</td>';
-        ovHtml += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + fmt(upl) + '</td>';
-        ovHtml += '<td>' + pct.toFixed(1) + '%</td>';
-        ovHtml += '</tr>';
-      }});
-      ovHtml += '</tbody></table></div>';
-      ovContainer.innerHTML = ovHtml;
-    }} else if (ovContainer) {{
-      ovContainer.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">No positions yet.</div>';
-    }}
+    var acct = await getAlpacaAccountCached(opts.forceAccount ? 0 : 10000);
+    var pd = opts.snapshot || await getLivePositionsSnapshot();
+    applyLiveSnapshotToPortfolio(acct, pd);
   }} catch(e) {{}}
 }}
-loadPortfolioData();
+loadPortfolioData({{forceAccount:true}});
 
 // ── Navigation ──────────────────────────────────────────────────
 var allPages = {json.dumps([p[0] for p in self.pages])};
@@ -1622,11 +1671,19 @@ function liveTick() {{
 }}
 setInterval(liveTick, 30000);
 
-// Fast tick for Alpaca Live — keep open-position prices moving like a chart watchlist
-function alpacaFastTick() {{
-  if (_currentPage === 'alpaca-live' && alpLiveConnected) {{
-    alpLiveRefreshPositions({{skipAccount:true}});
-  }}
+// Fast tick — keep live account/portfolio numbers moving from the same quote snapshot
+async function alpacaFastTick() {{
+  if (!['overview', 'portfolio', 'alpaca-live'].includes(_currentPage)) return;
+  try {{
+    var snapshot = await getLivePositionsSnapshot();
+    if (_currentPage === 'overview') {{
+      await loadOverviewAccount({{skipSlow:true, snapshot:snapshot}});
+    }} else if (_currentPage === 'portfolio') {{
+      await loadPortfolioData({{snapshot:snapshot}});
+    }} else if (_currentPage === 'alpaca-live' && alpLiveConnected) {{
+      await alpLiveRefreshPositions({{skipAccount:true, snapshot:snapshot}});
+    }}
+  }} catch(e) {{}}
 }}
 setInterval(alpacaFastTick, 1000);
 
@@ -2770,6 +2827,8 @@ async function alpLiveConnect() {{
 }}
 
 function alpLiveUpdateAccount(acct) {{
+  _alpacaAccountCache = acct;
+  _alpacaAccountFetchedAt = Date.now();
   var eqEl = document.getElementById('alpLiveEquity');
   eqEl.textContent = fmtUSD(acct.equity);
   autoSizeCardValue(eqEl);
@@ -2791,7 +2850,7 @@ async function alpLiveRefreshPositions(opts) {{
   if (_alpLivePositionsInFlight) return;
   _alpLivePositionsInFlight = true;
   try {{
-    var data = await apiGet('/api/alpaca/positions?live=1');
+    var data = opts.snapshot || await getLivePositionsSnapshot();
     var riskData = await apiGet('/api/position-risk').catch(function() {{ return {{positions: {{}}}}; }});
     var riskMap = riskData.positions || {{}};
     function canonCryptoSymbol(sym) {{
@@ -2882,9 +2941,14 @@ async function alpLiveRefreshPositions(opts) {{
         '<span style="color:var(--text);">' + s.count + ' positions · ' + fmtUSD(s.total_market_value) + '</span>' +
         ' · <span style="color:' + tColor + ';">' + (s.total_unrealized_pl >= 0 ? '+' : '') + fmtUSD(s.total_unrealized_pl) + '</span>';
     }}
-    if (!opts.skipAccount) {{
-      var acct = await apiGet('/api/alpaca/account');
-      alpLiveUpdateAccount(acct);
+    var acct = !opts.skipAccount ? await getAlpacaAccountCached(0) : _alpacaAccountCache;
+    if (acct) {{
+      var m = liveAccountMetrics(acct, data);
+      setCardText('alpLiveEquity', money(m.liveEquity));
+      setCardText('alpLiveCash', money(m.cash));
+      setCardText('alpLivePL', (m.dayPL >= 0 ? '+' : '') + money(m.dayPL), m.dayPL >= 0 ? 'var(--lime)' : 'var(--red)');
+      var accEl = document.getElementById('alpLiveAccNum');
+      if (accEl) accEl.textContent = acct.account_number || '—';
     }}
   }} catch(e) {{
     console.error('Positions refresh error:', e);
