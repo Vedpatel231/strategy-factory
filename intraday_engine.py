@@ -11,7 +11,7 @@ import logging
 import os
 import statistics
 from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import config
 
@@ -144,12 +144,19 @@ def _timeframe_to_binance(tf):
     return {"15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "1D": "1d"}.get(tf, "15m")
 
 
+def _timeframe_to_alpaca_rest(tf):
+    return {"15m": "15Min", "30m": "30Min", "1h": "1Hour", "4h": "4Hour", "1D": "1Day"}.get(tf, "15Min")
+
+
 class MarketDataProvider:
     def __init__(self, client=None):
         self.client = client
 
     def get_candles(self, symbol, timeframe, limit=160):
         candles = self._get_alpaca_candles(symbol, timeframe, limit)
+        if candles:
+            return self._clean(candles, limit)
+        candles = self._get_alpaca_rest_candles(symbol, timeframe, limit)
         if candles:
             return self._clean(candles, limit)
         candles = self._get_binance_candles(symbol, timeframe, limit)
@@ -173,31 +180,123 @@ class MarketDataProvider:
                 api_key=_ALPACA_KEY,
                 secret_key=_ALPACA_SECRET,
             )
+            # Alpaca's historical endpoint is more reliable when bounded by a
+            # start/end window instead of relying on limit alone.
+            end = datetime.now(timezone.utc)
+            lookback = {
+                "15m": timedelta(days=4),
+                "30m": timedelta(days=8),
+                "1h": timedelta(days=14),
+                "4h": timedelta(days=45),
+                "1D": timedelta(days=220),
+            }.get(timeframe, timedelta(days=4))
             req = CryptoBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame(amount, unit),
+                start=end - lookback,
+                end=end,
                 limit=limit,
             )
             bars = data_client.get_crypto_bars(req)
             raw = []
             if hasattr(bars, "data"):
-                raw = bars.data.get(symbol, [])
+                raw = bars.data.get(symbol, []) or bars.data.get(symbol.replace("/", ""), [])
             elif isinstance(bars, dict):
-                raw = bars.get(symbol, [])
+                raw = bars.get(symbol, []) or bars.get(symbol.replace("/", ""), [])
+            elif hasattr(bars, "df"):
+                try:
+                    df = bars.df
+                    if getattr(df, "empty", True):
+                        raw = []
+                    else:
+                        if hasattr(df.index, "names") and "symbol" in df.index.names:
+                            df = df.xs(symbol, level="symbol")
+                        raw = [
+                            {
+                                "timestamp": idx.isoformat() if hasattr(idx, "isoformat") else str(idx),
+                                "open": row["open"],
+                                "high": row["high"],
+                                "low": row["low"],
+                                "close": row["close"],
+                                "volume": row.get("volume", 0.0),
+                            }
+                            for idx, row in df.tail(limit).iterrows()
+                        ]
+                except Exception:
+                    raw = []
             out = []
             for b in raw:
-                out.append({
-                    "timestamp": getattr(b, "timestamp", None).isoformat()
-                    if getattr(b, "timestamp", None) else "",
-                    "open": float(getattr(b, "open")),
-                    "high": float(getattr(b, "high")),
-                    "low": float(getattr(b, "low")),
-                    "close": float(getattr(b, "close")),
-                    "volume": float(getattr(b, "volume", 0.0) or 0.0),
-                })
+                if isinstance(b, dict):
+                    out.append({
+                        "timestamp": b.get("timestamp", ""),
+                        "open": float(b.get("open")),
+                        "high": float(b.get("high")),
+                        "low": float(b.get("low")),
+                        "close": float(b.get("close")),
+                        "volume": float(b.get("volume", 0.0) or 0.0),
+                    })
+                else:
+                    out.append({
+                        "timestamp": getattr(b, "timestamp", None).isoformat()
+                        if getattr(b, "timestamp", None) else "",
+                        "open": float(getattr(b, "open")),
+                        "high": float(getattr(b, "high")),
+                        "low": float(getattr(b, "low")),
+                        "close": float(getattr(b, "close")),
+                        "volume": float(getattr(b, "volume", 0.0) or 0.0),
+                    })
             return out
         except Exception as exc:
-            logger.debug("Alpaca candles unavailable for %s %s: %s", symbol, timeframe, exc)
+            logger.warning("Alpaca SDK candles unavailable for %s %s: %s", symbol, timeframe, exc)
+            return []
+
+    def _get_alpaca_rest_candles(self, symbol, timeframe, limit):
+        try:
+            import requests
+            from alpaca_client import _ALPACA_KEY, _ALPACA_SECRET
+
+            end = datetime.now(timezone.utc)
+            lookback = {
+                "15m": timedelta(days=4),
+                "30m": timedelta(days=8),
+                "1h": timedelta(days=14),
+                "4h": timedelta(days=45),
+                "1D": timedelta(days=220),
+            }.get(timeframe, timedelta(days=4))
+            params = {
+                "symbols": symbol,
+                "timeframe": _timeframe_to_alpaca_rest(timeframe),
+                "start": (end - lookback).isoformat().replace("+00:00", "Z"),
+                "end": end.isoformat().replace("+00:00", "Z"),
+                "limit": limit,
+                "sort": "asc",
+            }
+            headers = {
+                "APCA-API-KEY-ID": _ALPACA_KEY,
+                "APCA-API-SECRET-KEY": _ALPACA_SECRET,
+            }
+            resp = requests.get(
+                "https://data.alpaca.markets/v1beta3/crypto/us/bars",
+                params=params,
+                headers=headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw = (data.get("bars") or {}).get(symbol, [])
+            return [
+                {
+                    "timestamp": b.get("t", ""),
+                    "open": b.get("o"),
+                    "high": b.get("h"),
+                    "low": b.get("l"),
+                    "close": b.get("c"),
+                    "volume": b.get("v", 0.0),
+                }
+                for b in raw
+            ]
+        except Exception as exc:
+            logger.warning("Alpaca REST candles unavailable for %s %s: %s", symbol, timeframe, exc)
             return []
 
     def _get_binance_candles(self, symbol, timeframe, limit):
