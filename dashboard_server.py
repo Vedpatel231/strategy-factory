@@ -389,12 +389,14 @@ def alpaca_positions():
     if err:
         return jsonify({"error": err}), 500
     try:
-        positions = client.get_positions()
+        live_prices = request.args.get("live", "0").lower() in ("1", "true", "yes")
+        positions = client.get_positions(live_prices=live_prices)
         total_pl = sum(p["unrealized_pl"] for p in positions)
         total_value = sum(p["market_value"] for p in positions)
         total_cost = sum(p["cost_basis"] for p in positions)
         return jsonify({
             "positions": positions,
+            "live_prices": live_prices,
             "summary": {
                 "count": len(positions),
                 "total_market_value": round(total_value, 2),

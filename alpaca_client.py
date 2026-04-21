@@ -125,21 +125,38 @@ class AlpacaPaperClient:
         return self._format_account(acct)
 
     # ── POSITIONS ───────────────────────────────────────────────────────
-    def get_positions(self):
+    def get_positions(self, live_prices=False):
         positions = self._trading.get_all_positions()
+        live_price_map = {}
+        if live_prices:
+            live_price_map = self.get_latest_prices([p.symbol for p in positions])
         out = []
         for p in positions:
             symbol = normalize_crypto_symbol(p.symbol)
             qty = float(p.qty)
             avg_entry = float(p.avg_entry_price)
             current_price = float(p.current_price)
-            market_value = float(p.market_value)
             cost_basis = float(p.cost_basis)
-            unrealized_pl = float(p.unrealized_pl)
-            unrealized_plpc = float(p.unrealized_plpc) * 100 if p.unrealized_plpc else 0
+            price_source = "alpaca_position"
+            live_price = live_price_map.get(symbol)
+            if live_price and live_price > 0:
+                current_price = live_price
+                price_source = "alpaca_live_quote"
+
+            if price_source == "alpaca_live_quote":
+                market_value = qty * current_price
+                unrealized_pl = market_value - cost_basis
+                unrealized_plpc = unrealized_pl / cost_basis * 100 if cost_basis > 0 else 0
+            else:
+                market_value = float(p.market_value)
+                unrealized_pl = float(p.unrealized_pl)
+                unrealized_plpc = float(p.unrealized_plpc) * 100 if p.unrealized_plpc else 0
+
             out.append({
                 "symbol": symbol,
                 "raw_symbol": p.symbol,
+                "price_source": price_source,
+                "price_updated_at": datetime.now(timezone.utc).isoformat(),
                 "qty": qty,
                 "avg_entry_price": round(avg_entry, 4),
                 "cost_basis": round(cost_basis, 2),
@@ -324,22 +341,65 @@ class AlpacaPaperClient:
     # ── LATEST PRICE ────────────────────────────────────────────────────
     def get_latest_price(self, symbol):
         """Get latest crypto price from Alpaca data API."""
+        prices = self.get_latest_prices([symbol])
+        return prices.get(normalize_crypto_symbol(symbol))
+
+    def get_latest_prices(self, symbols):
+        """Get latest crypto quote prices keyed by canonical symbol."""
+        out = {}
+        if not symbols:
+            return out
+        canonical_symbols = []
+        compact_symbols = []
+        for symbol in symbols:
+            canonical = normalize_crypto_symbol(symbol)
+            compact = compact_crypto_symbol(symbol)
+            if canonical and canonical not in canonical_symbols:
+                canonical_symbols.append(canonical)
+            if compact and compact not in compact_symbols:
+                compact_symbols.append(compact)
+
         try:
             from alpaca.data.requests import CryptoLatestQuoteRequest
             data_client = _get_data_client()
-            canonical = normalize_crypto_symbol(symbol)
-            compact = compact_crypto_symbol(symbol)
-            last_error = None
-            for candidate in [s for s in (canonical, compact) if s]:
+            for candidates in (canonical_symbols, compact_symbols):
+                if not candidates:
+                    continue
                 try:
-                    req = CryptoLatestQuoteRequest(symbol_or_symbols=candidate)
+                    req = CryptoLatestQuoteRequest(symbol_or_symbols=candidates)
                     quotes = data_client.get_crypto_latest_quote(req)
-                    if candidate in quotes:
-                        return float(quotes[candidate].ask_price)
+                    for candidate in candidates:
+                        if candidate not in quotes:
+                            continue
+                        quote = quotes[candidate]
+                        bid = float(getattr(quote, "bid_price", 0) or 0)
+                        ask = float(getattr(quote, "ask_price", 0) or 0)
+                        price = (bid + ask) / 2 if bid > 0 and ask > 0 else ask or bid
+                        if price > 0:
+                            out[normalize_crypto_symbol(candidate)] = price
                 except Exception as e:
-                    last_error = e
-            if last_error:
-                raise last_error
+                    logger.debug(f"Batch crypto quote request failed for {candidates}: {e}")
+
+            missing = [s for s in canonical_symbols if s not in out]
+            for canonical in missing:
+                compact = compact_crypto_symbol(canonical)
+                for candidate in (canonical, compact):
+                    if not candidate:
+                        continue
+                    try:
+                        req = CryptoLatestQuoteRequest(symbol_or_symbols=candidate)
+                        quotes = data_client.get_crypto_latest_quote(req)
+                        if candidate not in quotes:
+                            continue
+                        quote = quotes[candidate]
+                        bid = float(getattr(quote, "bid_price", 0) or 0)
+                        ask = float(getattr(quote, "ask_price", 0) or 0)
+                        price = (bid + ask) / 2 if bid > 0 and ask > 0 else ask or bid
+                        if price > 0:
+                            out[canonical] = price
+                            break
+                    except Exception as e:
+                        logger.debug(f"Single crypto quote request failed for {candidate}: {e}")
         except Exception as e:
-            logger.warning(f"Could not get price for {symbol}: {e}")
-        return None
+            logger.warning(f"Could not get latest crypto prices: {e}")
+        return out

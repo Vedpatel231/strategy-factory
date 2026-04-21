@@ -2784,11 +2784,14 @@ function alpLiveUpdateAccount(acct) {{
   document.getElementById('alpLiveAccNum').textContent = acct.account_number || '—';
 }}
 
+var _alpLivePositionsInFlight = false;
 async function alpLiveRefreshPositions(opts) {{
   if (!alpLiveConnected) return;
   opts = opts || {{}};
+  if (_alpLivePositionsInFlight) return;
+  _alpLivePositionsInFlight = true;
   try {{
-    var data = await apiGet('/api/alpaca/positions');
+    var data = await apiGet('/api/alpaca/positions?live=1');
     var riskData = await apiGet('/api/position-risk').catch(function() {{ return {{positions: {{}}}}; }});
     var riskMap = riskData.positions || {{}};
     function canonCryptoSymbol(sym) {{
@@ -2885,6 +2888,8 @@ async function alpLiveRefreshPositions(opts) {{
     }}
   }} catch(e) {{
     console.error('Positions refresh error:', e);
+  }} finally {{
+    _alpLivePositionsInFlight = false;
   }}
 }}
 
