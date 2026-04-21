@@ -33,8 +33,19 @@ def seed_if_needed():
 
 
 def generate_dashboard_if_needed():
-    if not os.path.exists(config.DASHBOARD_OUTPUT):
-        print("[entrypoint] No dashboard yet — running daily_runner...")
+    dashboard_exists = os.path.exists(config.DASHBOARD_OUTPUT)
+    source_files = ["generate_dashboard.py", "dashboard_server.py", "daily_runner.py"]
+    repo_dir = os.path.dirname(__file__)
+    source_mtime = max(
+        os.path.getmtime(os.path.join(repo_dir, p))
+        for p in source_files
+        if os.path.exists(os.path.join(repo_dir, p))
+    )
+    dashboard_mtime = os.path.getmtime(config.DASHBOARD_OUTPUT) if dashboard_exists else 0
+
+    if not dashboard_exists or source_mtime > dashboard_mtime:
+        reason = "No dashboard yet" if not dashboard_exists else "Dashboard code changed"
+        print(f"[entrypoint] {reason} — running daily_runner...")
         r = subprocess.run([sys.executable, "daily_runner.py"],
                            cwd=os.path.dirname(__file__),
                            capture_output=True, text=True, timeout=180)

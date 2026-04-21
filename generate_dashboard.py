@@ -254,7 +254,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .sidebar-footer{{padding:16px 20px;border-top:1px solid var(--border);font-size:0.7em;color:var(--text-dim);text-align:center;line-height:1.4;}}
 
 /* MAIN */
-.main-content{{margin-left:260px;flex:1;padding:32px 40px;min-height:100vh;}}
+.main-content{{margin-left:260px;flex:1;padding:32px 40px;min-height:100vh;min-width:0;max-width:100%;}}
 .page{{display:none;animation:fadeIn 0.4s ease;}}
 .page.active{{display:block;}}
 @keyframes fadeIn{{from{{opacity:0;transform:translateY(10px);}}to{{opacity:1;transform:translateY(0);}}}}
@@ -280,11 +280,21 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .card-sub{{font-size:0.85em;color:var(--text-dim);margin-top:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
 
 /* TABLE */
-.data-table{{width:100%;border-collapse:collapse;font-size:0.9em;}}
+.table-wrap{{width:100%;max-width:100%;overflow-x:auto;border-radius:10px;}}
+.data-table{{width:100%;border-collapse:collapse;font-size:0.9em;table-layout:auto;}}
+.data-table.compact{{font-size:0.84em;}}
 .data-table th{{background:#151a3a;color:var(--cyan);padding:14px 16px;text-align:left;font-weight:600;border-bottom:2px solid var(--cyan);cursor:pointer;user-select:none;white-space:nowrap;}}
 .data-table th:hover{{color:var(--lime);background:#1a2250;}}
 .data-table td{{padding:12px 16px;border-bottom:1px solid var(--border);}}
 .data-table tr:hover td{{background:rgba(0,212,255,0.04);}}
+.trade-monitor-table th,.trade-monitor-table td{{padding:10px 12px;vertical-align:top;}}
+.trade-monitor-table .price-cell{{font-family:'Courier New',monospace;font-weight:700;color:var(--text);white-space:nowrap;}}
+.trade-monitor-table .muted-line{{display:block;color:var(--text-dim);font-size:0.78em;margin-top:2px;line-height:1.35;}}
+.trade-monitor-table .risk-cell{{font-family:'Courier New',monospace;line-height:1.45;white-space:nowrap;}}
+.trade-monitor-table .reason-row td{{padding-top:0;color:var(--text-dim);font-size:0.82em;line-height:1.45;background:rgba(13,17,48,0.32);}}
+.trade-monitor-table .reason-row strong{{color:var(--cyan);font-weight:600;}}
+.live-dot{{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--lime);box-shadow:0 0 10px rgba(57,255,20,0.9);animation:pulse 1.2s infinite;margin-right:6px;}}
+.nowrap{{white-space:nowrap;}}
 .data-table .row-pause{{border-left:3px solid var(--red);}}
 .data-table .row-hold{{border-left:3px solid var(--amber);}}
 .data-table .row-reactivate{{border-left:3px solid var(--lime);}}
@@ -744,13 +754,13 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div id="alpPreviewSection" style="display:none;margin-bottom:24px;">
       <h3 style="margin-bottom:16px;">Order Preview</h3>
       <div id="alpPreviewSummary" style="margin-bottom:12px;color:var(--text-dim);"></div>
-      <table class="data-table" id="alpPreviewTable">
+      <div class="table-wrap"><table class="data-table compact" id="alpPreviewTable">
         <thead><tr>
           <th>Bot</th><th>Symbol</th><th>Side</th><th>Notional</th>
           <th>Target</th><th>Current</th><th>Status</th>
         </tr></thead>
         <tbody id="alpPreviewBody"></tbody>
-      </table>
+      </table></div>
       <div id="alpPreviewSkipped" style="margin-top:12px;"></div>
     </div>
 
@@ -860,17 +870,19 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
     <!-- Positions -->
     <div class="card" style="margin-bottom:24px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
         <span style="font-weight:600;font-size:1.1em;">Open Positions</span>
-        <button onclick="alpLiveRefreshPositions()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <span style="color:var(--text-dim);font-size:0.82em;"><span class="live-dot"></span>1s price refresh</span>
+          <button onclick="alpLiveRefreshPositions()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+        </div>
       </div>
       <div id="alpLivePositionsEmpty" style="color:var(--text-dim);padding:20px 0;text-align:center;">No open positions</div>
-      <div id="alpLivePositionsTable" style="display:none;overflow-x:auto;">
-        <table class="data-table">
+      <div id="alpLivePositionsTable" class="table-wrap" style="display:none;">
+        <table class="data-table compact trade-monitor-table">
           <thead><tr>
-            <th>Symbol</th><th>Qty</th><th>Avg Entry</th><th>Current</th>
-            <th>Market Value</th><th>P&L</th><th>P&L %</th>
-            <th>Strategy / Regime</th><th>SL</th><th>TP</th><th>Trail</th><th>Action</th>
+            <th>Symbol</th><th>Live Price</th><th>Value</th><th>P&L</th>
+            <th>Risk Prices</th><th>Strategy</th><th>Regime</th><th>Action</th>
           </tr></thead>
           <tbody id="alpLivePositionsBody"></tbody>
         </table>
@@ -907,8 +919,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         <button onclick="alpLiveRefreshOrders()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
       </div>
       <div id="alpLiveOrdersEmpty" style="color:var(--text-dim);padding:20px 0;text-align:center;">No recent orders</div>
-      <div id="alpLiveOrdersTable" style="display:none;overflow-x:auto;">
-        <table class="data-table">
+      <div id="alpLiveOrdersTable" class="table-wrap" style="display:none;">
+        <table class="data-table compact">
           <thead><tr>
             <th>Time</th><th>Symbol</th><th>Side</th><th>Amount</th>
             <th>Fill Price</th><th>Status</th>
@@ -1028,7 +1040,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <button class="filter-btn" onclick="filterQuantum('HOLD')">Hold</button>
     <button class="filter-btn" onclick="filterQuantum('REACTIVATE')">Reactivate</button>
   </div>
-  <table class="data-table" id="quantumTable">
+  <div class="table-wrap"><table class="data-table compact" id="quantumTable">
     <thead><tr>
       <th onclick="sortTable(0)">Strategy</th>
       <th onclick="sortTable(1)">Verdict</th>
@@ -1039,7 +1051,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <th onclick="sortTable(6)">Market Fit</th>
     </tr></thead>
     <tbody>{rows}</tbody>
-  </table>
+  </table></div>
 </div>"""
 
     # ── PAGE: BOT STATUS ─────────────────────────────────────────────────
@@ -1498,25 +1510,22 @@ async function loadPortfolioData() {{
     if (container && positions.length > 0) {{
       var totalMV = 0;
       positions.forEach(function(p) {{ totalMV += Number(p.market_value || 0); }});
-      var html = '<table class="data-table"><thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg Entry</th><th>Current Price</th><th>Market Value</th><th>Unrealized P&L</th><th>% of Portfolio</th></tr></thead><tbody>';
+      var html = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th>Live Price</th><th>Market Value</th><th>P&L</th><th>Allocation</th></tr></thead><tbody>';
       positions.forEach(function(p) {{
         var upl = Number(p.unrealized_pl || 0);
         var mv = Number(p.market_value || 0);
         var pct = totalMV > 0 ? (mv / totalMV * 100) : 0;
         var plColor = upl >= 0 ? 'var(--lime)' : 'var(--red)';
-        var uplPct = Number(p.unrealized_plpc || 0) * 100;
+        var uplPct = Number(p.unrealized_plpc || 0);
         html += '<tr>';
-        html += '<td><strong>' + (p.symbol || '?') + '</strong></td>';
-        html += '<td>' + (p.side || 'long') + '</td>';
-        html += '<td style="font-family:Courier New,monospace;">' + Number(p.qty || 0).toFixed(4) + '</td>';
-        html += '<td style="font-family:Courier New,monospace;">' + fmt(p.avg_entry_price || p.cost_basis / (p.qty || 1)) + '</td>';
+        html += '<td><strong>' + (p.symbol || '?') + '</strong><span class="muted-line">Qty ' + Number(p.qty || 0).toFixed(4) + ' · Entry ' + fmt(p.avg_entry_price || p.cost_basis / (p.qty || 1)) + '</span></td>';
         html += '<td style="font-family:Courier New,monospace;">' + fmt(p.current_price) + '</td>';
         html += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + fmt(mv) + '</td>';
         html += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + fmt(upl) + ' (' + (uplPct >= 0 ? '+' : '') + uplPct.toFixed(2) + '%)</td>';
         html += '<td>' + pct.toFixed(1) + '%</td>';
         html += '</tr>';
       }});
-      html += '</tbody></table>';
+      html += '</tbody></table></div>';
       container.innerHTML = html;
     }} else if (container) {{
       container.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">No open positions. Use the Alpaca Trading page to execute trades.</div>';
@@ -1526,7 +1535,7 @@ async function loadPortfolioData() {{
     if (ovContainer && positions.length > 0) {{
       var totalMV2 = 0;
       positions.forEach(function(p) {{ totalMV2 += Number(p.market_value || 0); }});
-      var ovHtml = '<table class="data-table"><thead><tr><th>Symbol</th><th>Market Value</th><th>P&L</th><th>% of Portfolio</th></tr></thead><tbody>';
+      var ovHtml = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th>Market Value</th><th>P&L</th><th>% of Portfolio</th></tr></thead><tbody>';
       positions.forEach(function(p) {{
         var upl = Number(p.unrealized_pl || 0);
         var mv = Number(p.market_value || 0);
@@ -1539,7 +1548,7 @@ async function loadPortfolioData() {{
         ovHtml += '<td>' + pct.toFixed(1) + '%</td>';
         ovHtml += '</tr>';
       }});
-      ovHtml += '</tbody></table>';
+      ovHtml += '</tbody></table></div>';
       ovContainer.innerHTML = ovHtml;
     }} else if (ovContainer) {{
       ovContainer.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">No positions yet.</div>';
@@ -1605,7 +1614,7 @@ async function updatePaperAccountFromAPI() {{
   }} catch(e) {{}}
 }}
 
-// Global tick — 30s for most pages, 10s fast-tick for Alpaca Live (real market data)
+// Global tick — 30s for heavier dashboard data, 1s fast-tick for Alpaca Live prices
 var _liveTickCount = 0;
 function liveTick() {{
   _liveTickCount++;
@@ -1613,14 +1622,13 @@ function liveTick() {{
 }}
 setInterval(liveTick, 30000);
 
-// Fast tick for Alpaca Live — real prices move constantly
+// Fast tick for Alpaca Live — keep open-position prices moving like a chart watchlist
 function alpacaFastTick() {{
   if (_currentPage === 'alpaca-live' && alpLiveConnected) {{
-    alpLiveRefreshPositions();
-    alpLiveRefreshJournal();
+    alpLiveRefreshPositions({{skipAccount:true}});
   }}
 }}
-setInterval(alpacaFastTick, 10000);
+setInterval(alpacaFastTick, 1000);
 
 // ── Quantum Filter ──────────────────────────────────────────────
 function filterQuantum(verdict) {{
@@ -2063,10 +2071,10 @@ async function alpacaLoadPositions() {{
         '<td style="color:' + plColor + ';font-weight:700;">' + (p.unrealized_plpc >= 0 ? '+' : '') + Number(p.unrealized_plpc).toFixed(2) + '%</td>' +
         '</tr>';
     }});
-    body.innerHTML = '<table class="data-table"><thead><tr>' +
+    body.innerHTML = '<div class="table-wrap"><table class="data-table compact"><thead><tr>' +
       '<th>Symbol</th><th>Qty</th><th>Avg Entry</th><th>Current</th>' +
       '<th>Market Value</th><th>Unrealized P&L</th><th>%</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table>';
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }} catch (e) {{
     alpMsg('Failed to load positions: ' + e.message, 'var(--red)');
   }}
@@ -2092,10 +2100,10 @@ async function alpacaLoadOrders() {{
         '<td><span class="badge" style="background:rgba(0,212,255,0.15);color:var(--cyan);">' + o.status + '</span></td>' +
         '</tr>';
     }});
-    body.innerHTML = '<table class="data-table"><thead><tr>' +
+    body.innerHTML = '<div class="table-wrap"><table class="data-table compact"><thead><tr>' +
       '<th>Time</th><th>Symbol</th><th>Side</th><th>Notional/Qty</th>' +
       '<th>Fill Price</th><th>Status</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table>';
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }} catch (e) {{
     alpMsg('Failed to load orders: ' + e.message, 'var(--red)');
   }}
@@ -2776,8 +2784,9 @@ function alpLiveUpdateAccount(acct) {{
   document.getElementById('alpLiveAccNum').textContent = acct.account_number || '—';
 }}
 
-async function alpLiveRefreshPositions() {{
+async function alpLiveRefreshPositions(opts) {{
   if (!alpLiveConnected) return;
+  opts = opts || {{}};
   try {{
     var data = await apiGet('/api/alpaca/positions');
     var riskData = await apiGet('/api/position-risk').catch(function() {{ return {{positions: {{}}}}; }});
@@ -2789,6 +2798,37 @@ async function alpLiveRefreshPositions() {{
       if (s.indexOf('/') < 0 && s.endsWith('USDT')) return s.slice(0, -4) + '/USD';
       if (s.indexOf('/') < 0 && s.endsWith('USD')) return s.slice(0, -3) + '/USD';
       return s;
+    }}
+    function fmtPrice(n) {{
+      n = Number(n || 0);
+      if (!isFinite(n) || n <= 0) return '—';
+      if (n >= 1000) return '$' + n.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}});
+      if (n >= 1) return '$' + n.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:4}});
+      return '$' + n.toLocaleString(undefined, {{minimumFractionDigits:4, maximumFractionDigits:6}});
+    }}
+    function riskPrice(entry, pct, side) {{
+      entry = Number(entry || 0);
+      pct = Number(pct || 0);
+      if (!entry || !pct) return null;
+      return side === 'stop' ? entry * (1 - pct / 100) : entry * (1 + pct / 100);
+    }}
+    function trailPrice(high, pct) {{
+      high = Number(high || 0);
+      pct = Number(pct || 0);
+      if (!high || !pct) return null;
+      return high * (1 - pct / 100);
+    }}
+    function esc(txt) {{
+      return String(txt === undefined || txt === null ? '' : txt)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }}
+    function shortReason(txt) {{
+      txt = String(txt || '').trim();
+      return txt.length > 260 ? txt.slice(0, 260) + '...' : txt;
     }}
     var positions = data.positions || [];
     var emptyEl = document.getElementById('alpLivePositionsEmpty');
@@ -2811,20 +2851,26 @@ async function alpLiveRefreshPositions() {{
       var r = riskMap[sym] || riskMap[p.symbol] || riskMap[rawSym] || {{}};
       var plColor = p.unrealized_pl >= 0 ? 'var(--lime)' : 'var(--red)';
       var plSign = p.unrealized_pl >= 0 ? '+' : '';
+      var entry = Number(r.entry_price || p.avg_entry_price || 0);
+      var high = Number(r.high_water_price || p.current_price || entry || 0);
+      var sl = riskPrice(entry, r.stop_loss_pct, 'stop');
+      var tp = riskPrice(entry, r.take_profit_pct, 'take');
+      var trail = trailPrice(high, r.trailing_stop_pct);
+      var reason = shortReason(r.entry_reason || 'No bot entry reason stored for this position.');
+      var strategy = r.strategy || 'manual/legacy';
+      var regime = r.regime || 'unknown';
+      var pnlPct = Number(p.unrealized_plpc || 0);
       body.innerHTML += '<tr>' +
-        '<td style="font-weight:600;color:var(--cyan);">' + sym + '</td>' +
-        '<td>' + Number(p.qty).toFixed(4) + '</td>' +
-        '<td>' + fmtUSD(p.avg_entry_price) + '</td>' +
-        '<td>' + fmtUSD(p.current_price) + '</td>' +
-        '<td>' + fmtUSD(p.market_value) + '</td>' +
-        '<td style="color:' + plColor + ';">' + plSign + fmtUSD(p.unrealized_pl) + '</td>' +
-        '<td style="color:' + plColor + ';">' + plSign + p.unrealized_plpc.toFixed(2) + '%</td>' +
-        '<td><span style="color:var(--text);">' + (r.strategy || 'manual/legacy') + '</span><br><span style="color:var(--text-dim);font-size:0.82em;">' + (r.regime || 'unknown') + '</span></td>' +
-        '<td>' + (r.stop_loss_pct ? r.stop_loss_pct + '%' : '—') + '</td>' +
-        '<td>' + (r.take_profit_pct ? r.take_profit_pct + '%' : '—') + '</td>' +
-        '<td>' + (r.trailing_stop_pct ? r.trailing_stop_pct + '%' : '—') + '</td>' +
+        '<td style="font-weight:700;color:var(--cyan);">' + esc(sym) + '<span class="muted-line">Qty ' + Number(p.qty || 0).toFixed(4) + ' · Entry ' + fmtPrice(entry || p.avg_entry_price) + '</span></td>' +
+        '<td class="price-cell">' + fmtPrice(p.current_price) + '</td>' +
+        '<td class="nowrap">' + fmtUSD(p.market_value) + '</td>' +
+        '<td style="color:' + plColor + ';font-weight:700;">' + plSign + fmtUSD(p.unrealized_pl) + '<span class="muted-line" style="color:' + plColor + ';">' + plSign + pnlPct.toFixed(2) + '%</span></td>' +
+        '<td class="risk-cell"><span style="color:var(--red);">SL ' + fmtPrice(sl) + '</span><br><span style="color:var(--lime);">TP ' + fmtPrice(tp) + '</span><br><span style="color:var(--amber);">Trail ' + fmtPrice(trail) + '</span></td>' +
+        '<td>' + esc(strategy) + '<span class="muted-line">conf ' + (r.confidence !== undefined && r.confidence !== null ? Number(r.confidence).toFixed(2) : '—') + '</span></td>' +
+        '<td>' + esc(regime) + '</td>' +
         '<td><button onclick="alpLiveClosePos(\\x27' + sym + '\\x27)" class="filter-btn" style="padding:4px 10px;font-size:0.8em;color:var(--red);border-color:var(--red);">Close</button></td>' +
-        '</tr>';
+        '</tr>' +
+        '<tr class="reason-row"><td colspan="8"><strong>Why:</strong> ' + esc(reason) + '</td></tr>';
     }});
     if (data.summary) {{
       var s = data.summary;
@@ -2833,9 +2879,10 @@ async function alpLiveRefreshPositions() {{
         '<span style="color:var(--text);">' + s.count + ' positions · ' + fmtUSD(s.total_market_value) + '</span>' +
         ' · <span style="color:' + tColor + ';">' + (s.total_unrealized_pl >= 0 ? '+' : '') + fmtUSD(s.total_unrealized_pl) + '</span>';
     }}
-    // Also refresh account
-    var acct = await apiGet('/api/alpaca/account');
-    alpLiveUpdateAccount(acct);
+    if (!opts.skipAccount) {{
+      var acct = await apiGet('/api/alpaca/account');
+      alpLiveUpdateAccount(acct);
+    }}
   }} catch(e) {{
     console.error('Positions refresh error:', e);
   }}
