@@ -1041,21 +1041,46 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
             v = ed.get("verdict", "HOLD").upper()
             wr = self._num(ed.get("win_rate", 0))
             pf = self._num(ed.get("profit_factor", 0))
-            sr = self._num(ed.get("sharpe_ratio", 0))
             md = self._num(ed.get("max_drawdown", 0))
             adapt = self._num(ed.get("adaptation_score", 0))
+            if v == "REACTIVATE":
+                action = "Candidate"
+                action_sub = "May trade if real paper data agrees"
+            elif v == "PAUSE":
+                action = "Pause"
+                action_sub = "Do not trust until evidence improves"
+            else:
+                action = "Monitor"
+                action_sub = "No strong action from seed data"
             rows += f"""<tr class="row-{v.lower()}" data-verdict="{v}">
-      <td><strong>{bot_name}</strong></td>
-      <td><span class="badge badge-{v.lower()}">{v}</span></td>
-      <td><span class="tip" data-tip="How often trades are profitable. Above 50% is good.">{wr:.1f}%{self._quality_badge('wr', wr)}</span></td>
-      <td><span class="tip" data-tip="Gross profit ÷ gross loss. Above 1.0 means profitable overall.">{pf:.2f}{self._quality_badge('pf', pf)}</span></td>
-      <td><span class="tip" data-tip="Return per unit of risk. Higher is better — 1.0+ is great.">{sr:.2f}{self._quality_badge('sharpe', sr)}</span></td>
-      <td><span class="tip" data-tip="Biggest drop from a peak. Lower is safer.">{md:.1f}%{self._quality_badge('dd', md)}</span></td>
-      <td><span class="tip" data-tip="How well this strategy fits current market conditions. 75+ is great.">{adapt:.0f}/100{self._quality_badge('adapt', adapt)}</span></td>
+      <td><strong>{bot_name}</strong><span class="muted-line">Seed/backtest only until real paper exits exist</span></td>
+      <td><span class="badge badge-{v.lower()}">{v}</span><span class="muted-line">{action_sub}</span></td>
+      <td class="num">{adapt:.0f}/100{self._quality_badge('adapt', adapt)}</td>
+      <td class="num">{wr:.1f}%{self._quality_badge('wr', wr)}</td>
+      <td class="num">{pf:.2f}{self._quality_badge('pf', pf)}</td>
+      <td class="num">{md:.1f}%{self._quality_badge('dd', md)}</td>
+      <td><strong>{action}</strong></td>
     </tr>"""
 
         return f"""<div class="page" id="quantum">
-  <div class="page-title"><span class="accent">⚛️</span> Strategy Scorecard <span class="data-badge">BACKTEST DATA</span></div>
+  <div class="page-title"><span class="accent">⚛️</span> Strategy Scorecard <span class="data-badge">SEED DATA + REAL PAPER OVERLAY</span></div>
+  <p class="page-sub">This page is for deciding which strategy families deserve trust. Seed metrics are only a starting rank; the live table below is updated from the Alpaca paper ledger when closed trades exist.</p>
+  <div class="metric-grid">
+    <div class="metric-card"><div class="metric-label">Real Paper Strategies</div><div class="metric-value" id="scoreRealStrategies">—</div><div class="metric-sub">Strategies with closed paper trades</div></div>
+    <div class="metric-card"><div class="metric-label">Best Real Strategy</div><div class="metric-value" id="scoreBestStrategy" style="font-size:1.35em;">—</div><div class="metric-sub" id="scoreBestStrategySub">Waiting for closed trades</div></div>
+    <div class="metric-card"><div class="metric-label">Needs Review</div><div class="metric-value" id="scoreNeedsReview" style="color:var(--amber);">—</div><div class="metric-sub">Weak or thin real evidence</div></div>
+  </div>
+  <div class="section-card">
+    <div class="section-header">
+      <div><div class="section-title">Real Paper Strategy Board</div><div class="section-sub">Trust this table over seed scores once enough Alpaca paper exits have accumulated.</div></div>
+      <span class="status-pill" id="scoreLiveStatus">Loading</span>
+    </div>
+    <div id="scoreRealEmpty" class="read-only-note">No closed Alpaca paper trades yet. Seed scorecard remains visible below, but it is not proof of live edge.</div>
+    <div id="scoreRealTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Strategy</th><th class="num">Closed</th><th class="num">Net P&L</th><th class="num">Win Rate</th><th class="num">Avg Net</th><th>Action</th><th>Evidence</th></tr></thead>
+      <tbody id="scoreRealBody"></tbody>
+    </table></div>
+  </div>
   <div class="filter-buttons">
     <button class="filter-btn active" onclick="filterQuantum('ALL')">Show All</button>
     <button class="filter-btn" onclick="filterQuantum('PAUSE')">Pause</button>
@@ -1066,11 +1091,11 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <thead><tr>
       <th onclick="sortTable(0)">Strategy</th>
       <th onclick="sortTable(1)">Verdict</th>
-      <th onclick="sortTable(2)">Win Rate</th>
-      <th onclick="sortTable(3)">Profit Factor</th>
-      <th onclick="sortTable(4)">Risk-Adj. Return</th>
-      <th onclick="sortTable(5)">Worst Drop</th>
-      <th onclick="sortTable(6)">Market Fit</th>
+      <th onclick="sortTable(2)" class="num">Seed Fit</th>
+      <th onclick="sortTable(3)" class="num">Seed Win Rate</th>
+      <th onclick="sortTable(4)" class="num">Seed Profit Factor</th>
+      <th onclick="sortTable(5)" class="num">Seed Worst Drop</th>
+      <th onclick="sortTable(6)">Operator Action</th>
     </tr></thead>
     <tbody>{rows}</tbody>
   </table></div>
@@ -1078,132 +1103,124 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
     # ── PAGE: BOT STATUS ─────────────────────────────────────────────────
     def _page_bots(self, bots_data, evaluations):
-        cards = ""
+        rows = ""
         for bot in bots_data:
             name = bot.get("name", "Unknown")
             pair = bot.get("pair", "N/A")
             status = bot.get("status", "unknown")
-            # Pull real metrics from evaluations
             ed = self._evaluation_for_bot(bot, evaluations)
             status = ed.get("bot_status", status)
-            pnl = self._num(ed.get("net_profit", 0))
-            wr = self._num(ed.get("win_rate", 0))
-            trades = self._num(ed.get("total_trades", 0))
-            pf = self._num(ed.get("profit_factor", 0))
             verdict = ed.get("verdict", "HOLD")
             adapt = self._num(ed.get("adaptation_score", 50))
-
-            pulse = '<span class="status-pulse"></span>' if status == "active" else ""
-            status_color = "lime" if status == "active" else "amber" if status == "paused" else "red"
-            pnl_color = "lime" if pnl >= 0 else "red"
-
-            cards += f"""<div class="bot-card">
-      <div class="bot-card-header">
-        <div>
-          <div class="bot-card-name">{name}{pulse}</div>
-          <div class="bot-card-pair">{pair}</div>
-        </div>
-        <span class="badge badge-{verdict.lower()}">{verdict}</span>
-      </div>
-      <div class="bot-card-metrics">
-        <div><div class="bot-card-metric-label">P&L</div><div class="bot-card-metric-val" style="color:var(--{pnl_color});">${pnl:,.0f}</div></div>
-        <div><div class="bot-card-metric-label">Win Rate</div><div class="bot-card-metric-val">{wr:.1f}%{self._quality_badge('wr', wr)}</div></div>
-        <div><div class="bot-card-metric-label">Profit Factor</div><div class="bot-card-metric-val">{pf:.2f}{self._quality_badge('pf', pf)}</div></div>
-        <div><div class="bot-card-metric-label">Trades</div><div class="bot-card-metric-val">{trades:.0f}</div></div>
-        <div><div class="bot-card-metric-label">Market Fit</div><div class="bot-card-metric-val">{adapt:.0f}/100{self._quality_badge('adapt', adapt)}</div></div>
-        <div><div class="bot-card-metric-label">Current Status</div><div class="bot-card-metric-val" style="color:var(--{status_color});">● {status.upper()}</div></div>
-      </div>
-    </div>"""
+            rows += f"""<tr>
+      <td><strong>{name}</strong><span class="muted-line">{pair}</span></td>
+      <td><span class="badge badge-{status}">{status}</span></td>
+      <td><span class="badge badge-{verdict.lower()}">{verdict}</span></td>
+      <td class="num">{adapt:.0f}/100</td>
+      <td>Seed bot available. Live signal state appears above after the intraday engine runs.</td>
+    </tr>"""
 
         return f"""<div class="page" id="bots">
-  <div class="page-title"><span class="accent">🤖</span> Bot Signals</div>
-  <div style="background:rgba(0,212,255,0.08);border:1px solid var(--cyan);border-radius:12px;padding:16px 20px;margin-bottom:20px;font-size:0.9em;color:var(--text-dim);line-height:1.6;">
-    <strong style="color:var(--cyan);">📡 Signal Generators</strong> — These {len(bots_data)} bots analyze market data and generate buy/sell signals. Only signals for Alpaca-supported symbols result in actual trades on your account. Bot metrics below are from backtested simulation data, not live trading results. For real P&L, see the <a href="#" onclick="showPage('portfolio');return false;" style="color:var(--cyan);text-decoration:underline;">Portfolio</a> or <a href="#" onclick="showPage('alpaca-live');return false;" style="color:var(--cyan);text-decoration:underline;">Alpaca Trading</a> pages.
+  <div class="page-title"><span class="accent">🤖</span> Bot Signals <span class="data-badge">LIVE INTRADAY STATE</span></div>
+  <p class="page-sub">Use this page to understand what the bot is seeing right now: signal, confidence, regime, and why a symbol was accepted or rejected.</p>
+  <div class="metric-grid">
+    <div class="metric-card"><div class="metric-label">Symbols Checked</div><div class="metric-value" id="signalsSymbols">—</div><div class="metric-sub">Latest intraday cycle</div></div>
+    <div class="metric-card"><div class="metric-label">Tradable Signals</div><div class="metric-value" id="signalsTradable" style="color:var(--lime);">—</div><div class="metric-sub">Passed quality gate</div></div>
+    <div class="metric-card"><div class="metric-label">Rejected / Waiting</div><div class="metric-value" id="signalsRejected" style="color:var(--amber);">—</div><div class="metric-sub">Skipped with reason</div></div>
   </div>
-  <div class="bot-grid">{cards}</div>
+  <div class="section-card">
+    <div class="section-header">
+      <div><div class="section-title">Current Signal Board</div><div class="section-sub">Real intraday engine output. This is the clearest place to see why the system may buy, hold, or skip.</div></div>
+      <span class="status-pill" id="signalsLiveStatus">Loading</span>
+    </div>
+    <div id="signalsEmpty" class="read-only-note">No intraday signal state has been saved yet.</div>
+    <div id="signalsTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Symbol</th><th>Decision</th><th class="num">Confidence</th><th>Strategy</th><th>Regime</th><th>Reason / Blocker</th></tr></thead>
+      <tbody id="signalsBody"></tbody>
+    </table></div>
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Configured Bot Inventory</div><div class="section-sub">Seed/backtest bot list. This is configuration context, not proof of live trading skill.</div></div></div>
+    <div class="table-wrap"><table class="data-table compact"><thead><tr><th>Bot</th><th>Status</th><th>Seed Verdict</th><th class="num">Seed Fit</th><th>Note</th></tr></thead><tbody>{rows}</tbody></table></div>
+  </div>
 </div>"""
 
     # ── PAGE: PERFORMANCE ────────────────────────────────────────────────
     def _page_performance(self, evaluations):
         return """<div class="page" id="performance">
-  <div class="page-title"><span class="accent">📈</span> Performance Analytics <span class="data-badge">BACKTEST DATA</span></div>
-  <div class="chart-grid">
-    <div class="chart-box"><h3>Cumulative P&L (Top Strategies)</h3><canvas id="pnlChart"></canvas></div>
-    <div class="chart-box"><h3>Win Rate Distribution</h3><canvas id="winrateChart"></canvas></div>
+  <div class="page-title"><span class="accent">📈</span> Performance <span class="data-badge">REAL PAPER LEDGER</span></div>
+  <p class="page-sub">This page ignores seeded performance and focuses on closed Alpaca paper trades after estimated fees. It is meant to answer what actually worked, what lost, and whether fees are eating the edge.</p>
+  <div class="metric-grid">
+    <div class="metric-card"><div class="metric-label">Closed Trades</div><div class="metric-value" id="perfTrades">—</div><div class="metric-sub">Fee-aware ledger rows</div></div>
+    <div class="metric-card"><div class="metric-label">Net P&L After Fees</div><div class="metric-value" id="perfNet">—</div><div class="metric-sub">Estimated Alpaca crypto fees included</div></div>
+    <div class="metric-card"><div class="metric-label">Win Rate</div><div class="metric-value" id="perfWinRate">—</div><div class="metric-sub">Net winners only</div></div>
+    <div class="metric-card"><div class="metric-label">Fees Paid</div><div class="metric-value" id="perfFees" style="color:var(--amber);">—</div><div class="metric-sub">Estimated round-trip cost</div></div>
   </div>
-  <div class="chart-grid">
-    <div class="chart-box"><h3>Risk vs Return (Sharpe vs Profit Factor)</h3><canvas id="riskreturnChart"></canvas></div>
-    <div class="chart-box"><h3>Top Strategy Breakdown</h3><canvas id="radarChart"></canvas></div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Strategy Results</div><div class="section-sub">Review which strategy families deserve more capital or less trust.</div></div></div>
+    <div id="perfStrategyEmpty" class="read-only-note">Waiting for closed trades.</div>
+    <div id="perfStrategyTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Strategy</th><th class="num">Trades</th><th class="num">Net P&L</th><th class="num">Win Rate</th><th class="num">Avg Net</th><th class="num">Fees</th><th>Read</th></tr></thead>
+      <tbody id="perfStrategyBody"></tbody>
+    </table></div>
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Symbol Results</div><div class="section-sub">Find symbols that are helping or hurting the system.</div></div></div>
+    <div id="perfSymbolEmpty" class="read-only-note">Waiting for closed trades.</div>
+    <div id="perfSymbolTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Symbol</th><th class="num">Trades</th><th class="num">Net P&L</th><th class="num">Win Rate</th><th class="num">Avg Net</th><th class="num">Fees</th></tr></thead>
+      <tbody id="perfSymbolBody"></tbody>
+    </table></div>
   </div>
 </div>"""
 
     # ── PAGE: LEARNING ENGINE ────────────────────────────────────────────
     def _page_learning(self, learning_stats, evaluations):
-        cards = ""
+        rows = ""
         for bot_name, stats in learning_stats.items():
             if bot_name.startswith("_"):
                 continue
-            adapt = stats.get("adaptation_score", 0)
+            adapt = self._num(stats.get("adaptation_score", 0))
             real_score = stats.get("real_paper_score")
-            real_label = stats.get("real_paper_label", "NO_REAL_DATA")
             real_closed = int(stats.get("real_paper_closed_trades", 0) or 0)
-            real_entries = int(stats.get("real_paper_entries", 0) or 0)
             real_wr = stats.get("real_paper_win_rate")
             real_avg = stats.get("real_paper_avg_pl_pct")
-            if adapt >= 75:
-                sc, label = "score-well", "Excellent"
-            elif adapt >= 60:
-                sc, label = "score-moderate", "Good"
-            elif adapt >= 40:
-                sc, label = "score-neutral", "Fair"
-            else:
-                sc, label = "score-poor", "Poor"
-            bar_color = "lime" if adapt >= 75 else "cyan" if adapt >= 60 else "amber" if adapt >= 40 else "red"
-
-            if real_score is None:
-                real_html = f"""<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
-        <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Real Paper Score</div>
-        <div style="font-size:1.1em;font-weight:700;color:var(--gray);">Collecting Data</div>
-        <div style="font-size:0.78em;color:var(--text-dim);">Entries: {real_entries} · Closed: {real_closed}</div>
-      </div>"""
-            else:
-                if real_score >= 70:
-                    real_color = "lime"
-                elif real_score >= 55:
-                    real_color = "cyan"
-                elif real_score >= 40:
-                    real_color = "amber"
-                else:
-                    real_color = "red"
-                wr_text = f"{real_wr:.1f}%" if real_wr is not None else "—"
-                avg_text = f"{real_avg:+.2f}%" if real_avg is not None else "—"
-                real_html = f"""<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
-        <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Real Paper Score</div>
-        <div style="font-size:1.55em;font-weight:800;color:var(--{real_color});">{real_score:.0f}</div>
-        <div style="font-size:0.78em;color:var(--text-dim);">{real_label.replace('_', ' ').title()}</div>
-        <div style="font-size:0.78em;color:var(--text-dim);">Closed: {real_closed} · WR: {wr_text} · Avg: {avg_text}</div>
-      </div>"""
-
-            cards += f"""<div class="adapt-card">
-      <div style="font-weight:600;">{bot_name}</div>
-      <div style="font-size:0.72em;color:var(--amber);text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;">Seed / Simulated Score</div>
-      <div class="adapt-score {sc}">{adapt:.0f}</div>
-      <div class="adapt-label">{label}</div>
-      <div class="progress-bar" style="margin-top:10px;">
-        <div class="progress-fill" style="width:{adapt}%;background:var(--{bar_color});"></div>
-      </div>
-      {real_html}
-    </div>"""
+            trust = "Seed only"
+            if real_closed >= 10:
+                trust = "Trust real score"
+            elif real_closed >= 3:
+                trust = "Building evidence"
+            wr_text = f"{real_wr:.1f}%" if real_wr is not None else "—"
+            avg_text = f"{real_avg:+.2f}%" if real_avg is not None else "—"
+            score_text = f"{real_score:.0f}" if real_score is not None else "Collecting"
+            rows += f"""<tr>
+      <td><strong>{bot_name}</strong><span class="muted-line">{trust}</span></td>
+      <td class="num">{score_text}</td>
+      <td class="num">{real_closed}</td>
+      <td class="num">{wr_text}</td>
+      <td class="num">{avg_text}</td>
+      <td class="num">{adapt:.0f}/100</td>
+    </tr>"""
 
         return f"""<div class="page" id="learning">
-  <div class="page-title"><span class="accent">🧠</span> Learning Engine <span class="data-badge">SEED SCORES + REAL PAPER TRACKING</span></div>
-  <div style="background:rgba(255,183,0,0.08);border:1px solid rgba(255,183,0,0.25);border-radius:8px;padding:14px 16px;margin-bottom:18px;color:var(--text-dim);">
-    <strong style="color:var(--amber);">Important:</strong> Seed / Simulated Score comes from generated strategy history and is only an initial ranking. Real Paper Score is calculated from Alpaca paper journal exits and should become the trusted score after enough closed trades exist.
+  <div class="page-title"><span class="accent">🧠</span> Learning Engine <span class="data-badge">REAL PAPER LEARNING</span></div>
+  <p class="page-sub">This is not magic AI. It is evidence tracking: closed trades, net outcomes, sample size, and whether a strategy should be boosted, monitored, or downweighted.</p>
+  <div class="metric-grid">
+    <div class="metric-card"><div class="metric-label">Trusted Strategies</div><div class="metric-value" id="learnTrusted">—</div><div class="metric-sub">10+ closed trades</div></div>
+    <div class="metric-card"><div class="metric-label">Collecting Data</div><div class="metric-value" id="learnCollecting">—</div><div class="metric-sub">Not enough exits yet</div></div>
+    <div class="metric-card"><div class="metric-label">Downweight Candidates</div><div class="metric-value" id="learnDownweight" style="color:var(--red);">—</div><div class="metric-sub">Negative or weak real evidence</div></div>
   </div>
-  <div class="adapt-cards">{cards}</div>
-  <div class="chart-grid">
-    <div class="chart-box"><h3>Seed Score Distribution</h3><canvas id="adaptationChart"></canvas></div>
-    <div class="chart-box"><h3>Seed Score vs Seed Win Rate</h3><canvas id="adaptWinrateChart"></canvas></div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Real Paper Learning Board</div><div class="section-sub">Operator readout from the persistent fee-aware ledger.</div></div><span class="status-pill" id="learnLiveStatus">Loading</span></div>
+    <div id="learnRealEmpty" class="read-only-note">No closed Alpaca paper trades yet. Real learning starts after exits are recorded.</div>
+    <div id="learnRealTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Strategy</th><th class="num">Closed</th><th class="num">Net P&L</th><th class="num">Win Rate</th><th class="num">Avg Net</th><th>Learning Action</th><th>Reason</th></tr></thead>
+      <tbody id="learnRealBody"></tbody>
+    </table></div>
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Seed Baseline</div><div class="section-sub">Initial ranking only. Never treat this as real trading performance.</div></div></div>
+    <div class="table-wrap"><table class="data-table compact"><thead><tr><th>Bot</th><th class="num">Real Score</th><th class="num">Closed</th><th class="num">Win Rate</th><th class="num">Avg P&L</th><th class="num">Seed Fit</th></tr></thead><tbody>{rows}</tbody></table></div>
   </div>
 </div>"""
 
@@ -1224,19 +1241,33 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         vol_ratio = self._fmt_metric(details.get("coefficient_of_variation", details.get("volatility_ratio")), 2)
 
         return f"""<div class="page" id="regime">
-  <div class="page-title"><span class="accent">🌊</span> Market Regime Analysis <span class="data-badge">BACKTEST DATA</span></div>
+  <div class="page-title"><span class="accent">🌊</span> Market Regime <span class="data-badge">LIVE INTRADAY STATE</span></div>
+  <p class="page-sub">This page should explain the market condition behind the trade gate, not just show a pretty chart. The symbol table updates from the intraday engine state.</p>
   <div class="regime-badge-large regime-{regime}">
-    {emoji} {regime.replace('_',' ').title()} — {confidence:.0f}% Confidence
+    {emoji} Seed Baseline: {regime.replace('_',' ').title()} — {confidence:.0f}% Confidence
   </div>
   <div class="cards-row">
-    <div class="card"><div class="card-label">Volatility</div><div class="card-value" style="font-size:1.2em;">{vol}</div><div class="card-sub">How wildly prices are swinging</div></div>
-    <div class="card"><div class="card-label">Trend Direction</div><div class="card-value" style="font-size:1.2em;">{trend}</div><div class="card-sub">Positive = prices going up</div></div>
-    <div class="card"><div class="card-label">Autocorrelation</div><div class="card-value" style="font-size:1.2em;">{autocorr}</div><div class="card-sub">Do trends tend to continue? (closer to 1 = yes)</div></div>
-    <div class="card"><div class="card-label">Vol Ratio</div><div class="card-value" style="font-size:1.2em;">{vol_ratio}</div><div class="card-sub">Current vs historical volatility</div></div>
+    <div class="card"><div class="card-label">Live Regimes</div><div class="card-value" id="regimeLiveCount" style="font-size:1.2em;">—</div><div class="card-sub">Symbols classified</div></div>
+    <div class="card"><div class="card-label">Trending</div><div class="card-value" id="regimeTrending" style="font-size:1.2em;color:var(--lime);">—</div><div class="card-sub">Trend-friendly symbols</div></div>
+    <div class="card"><div class="card-label">Choppy / Range</div><div class="card-value" id="regimeChoppy" style="font-size:1.2em;color:var(--amber);">—</div><div class="card-sub">Avoid trend entries or use range logic</div></div>
+    <div class="card"><div class="card-label">High Vol Risk</div><div class="card-value" id="regimeHighVol" style="font-size:1.2em;color:var(--red);">—</div><div class="card-sub">Needs smaller size or no-trade gate</div></div>
   </div>
-  <div class="chart-grid">
-    <div class="chart-box"><h3>Strategy Scores by Regime Fit</h3><canvas id="regimeChart"></canvas></div>
-    <div class="chart-box"><h3>Confidence Radar</h3><canvas id="confidenceChart"></canvas></div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Per-Symbol Regime Board</div><div class="section-sub">Use this to see whether each symbol is trend-following, range-bound, choppy, or too volatile right now.</div></div><span class="status-pill" id="regimeLiveStatus">Loading</span></div>
+    <div id="regimeLiveEmpty" class="read-only-note">No live regime state has been saved yet.</div>
+    <div id="regimeLiveTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Symbol</th><th>Regime</th><th class="num">Confidence</th><th>Bias</th><th class="num">ATR %</th><th class="num">Volume</th><th>Why</th></tr></thead>
+      <tbody id="regimeLiveBody"></tbody>
+    </table></div>
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Seed Regime Baseline</div><div class="section-sub">Legacy generated regime metrics kept only for context.</div></div></div>
+    <div class="cards-row" style="margin-bottom:0;">
+      <div class="card"><div class="card-label">Volatility</div><div class="card-value" style="font-size:1.2em;">{vol}</div><div class="card-sub">Generated baseline</div></div>
+      <div class="card"><div class="card-label">Trend Direction</div><div class="card-value" style="font-size:1.2em;">{trend}</div><div class="card-sub">Generated baseline</div></div>
+      <div class="card"><div class="card-label">Autocorrelation</div><div class="card-value" style="font-size:1.2em;">{autocorr}</div><div class="card-sub">Generated baseline</div></div>
+      <div class="card"><div class="card-label">Vol Ratio</div><div class="card-value" style="font-size:1.2em;">{vol_ratio}</div><div class="card-sub">Generated baseline</div></div>
+    </div>
   </div>
 </div>"""
 
@@ -1261,8 +1292,26 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>"""
 
         return f"""<div class="page" id="decisions">
-  <div class="page-title"><span class="accent">📋</span> Decision Log <span class="data-badge">BACKTEST DATA</span></div>
-  <div class="decision-timeline">{items}</div>
+  <div class="page-title"><span class="accent">📋</span> Decision Log <span class="data-badge">REAL PAPER JOURNAL</span></div>
+  <p class="page-sub">This page is the audit trail: what opened, what closed, what was rejected, and the stated reason.</p>
+  <div class="metric-grid">
+    <div class="metric-card"><div class="metric-label">Recent Events</div><div class="metric-value" id="decEvents">—</div><div class="metric-sub">Latest journal window</div></div>
+    <div class="metric-card"><div class="metric-label">Submitted</div><div class="metric-value" id="decSubmitted" style="color:var(--lime);">—</div><div class="metric-sub">Orders submitted</div></div>
+    <div class="metric-card"><div class="metric-label">Rejected / Skipped</div><div class="metric-value" id="decRejected" style="color:var(--amber);">—</div><div class="metric-sub">Blocked by filters</div></div>
+    <div class="metric-card"><div class="metric-label">Closed</div><div class="metric-value" id="decClosed">—</div><div class="metric-sub">Position exits</div></div>
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Real Paper Decision Timeline</div><div class="section-sub">Alpaca paper decisions only. Seed/backtest events are not mixed into this table.</div></div><span class="status-pill" id="decLiveStatus">Loading</span></div>
+    <div id="decEmpty" class="read-only-note">No real paper decision events yet.</div>
+    <div id="decTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Time</th><th>Symbol</th><th>Event</th><th>Strategy</th><th class="num">Confidence</th><th>Reason</th></tr></thead>
+      <tbody id="decBody"></tbody>
+    </table></div>
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Seed Decision Baseline</div><div class="section-sub">Generated strategy verdicts kept below for background context only.</div></div></div>
+    <div class="decision-timeline">{items}</div>
+  </div>
 </div>"""
 
     # ── JAVASCRIPT ───────────────────────────────────────────────────────
@@ -1686,6 +1735,8 @@ function refreshPageData(page) {{
   }} else if (page === 'portfolio') {{
     loadPortfolioData();
     ganttLoad();
+  }} else if (['quantum', 'bots', 'performance', 'learning', 'regime', 'decisions'].includes(page)) {{
+    refreshInsightPage(page);
   }}
 }}
 
@@ -1759,6 +1810,342 @@ function sortTable(col) {{
     return asc ? aText.localeCompare(bText) : bText.localeCompare(aText);
   }});
   rows.forEach(function(r) {{ tbody.appendChild(r); }});
+}}
+
+// ── Operator Insight Pages ─────────────────────────────────────
+var _insightCache = {{state:null, journal:null, ledger:null, fetchedAt:0}};
+var _insightInFlight = false;
+
+function escHtml(txt) {{
+  return String(txt === undefined || txt === null ? '' : txt)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}}
+
+function shortText(txt, maxLen) {{
+  txt = String(txt || '').trim();
+  maxLen = maxLen || 160;
+  return txt.length > maxLen ? txt.slice(0, maxLen) + '...' : txt;
+}}
+
+function pct(n) {{
+  if (n === null || n === undefined || isNaN(Number(n))) return '—';
+  return Number(n).toFixed(1) + '%';
+}}
+
+function signedMoney(n) {{
+  n = Number(n || 0);
+  return (n >= 0 ? '+' : '') + fmtUSD(n);
+}}
+
+function plColor(n) {{
+  return Number(n || 0) >= 0 ? 'var(--lime)' : 'var(--red)';
+}}
+
+function setStatusPill(id, text, cls) {{
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'status-pill ' + (cls || '');
+}}
+
+async function loadInsightData(force) {{
+  if (!force && _insightCache.fetchedAt && (Date.now() - _insightCache.fetchedAt) < 5000) return _insightCache;
+  if (_insightInFlight) return _insightCache;
+  _insightInFlight = true;
+  try {{
+    var state = await apiGet('/api/intraday/state').catch(function() {{ return {{symbols: {{}}}}; }});
+    var journal = await apiGet('/api/trade-journal?limit=200').catch(function() {{ return {{events: []}}; }});
+    var ledger = await apiGet('/api/alpaca/trade-ledger?limit=500').catch(function() {{ return {{rows: [], summary: {{}}}}; }});
+    _insightCache = {{state: state, journal: journal, ledger: ledger, fetchedAt: Date.now()}};
+  }} finally {{
+    _insightInFlight = false;
+  }}
+  return _insightCache;
+}}
+
+function groupLedger(rows, key) {{
+  var out = {{}};
+  (rows || []).forEach(function(r) {{
+    var k = r[key] || 'unknown';
+    if (!out[k]) out[k] = {{key:k, trades:0, wins:0, losses:0, net:0, fees:0}};
+    var row = out[k];
+    var net = Number(r.net_pl || 0);
+    row.trades += 1;
+    row.net += net;
+    row.fees += Number(r.total_fees || 0);
+    if (net > 0) row.wins += 1;
+    if (net < 0) row.losses += 1;
+  }});
+  return Object.values(out).sort(function(a,b) {{ return b.net - a.net; }});
+}}
+
+function actionForGroup(g) {{
+  var wr = g.trades ? g.wins / g.trades * 100 : 0;
+  var avg = g.trades ? g.net / g.trades : 0;
+  if (g.trades < 3) return {{label:'Collect more', cls:'warn', reason:'Too few closed trades for a real conclusion'}};
+  if (g.net > 0 && wr >= 50 && avg > 0) return {{label:'Eligible boost', cls:'ok', reason:'Positive net after estimated fees'}};
+  if (g.net < 0 && g.trades >= 3) return {{label:'Downweight', cls:'danger', reason:'Negative net paper result after estimated fees'}};
+  return {{label:'Monitor', cls:'warn', reason:'Mixed evidence'}};
+}}
+
+async function renderStrategyScorecard(force) {{
+  var data = await loadInsightData(force);
+  var rows = (data.ledger && data.ledger.rows) || [];
+  var groups = groupLedger(rows, 'strategy');
+  var body = document.getElementById('scoreRealBody');
+  var table = document.getElementById('scoreRealTable');
+  var empty = document.getElementById('scoreRealEmpty');
+  if (!body || !table || !empty) return;
+  setStatusPill('scoreLiveStatus', rows.length ? 'Real ledger active' : 'Seed only', rows.length ? 'ok' : 'warn');
+  setCardText('scoreRealStrategies', groups.length ? String(groups.length) : '0');
+  var review = groups.filter(function(g) {{ return actionForGroup(g).label !== 'Eligible boost'; }}).length;
+  setCardText('scoreNeedsReview', String(review));
+  if (!groups.length) {{
+    table.style.display = 'none';
+    empty.style.display = 'block';
+    setCardText('scoreBestStrategy', '—');
+    var sub = document.getElementById('scoreBestStrategySub');
+    if (sub) sub.textContent = 'Waiting for closed trades';
+    return;
+  }}
+  empty.style.display = 'none';
+  table.style.display = 'block';
+  var best = groups[0];
+  setCardText('scoreBestStrategy', best.key || 'unknown');
+  var bestSub = document.getElementById('scoreBestStrategySub');
+  if (bestSub) bestSub.textContent = signedMoney(best.net) + ' net after fees';
+  body.innerHTML = groups.map(function(g) {{
+    var wr = g.trades ? g.wins / g.trades * 100 : 0;
+    var avg = g.trades ? g.net / g.trades : 0;
+    var a = actionForGroup(g);
+    return '<tr>' +
+      '<td><strong>' + escHtml(g.key) + '</strong></td>' +
+      '<td class="num">' + g.trades + '</td>' +
+      '<td class="num" style="color:' + plColor(g.net) + ';font-weight:800;">' + signedMoney(g.net) + '</td>' +
+      '<td class="num">' + pct(wr) + '</td>' +
+      '<td class="num" style="color:' + plColor(avg) + ';">' + signedMoney(avg) + '</td>' +
+      '<td><span class="status-pill ' + a.cls + '">' + a.label + '</span></td>' +
+      '<td>' + escHtml(a.reason) + '</td>' +
+      '</tr>';
+  }}).join('');
+}}
+
+async function renderSignalBoard(force) {{
+  var data = await loadInsightData(force);
+  var symbols = Object.values((data.state && data.state.symbols) || {{}});
+  var body = document.getElementById('signalsBody');
+  var table = document.getElementById('signalsTable');
+  var empty = document.getElementById('signalsEmpty');
+  if (!body || !table || !empty) return;
+  var tradable = symbols.filter(function(s) {{ return !!s.accepted; }}).length;
+  var rejected = symbols.length - tradable;
+  setCardText('signalsSymbols', String(symbols.length));
+  setCardText('signalsTradable', String(tradable));
+  setCardText('signalsRejected', String(rejected));
+  setStatusPill('signalsLiveStatus', symbols.length ? 'Live state loaded' : 'No state yet', symbols.length ? 'ok' : 'warn');
+  if (!symbols.length) {{
+    table.style.display = 'none';
+    empty.style.display = 'block';
+    return;
+  }}
+  empty.style.display = 'none';
+  table.style.display = 'block';
+  symbols.sort(function(a,b) {{ return String(a.symbol || '').localeCompare(String(b.symbol || '')); }});
+  body.innerHTML = symbols.map(function(s) {{
+    var regime = (s.setup_regime && s.setup_regime.label) || (s.trade_regime && s.trade_regime.label) || 'unknown';
+    var signals = s.strategy_signals || [];
+    var top = signals.length ? signals.slice().sort(function(a,b) {{ return Number(b.confidence || 0) - Number(a.confidence || 0); }})[0] : {{}};
+    var action = s.accepted ? (String(s.action || 'buy').toUpperCase()) : 'SKIP';
+    var cls = s.accepted ? 'ok' : 'warn';
+    return '<tr>' +
+      '<td><strong>' + escHtml(s.symbol || '?') + '</strong><span class="muted-line">' + escHtml((s.evaluated_at || '').replace('T',' ').slice(0,19)) + '</span></td>' +
+      '<td><span class="status-pill ' + cls + '">' + escHtml(action) + '</span></td>' +
+      '<td class="num">' + Number(s.confidence || 0).toFixed(2) + '</td>' +
+      '<td>' + escHtml(top.strategy || 'none') + '<span class="muted-line">' + escHtml(top.timeframe || '') + '</span></td>' +
+      '<td>' + escHtml(regime) + '</td>' +
+      '<td>' + escHtml(shortText(s.reason || 'No reason stored', 220)) + '</td>' +
+      '</tr>';
+  }}).join('');
+}}
+
+async function renderPerformancePage(force) {{
+  var data = await loadInsightData(force);
+  var rows = (data.ledger && data.ledger.rows) || [];
+  var summary = (data.ledger && data.ledger.summary) || {{}};
+  var fees = rows.reduce(function(acc, r) {{ return acc + Number(r.total_fees || 0); }}, 0);
+  setCardText('perfTrades', String(summary.trades || rows.length || 0));
+  setCardText('perfNet', signedMoney(summary.net_pl || 0), plColor(summary.net_pl || 0));
+  setCardText('perfWinRate', summary.win_rate === null || summary.win_rate === undefined ? '—' : pct(summary.win_rate));
+  setCardText('perfFees', fmtUSD(fees), 'var(--amber)');
+
+  function fillGrouped(kind, key) {{
+    var groups = groupLedger(rows, key);
+    var table = document.getElementById('perf' + kind + 'Table');
+    var empty = document.getElementById('perf' + kind + 'Empty');
+    var body = document.getElementById('perf' + kind + 'Body');
+    if (!table || !empty || !body) return;
+    if (!groups.length) {{
+      table.style.display = 'none';
+      empty.style.display = 'block';
+      return;
+    }}
+    empty.style.display = 'none';
+    table.style.display = 'block';
+    body.innerHTML = groups.map(function(g) {{
+      var wr = g.trades ? g.wins / g.trades * 100 : 0;
+      var avg = g.trades ? g.net / g.trades : 0;
+      var read = actionForGroup(g);
+      var maybeRead = kind === 'Strategy'
+        ? '<td><span class="status-pill ' + read.cls + '">' + read.label + '</span></td>'
+        : '';
+      return '<tr>' +
+        '<td><strong>' + escHtml(g.key) + '</strong></td>' +
+        '<td class="num">' + g.trades + '</td>' +
+        '<td class="num" style="color:' + plColor(g.net) + ';font-weight:800;">' + signedMoney(g.net) + '</td>' +
+        '<td class="num">' + pct(wr) + '</td>' +
+        '<td class="num" style="color:' + plColor(avg) + ';">' + signedMoney(avg) + '</td>' +
+        '<td class="num" style="color:var(--amber);">' + fmtUSD(g.fees) + '</td>' +
+        maybeRead +
+        '</tr>';
+    }}).join('');
+  }}
+  fillGrouped('Strategy', 'strategy');
+  fillGrouped('Symbol', 'symbol');
+}}
+
+async function renderLearningPage(force) {{
+  var data = await loadInsightData(force);
+  var groups = groupLedger((data.ledger && data.ledger.rows) || [], 'strategy');
+  var trusted = groups.filter(function(g) {{ return g.trades >= 10; }}).length;
+  var collecting = groups.filter(function(g) {{ return g.trades < 10; }}).length;
+  var down = groups.filter(function(g) {{ return actionForGroup(g).label === 'Downweight'; }}).length;
+  setCardText('learnTrusted', String(trusted));
+  setCardText('learnCollecting', String(collecting));
+  setCardText('learnDownweight', String(down));
+  setStatusPill('learnLiveStatus', groups.length ? 'Real ledger active' : 'Collecting', groups.length ? 'ok' : 'warn');
+  var table = document.getElementById('learnRealTable');
+  var empty = document.getElementById('learnRealEmpty');
+  var body = document.getElementById('learnRealBody');
+  if (!table || !empty || !body) return;
+  if (!groups.length) {{
+    table.style.display = 'none';
+    empty.style.display = 'block';
+    return;
+  }}
+  empty.style.display = 'none';
+  table.style.display = 'block';
+  body.innerHTML = groups.map(function(g) {{
+    var wr = g.trades ? g.wins / g.trades * 100 : 0;
+    var avg = g.trades ? g.net / g.trades : 0;
+    var a = actionForGroup(g);
+    return '<tr>' +
+      '<td><strong>' + escHtml(g.key) + '</strong></td>' +
+      '<td class="num">' + g.trades + '</td>' +
+      '<td class="num" style="color:' + plColor(g.net) + ';font-weight:800;">' + signedMoney(g.net) + '</td>' +
+      '<td class="num">' + pct(wr) + '</td>' +
+      '<td class="num" style="color:' + plColor(avg) + ';">' + signedMoney(avg) + '</td>' +
+      '<td><span class="status-pill ' + a.cls + '">' + a.label + '</span></td>' +
+      '<td>' + escHtml(a.reason) + '</td>' +
+      '</tr>';
+  }}).join('');
+}}
+
+async function renderRegimePage(force) {{
+  var data = await loadInsightData(force);
+  var symbols = Object.values((data.state && data.state.symbols) || {{}});
+  var body = document.getElementById('regimeLiveBody');
+  var table = document.getElementById('regimeLiveTable');
+  var empty = document.getElementById('regimeLiveEmpty');
+  if (!body || !table || !empty) return;
+  var trending = 0, choppy = 0, highVol = 0;
+  symbols.forEach(function(s) {{
+    var rg = (s.setup_regime && s.setup_regime.label) || (s.trade_regime && s.trade_regime.label) || 'unknown';
+    if (rg.indexOf('trending') >= 0) trending++;
+    if (rg.indexOf('choppy') >= 0 || rg.indexOf('range') >= 0 || rg.indexOf('mean') >= 0) choppy++;
+    var atr = Number((s.features && s.features.atr_pct_15m) || (s.trade_regime && s.trade_regime.atr_pct) || 0);
+    if (rg.indexOf('high_vol') >= 0 || atr >= 8) highVol++;
+  }});
+  setCardText('regimeLiveCount', String(symbols.length));
+  setCardText('regimeTrending', String(trending));
+  setCardText('regimeChoppy', String(choppy));
+  setCardText('regimeHighVol', String(highVol));
+  setStatusPill('regimeLiveStatus', symbols.length ? 'Live state loaded' : 'No state yet', symbols.length ? 'ok' : 'warn');
+  if (!symbols.length) {{
+    table.style.display = 'none';
+    empty.style.display = 'block';
+    return;
+  }}
+  empty.style.display = 'none';
+  table.style.display = 'block';
+  symbols.sort(function(a,b) {{ return String(a.symbol || '').localeCompare(String(b.symbol || '')); }});
+  body.innerHTML = symbols.map(function(s) {{
+    var r = s.setup_regime || s.trade_regime || {{}};
+    var tr = s.trade_regime || {{}};
+    var conf = Number(r.confidence || s.confidence || 0);
+    if (conf <= 1) conf *= 100;
+    var atr = Number((s.features && s.features.atr_pct_15m) || tr.atr_pct || 0);
+    var vol = Number(tr.volume_ratio || (s.features && s.features.volume_ratio_15m) || 0);
+    return '<tr>' +
+      '<td><strong>' + escHtml(s.symbol || '?') + '</strong><span class="muted-line">' + escHtml((s.evaluated_at || '').replace('T',' ').slice(0,19)) + '</span></td>' +
+      '<td>' + escHtml(r.label || 'unknown') + '</td>' +
+      '<td class="num">' + pct(conf) + '</td>' +
+      '<td>' + escHtml(r.trend_bias || tr.trend_bias || 'unknown') + '</td>' +
+      '<td class="num">' + atr.toFixed(2) + '%</td>' +
+      '<td class="num">' + vol.toFixed(2) + 'x</td>' +
+      '<td>' + escHtml(shortText(r.reason || s.reason || 'No regime reason stored', 220)) + '</td>' +
+      '</tr>';
+  }}).join('');
+}}
+
+async function renderDecisionPage(force) {{
+  var data = await loadInsightData(force);
+  var events = (data.journal && data.journal.events) || [];
+  var submitted = events.filter(function(e) {{ return e.event === 'order_submitted'; }}).length;
+  var rejected = events.filter(function(e) {{ return e.event === 'entry_rejected' || e.event === 'target_downweighted'; }}).length;
+  var closed = events.filter(function(e) {{ return e.event === 'position_closed'; }}).length;
+  setCardText('decEvents', String(events.length));
+  setCardText('decSubmitted', String(submitted));
+  setCardText('decRejected', String(rejected));
+  setCardText('decClosed', String(closed));
+  setStatusPill('decLiveStatus', events.length ? 'Real journal active' : 'No events', events.length ? 'ok' : 'warn');
+  var table = document.getElementById('decTable');
+  var empty = document.getElementById('decEmpty');
+  var body = document.getElementById('decBody');
+  if (!table || !empty || !body) return;
+  if (!events.length) {{
+    table.style.display = 'none';
+    empty.style.display = 'block';
+    return;
+  }}
+  empty.style.display = 'none';
+  table.style.display = 'block';
+  body.innerHTML = events.slice(0, 100).map(function(e) {{
+    var event = e.event || 'event';
+    var cls = event === 'order_submitted' ? 'ok' : event === 'position_closed' ? '' : 'warn';
+    var conf = e.confidence !== undefined && e.confidence !== null ? Number(e.confidence).toFixed(2) : '—';
+    var reason = e.reason || e.entry_reason || (e.signal && e.signal.reason) || '';
+    return '<tr>' +
+      '<td>' + escHtml((e.timestamp || '').replace('T',' ').slice(0,19)) + '</td>' +
+      '<td><strong>' + escHtml(e.symbol || '—') + '</strong></td>' +
+      '<td><span class="status-pill ' + cls + '">' + escHtml(event) + '</span></td>' +
+      '<td>' + escHtml(e.strategy || '—') + '</td>' +
+      '<td class="num">' + conf + '</td>' +
+      '<td>' + escHtml(shortText(reason || 'No reason stored', 260)) + '</td>' +
+      '</tr>';
+  }}).join('');
+}}
+
+async function refreshInsightPage(page, force) {{
+  if (page === 'quantum') await renderStrategyScorecard(force);
+  else if (page === 'bots') await renderSignalBoard(force);
+  else if (page === 'performance') await renderPerformancePage(force);
+  else if (page === 'learning') await renderLearningPage(force);
+  else if (page === 'regime') await renderRegimePage(force);
+  else if (page === 'decisions') await renderDecisionPage(force);
 }}
 
 // ── Chart Tooltip Config ────────────────────────────────────────
@@ -2057,7 +2444,8 @@ function fmtUSD(n) {{
   if (n === null || n === undefined || isNaN(n)) return '—';
   var val = Number(n);
   if (Math.abs(val) < 0.005) val = 0;  // avoid $-0.00
-  return '$' + val.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+  var sign = val < 0 ? '-' : '';
+  return sign + '$' + Math.abs(val).toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
 }}
 // Compact USD for large numbers in tight cards
 function fmtUSDCompact(n) {{
