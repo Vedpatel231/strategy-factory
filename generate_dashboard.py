@@ -261,8 +261,9 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 @keyframes fadeIn{{from{{opacity:0;transform:translateY(10px);}}to{{opacity:1;transform:translateY(0);}}}}
 @keyframes pulse{{0%,100%{{opacity:1;}}50%{{opacity:0.5;}}}}
 
-.page-title{{font-size:2em;font-weight:700;margin-bottom:22px;display:flex;align-items:center;gap:14px;color:var(--text);letter-spacing:0;}}
+.page-title{{font-size:2em;font-weight:700;margin-bottom:22px;display:flex;align-items:center;gap:14px;color:var(--text);letter-spacing:0;flex-wrap:wrap;min-width:0;}}
 .page-title .accent{{color:var(--cyan);}}
+.data-badge{{font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;line-height:1.35;white-space:normal;max-width:100%;}}
 .page-sub{{color:var(--text-dim);margin-top:-12px;margin-bottom:24px;max-width:820px;}}
 .section-card{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;margin-bottom:24px;overflow:hidden;}}
 .section-header{{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;}}
@@ -416,9 +417,9 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
 /* P&L CALENDAR */
 .pnl-calendar{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;margin-bottom:28px;}}
-.pnl-calendar-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;}}
+.pnl-calendar-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:12px;flex-wrap:wrap;}}
 .pnl-calendar-header h3{{font-size:1.1em;color:var(--text);font-weight:600;}}
-.pnl-calendar-nav{{display:flex;align-items:center;gap:12px;}}
+.pnl-calendar-nav{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}}
 .pnl-calendar-nav button{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 14px;cursor:pointer;color:var(--text-dim);font-size:0.9em;font-weight:500;transition:all 0.2s;}}
 .pnl-calendar-nav button:hover{{border-color:var(--cyan);color:var(--cyan);}}
 .pnl-calendar-nav .cal-month-label{{font-size:1em;font-weight:600;color:var(--cyan);min-width:140px;text-align:center;font-family:'Courier New',monospace;}}
@@ -477,6 +478,17 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   .last-refresh-badge{{left:90px;right:20px;}}
   .chart-grid,.portfolio-grid{{grid-template-columns:1fr;}}
   .bot-grid{{grid-template-columns:1fr;}}
+}}
+@media(max-width:520px){{
+  .page-title{{font-size:1.65em;gap:10px;}}
+  .data-badge{{font-size:0.48em;}}
+  .pnl-calendar-header{{align-items:flex-start;}}
+  .pnl-calendar-nav{{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;}}
+  .pnl-calendar-nav .cal-month-label{{grid-column:1 / -1;grid-row:1;min-width:0;text-align:left;}}
+  .pnl-calendar-nav button{{grid-row:2;width:100%;padding:6px 8px;}}
+  .pnl-calendar{{padding:18px;}}
+  .pnl-calendar-grid{{gap:3px;}}
+  .pnl-cal-cell{{min-height:56px;padding:6px 3px;}}
 }}
 </style>
 </head>
@@ -1043,7 +1055,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </tr>"""
 
         return f"""<div class="page" id="quantum">
-  <div class="page-title"><span class="accent">⚛️</span> Strategy Scorecard <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
+  <div class="page-title"><span class="accent">⚛️</span> Strategy Scorecard <span class="data-badge">BACKTEST DATA</span></div>
   <div class="filter-buttons">
     <button class="filter-btn active" onclick="filterQuantum('ALL')">Show All</button>
     <button class="filter-btn" onclick="filterQuantum('PAUSE')">Pause</button>
@@ -1114,7 +1126,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     # ── PAGE: PERFORMANCE ────────────────────────────────────────────────
     def _page_performance(self, evaluations):
         return """<div class="page" id="performance">
-  <div class="page-title"><span class="accent">📈</span> Performance Analytics <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
+  <div class="page-title"><span class="accent">📈</span> Performance Analytics <span class="data-badge">BACKTEST DATA</span></div>
   <div class="chart-grid">
     <div class="chart-box"><h3>Cumulative P&L (Top Strategies)</h3><canvas id="pnlChart"></canvas></div>
     <div class="chart-box"><h3>Win Rate Distribution</h3><canvas id="winrateChart"></canvas></div>
@@ -1184,7 +1196,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>"""
 
         return f"""<div class="page" id="learning">
-  <div class="page-title"><span class="accent">🧠</span> Learning Engine <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">SEED SCORES + REAL PAPER TRACKING</span></div>
+  <div class="page-title"><span class="accent">🧠</span> Learning Engine <span class="data-badge">SEED SCORES + REAL PAPER TRACKING</span></div>
   <div style="background:rgba(255,183,0,0.08);border:1px solid rgba(255,183,0,0.25);border-radius:8px;padding:14px 16px;margin-bottom:18px;color:var(--text-dim);">
     <strong style="color:var(--amber);">Important:</strong> Seed / Simulated Score comes from generated strategy history and is only an initial ranking. Real Paper Score is calculated from Alpaca paper journal exits and should become the trusted score after enough closed trades exist.
   </div>
@@ -1212,7 +1224,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         vol_ratio = self._fmt_metric(details.get("coefficient_of_variation", details.get("volatility_ratio")), 2)
 
         return f"""<div class="page" id="regime">
-  <div class="page-title"><span class="accent">🌊</span> Market Regime Analysis <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
+  <div class="page-title"><span class="accent">🌊</span> Market Regime Analysis <span class="data-badge">BACKTEST DATA</span></div>
   <div class="regime-badge-large regime-{regime}">
     {emoji} {regime.replace('_',' ').title()} — {confidence:.0f}% Confidence
   </div>
@@ -1249,7 +1261,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>"""
 
         return f"""<div class="page" id="decisions">
-  <div class="page-title"><span class="accent">📋</span> Decision Log <span style="font-size:0.5em;background:rgba(255,170,0,0.15);color:var(--amber);padding:3px 10px;border-radius:8px;vertical-align:middle;">BACKTEST DATA</span></div>
+  <div class="page-title"><span class="accent">📋</span> Decision Log <span class="data-badge">BACKTEST DATA</span></div>
   <div class="decision-timeline">{items}</div>
 </div>"""
 
@@ -1424,6 +1436,7 @@ var _alpacaAccountFetchedAt = 0;
 var _alpacaAccountPromise = null;
 var _alpacaPositionsPromise = null;
 var _lastLivePositions = null;
+var _alpacaConfiguredCache = null;
 
 function money(n) {{
   return '$' + Number(n || 0).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}});
@@ -1437,8 +1450,20 @@ function setCardText(id, val, color) {{
   autoSizeCardValue(el);
 }}
 
+async function isAlpacaConfigured() {{
+  if (_alpacaConfiguredCache !== null) return _alpacaConfiguredCache;
+  try {{
+    var status = await apiGet('/api/alpaca/status');
+    _alpacaConfiguredCache = !!status.configured;
+  }} catch(e) {{
+    _alpacaConfiguredCache = false;
+  }}
+  return _alpacaConfiguredCache;
+}}
+
 async function getAlpacaAccountCached(maxAgeMs) {{
   maxAgeMs = maxAgeMs === undefined ? 10000 : maxAgeMs;
+  if (!(await isAlpacaConfigured())) throw new Error('Alpaca API keys are not configured');
   if (_alpacaAccountCache && (Date.now() - _alpacaAccountFetchedAt) < maxAgeMs) return _alpacaAccountCache;
   if (_alpacaAccountPromise) return _alpacaAccountPromise;
   _alpacaAccountPromise = apiGet('/api/alpaca/account').then(function(a) {{
@@ -1454,6 +1479,9 @@ async function getAlpacaAccountCached(maxAgeMs) {{
 }}
 
 async function getLivePositionsSnapshot() {{
+  if (!(await isAlpacaConfigured())) {{
+    return {{positions: [], summary: {{count: 0, total_market_value: 0, total_unrealized_pl: 0}}, configured: false}};
+  }}
   if (_alpacaPositionsPromise) return _alpacaPositionsPromise;
   _alpacaPositionsPromise = apiGet('/api/alpaca/positions?live=1').then(function(pd) {{
     _lastLivePositions = pd;
@@ -2501,7 +2529,7 @@ function ganttSetDefaultDates() {{
 
 async function ganttLoad() {{
   try {{
-    var data = await apiGet('/api/alpaca/orders?limit=500&status=closed');
+    var data = await apiGet((await isAlpacaConfigured()) ? '/api/alpaca/orders?limit=500&status=closed' : '/api/broker/orders?limit=500');
     if (!data.orders || data.orders.length === 0) return;
     window._ganttOrders = data.orders;
     ganttRender();
@@ -2607,8 +2635,12 @@ var calMonth = new Date().getMonth(); // 0-indexed
 
 async function calLoadData() {{
   try {{
-    var json = await apiGet('/api/alpaca/daily-pnl');
-    calData = json.snapshots || {{}};
+    if (await isAlpacaConfigured()) {{
+      var json = await apiGet('/api/alpaca/daily-pnl');
+      calData = json.snapshots || {{}};
+    }} else {{
+      throw new Error('Alpaca API keys are not configured');
+    }}
   }} catch (e) {{
     try {{
       var fallback = await apiGet('/api/broker/daily-pnl');
