@@ -7,14 +7,42 @@ of real paper-trading truth. Seeded/backtest metrics stay separate.
 
 import json
 import os
+import csv
 from datetime import datetime, timezone
 
 import config
 
 JOURNAL_FILE = os.path.join(config.DATA_DIR, "trade_journal.json")
 POSITION_STATE_FILE = os.path.join(config.DATA_DIR, "position_risk_state.json")
+TRADE_LEDGER_CSV = os.path.join(config.DATA_DIR, "alpaca_trade_ledger.csv")
 ALPACA_CRYPTO_MAKER_FEE_BPS = float(os.environ.get("ALPACA_CRYPTO_MAKER_FEE_BPS", "15"))
 ALPACA_CRYPTO_TAKER_FEE_BPS = float(os.environ.get("ALPACA_CRYPTO_TAKER_FEE_BPS", "25"))
+
+TRADE_LEDGER_FIELDS = [
+    "trade_id",
+    "closed_at",
+    "opened_at",
+    "symbol",
+    "strategy",
+    "regime",
+    "confidence",
+    "bot_names",
+    "entry_reason",
+    "exit_reason",
+    "order_type",
+    "entry_price",
+    "exit_price",
+    "entry_notional",
+    "exit_notional",
+    "gross_pl",
+    "gross_pl_pct",
+    "entry_fee",
+    "exit_fee",
+    "total_fees",
+    "net_pl",
+    "net_pl_pct",
+    "fee_drag_pct",
+]
 
 
 def _utcnow():
@@ -49,6 +77,8 @@ class TradeJournal:
         event.setdefault("timestamp", _utcnow())
         events.append(event)
         _write_json(self.journal_file, events[-2000:])
+        if event.get("event") == "position_closed":
+            append_closed_trade_to_ledger(event)
         return event
 
     def recent(self, limit=200):
@@ -163,6 +193,148 @@ def _as_float(value, default=0.0):
 
 def _round_money(value):
     return round(_as_float(value), 2)
+
+
+def _trade_id(row):
+    return "|".join([
+        str(row.get("closed_at", "")),
+        str(row.get("symbol", "")),
+        str(row.get("entry_notional", "")),
+        str(row.get("exit_notional", "")),
+    ])
+
+
+def _closed_trade_row_from_event(event, fallback_entry=None):
+    symbol = event.get("symbol")
+    if not symbol:
+        return None
+    cfg = alpaca_fee_config()
+    order_type = cfg["default_order_type"]
+    entry = event.get("entry_state") or fallback_entry or {}
+    order = event.get("order") or {}
+
+    entry_notional = _as_float(entry.get("entry_notional") or entry.get("notional"))
+    entry_price = _as_float(entry.get("entry_price") or order.get("entry_price"))
+    exit_notional = _as_float(event.get("exit_notional") or order.get("notional"))
+    exit_price = _as_float(event.get("exit_price") or order.get("filled_avg_price"))
+    pl_pct = _as_float(event.get("unrealized_pl_pct"))
+
+    if not exit_notional and entry_notional:
+        exit_notional = entry_notional * (1 + pl_pct / 100.0)
+    if not exit_price and entry_price:
+        exit_price = entry_price * (1 + pl_pct / 100.0)
+    if not entry_notional and exit_notional and pl_pct > -99:
+        entry_notional = exit_notional / (1 + pl_pct / 100.0)
+    if not entry_notional and not exit_notional:
+        return None
+
+    gross_pl = exit_notional - entry_notional
+    entry_fee = estimate_alpaca_fee(entry_notional, order_type)
+    exit_fee = estimate_alpaca_fee(exit_notional, order_type)
+    total_fees = entry_fee + exit_fee
+    net_pl = gross_pl - total_fees
+    bot_names = entry.get("bot_names") or event.get("bot_names") or []
+
+    row = {
+        "closed_at": event.get("timestamp"),
+        "opened_at": entry.get("opened_at"),
+        "symbol": symbol,
+        "strategy": entry.get("strategy") or event.get("strategy") or "unknown",
+        "regime": entry.get("regime") or event.get("regime") or "unknown",
+        "confidence": entry.get("confidence") or event.get("confidence"),
+        "bot_names": ";".join(str(b) for b in bot_names),
+        "entry_reason": entry.get("entry_reason") or event.get("entry_reason") or "",
+        "exit_reason": event.get("reason", ""),
+        "order_type": order_type,
+        "entry_price": round(entry_price, 6) if entry_price else 0,
+        "exit_price": round(exit_price, 6) if exit_price else 0,
+        "entry_notional": _round_money(entry_notional),
+        "exit_notional": _round_money(exit_notional),
+        "gross_pl": _round_money(gross_pl),
+        "entry_fee": _round_money(entry_fee),
+        "exit_fee": _round_money(exit_fee),
+        "total_fees": _round_money(total_fees),
+        "net_pl": _round_money(net_pl),
+        "gross_pl_pct": round((gross_pl / entry_notional) * 100, 2) if entry_notional else 0,
+        "net_pl_pct": round((net_pl / entry_notional) * 100, 2) if entry_notional else 0,
+        "fee_drag_pct": round((total_fees / entry_notional) * 100, 2) if entry_notional else 0,
+    }
+    row["trade_id"] = _trade_id(row)
+    return row
+
+
+def _read_trade_ledger_rows(path=TRADE_LEDGER_CSV):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, newline="") as f:
+            return list(csv.DictReader(f))
+    except Exception:
+        return []
+
+
+def _write_trade_ledger_rows(rows, path=TRADE_LEDGER_CSV):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=TRADE_LEDGER_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in TRADE_LEDGER_FIELDS})
+    os.replace(tmp, path)
+
+
+def append_closed_trade_to_ledger(event, path=TRADE_LEDGER_CSV):
+    row = _closed_trade_row_from_event(event)
+    if not row:
+        return None
+    rows = _read_trade_ledger_rows(path)
+    seen = {r.get("trade_id") for r in rows}
+    if row["trade_id"] not in seen:
+        rows.append(row)
+        _write_trade_ledger_rows(rows, path)
+    return row
+
+
+def rebuild_trade_ledger_from_journal(limit=2000, path=TRADE_LEDGER_CSV):
+    events = list(reversed(TradeJournal().recent(limit=limit)))
+    fallback_entries = {}
+    rows = []
+    seen = set()
+    for event in events:
+        event_type = event.get("event")
+        symbol = event.get("symbol")
+        if not symbol:
+            continue
+        if event_type == "order_submitted" and event.get("side") == "buy":
+            order = event.get("order") or {}
+            fallback_entries[symbol] = {
+                "symbol": symbol,
+                "strategy": event.get("strategy"),
+                "regime": event.get("regime"),
+                "confidence": event.get("confidence"),
+                "entry_price": order.get("filled_avg_price") or 0,
+                "entry_notional": event.get("notional") or order.get("notional") or 0,
+                "opened_at": event.get("timestamp"),
+                "entry_reason": event.get("entry_reason"),
+                "bot_names": event.get("bot_names") or [],
+            }
+            continue
+        if event_type != "position_closed":
+            continue
+        row = _closed_trade_row_from_event(event, fallback_entries.get(symbol))
+        if row and row["trade_id"] not in seen:
+            seen.add(row["trade_id"])
+            rows.append(row)
+    _write_trade_ledger_rows(rows, path)
+    return rows
+
+
+def load_trade_ledger(limit=500):
+    rows = _read_trade_ledger_rows()
+    if limit:
+        return list(reversed(rows[-limit:]))
+    return rows
 
 
 def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None):

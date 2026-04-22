@@ -739,7 +739,12 @@ def position_risk():
 def alpaca_fee_analysis():
     """Return estimated Alpaca crypto fees and net P&L views."""
     try:
-        from trade_journal import summarize_fee_analysis, load_position_risk_state
+        from trade_journal import (
+            TRADE_LEDGER_CSV,
+            load_position_risk_state,
+            rebuild_trade_ledger_from_journal,
+            summarize_fee_analysis,
+        )
         positions = []
         live_prices = request.args.get("live", "0").lower() in ("1", "true", "yes")
         try:
@@ -748,13 +753,52 @@ def alpaca_fee_analysis():
                 positions = client.get_positions(live_prices=live_prices)
         except Exception:
             positions = []
-        return jsonify(summarize_fee_analysis(
+        analysis = summarize_fee_analysis(
             open_positions=positions,
             risk_state=load_position_risk_state(),
-        ))
+        )
+        try:
+            rebuild_trade_ledger_from_journal()
+        except Exception as ledger_error:
+            logger.warning(f"Trade ledger rebuild failed: {ledger_error}")
+        analysis["trade_ledger_csv"] = TRADE_LEDGER_CSV
+        return jsonify(analysis)
     except Exception as e:
         logger.error(f"Alpaca fee analysis failed: {e}\n{traceback.format_exc()}")
         return jsonify({"error": str(e), "summary": {}, "closed_trades": [], "open_trades": []})
+
+
+@app.route("/api/alpaca/trade-ledger")
+@require_auth
+def alpaca_trade_ledger():
+    """Return the persistent fee-aware trade ledger used for audits."""
+    try:
+        from trade_journal import TRADE_LEDGER_CSV, load_trade_ledger, rebuild_trade_ledger_from_journal
+        rebuild_trade_ledger_from_journal()
+        limit = int(request.args.get("limit", 500))
+        rows = load_trade_ledger(limit=limit)
+        net_values = []
+        for row in rows:
+            try:
+                net_values.append(float(row.get("net_pl") or 0))
+            except (TypeError, ValueError):
+                net_values.append(0.0)
+        wins = sum(1 for value in net_values if value > 0)
+        losses = sum(1 for value in net_values if value < 0)
+        return jsonify({
+            "path": TRADE_LEDGER_CSV,
+            "rows": rows,
+            "summary": {
+                "trades": len(rows),
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(wins / len(rows) * 100, 1) if rows else None,
+                "net_pl": round(sum(net_values), 2),
+            },
+        })
+    except Exception as e:
+        logger.error(f"Alpaca trade ledger failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e), "path": "", "rows": [], "summary": {}})
 
 
 # ── AUTO-TRADER ENDPOINTS ──────────────────────────────────────────────

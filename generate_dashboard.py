@@ -900,6 +900,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         <div>
           <span style="font-weight:600;font-size:1.1em;">Fee & Net P&L</span>
           <div style="font-size:0.82em;color:var(--text-dim);">Estimated Alpaca crypto fees. Paper trades do not pay real fees, but this shows live-style net results.</div>
+          <div id="alpFeeLedgerPath" style="font-size:0.78em;color:var(--text-dim);margin-top:4px;">CSV ledger: loading...</div>
         </div>
         <button onclick="alpLiveRefreshFeeAnalysis()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
       </div>
@@ -3086,6 +3087,8 @@ async function alpLiveRefreshFeeAnalysis() {{
     setCardText('alpFeeRealizedNet', (net >= 0 ? '+' : '') + fmtUSD(net), net >= 0 ? 'var(--lime)' : 'var(--red)');
     setCardText('alpFeeRealizedFees', fmtUSD(fees), 'var(--amber)');
     setCardText('alpFeeWinRate', s.net_win_rate === null || s.net_win_rate === undefined ? '—' : Number(s.net_win_rate).toFixed(1) + '%');
+    var ledgerEl = document.getElementById('alpFeeLedgerPath');
+    if (ledgerEl && data.trade_ledger_csv) ledgerEl.textContent = 'CSV ledger: ' + data.trade_ledger_csv;
 
     var closed = data.closed_trades || [];
     var emptyEl = document.getElementById('alpFeeClosedEmpty');
