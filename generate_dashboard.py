@@ -237,9 +237,10 @@ class DashboardGenerator:
   --bg:#0a0e27;--card:#1a1f3a;--card-hover:#222850;--border:#2d3561;
   --cyan:#00d4ff;--lime:#39ff14;--amber:#ffb700;--magenta:#ff006e;
   --red:#ff4444;--green:#00dd77;--gray:#6b7394;--text:#e0e6ff;--text-dim:#8892b0;
+  --panel:#151a3a;--panel-soft:rgba(0,212,255,0.045);
 }}
 html,body{{height:100%;}}
-body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden;display:flex;min-height:100vh;}}
+body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden;display:flex;min-height:100vh;font-variant-numeric:tabular-nums;}}
 
 /* SIDEBAR */
 .sidebar{{width:260px;min-height:100vh;background:linear-gradient(180deg,#0d1130 0%,#151a3a 100%);border-right:1px solid var(--border);position:fixed;top:0;left:0;z-index:100;display:flex;flex-direction:column;box-shadow:4px 0 20px rgba(0,0,0,0.4);}}
@@ -254,14 +255,32 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .sidebar-footer{{padding:16px 20px;border-top:1px solid var(--border);font-size:0.7em;color:var(--text-dim);text-align:center;line-height:1.4;}}
 
 /* MAIN */
-.main-content{{margin-left:260px;flex:1;padding:32px 40px;min-height:100vh;min-width:0;max-width:100%;}}
+.main-content{{margin-left:260px;flex:1;padding:96px 40px 32px;min-height:100vh;min-width:0;max-width:100%;}}
 .page{{display:none;animation:fadeIn 0.4s ease;}}
 .page.active{{display:block;}}
 @keyframes fadeIn{{from{{opacity:0;transform:translateY(10px);}}to{{opacity:1;transform:translateY(0);}}}}
 @keyframes pulse{{0%,100%{{opacity:1;}}50%{{opacity:0.5;}}}}
 
-.page-title{{font-size:2.2em;font-weight:700;margin-bottom:28px;display:flex;align-items:center;gap:14px;color:var(--text);}}
+.page-title{{font-size:2em;font-weight:700;margin-bottom:22px;display:flex;align-items:center;gap:14px;color:var(--text);letter-spacing:0;}}
 .page-title .accent{{color:var(--cyan);}}
+.page-sub{{color:var(--text-dim);margin-top:-12px;margin-bottom:24px;max-width:820px;}}
+.section-card{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;margin-bottom:24px;overflow:hidden;}}
+.section-header{{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;}}
+.section-title{{font-size:1.08em;font-weight:700;color:var(--text);}}
+.section-sub{{font-size:0.86em;color:var(--text-dim);margin-top:3px;line-height:1.45;}}
+.status-pill{{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid var(--border);border-radius:999px;background:rgba(10,14,39,0.42);font-size:0.82em;font-weight:700;white-space:nowrap;}}
+.status-pill.ok{{color:var(--lime);border-color:rgba(57,255,20,0.45);background:rgba(57,255,20,0.08);}}
+.status-pill.warn{{color:var(--amber);border-color:rgba(255,183,0,0.45);background:rgba(255,183,0,0.08);}}
+.status-pill.danger{{color:var(--red);border-color:rgba(255,68,68,0.45);background:rgba(255,68,68,0.08);}}
+.metric-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:22px;}}
+.metric-card{{background:rgba(10,14,39,0.42);border:1px solid var(--border);border-radius:8px;padding:18px;min-width:0;}}
+.metric-label{{font-size:0.78em;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;}}
+.metric-value{{font-size:2em;font-weight:750;font-family:'Courier New',monospace;color:var(--cyan);line-height:1.12;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.metric-sub{{font-size:0.82em;color:var(--text-dim);margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.num{{font-family:'Courier New',monospace;font-variant-numeric:tabular-nums;letter-spacing:0;text-align:right;white-space:nowrap;}}
+.text-right{{text-align:right;}}
+.muted-line{{display:block;color:var(--text-dim);font-size:0.78em;margin-top:2px;line-height:1.35;}}
+.read-only-note{{border:1px solid rgba(0,212,255,0.28);background:rgba(0,212,255,0.055);border-radius:8px;padding:12px 14px;color:var(--text-dim);font-size:0.9em;line-height:1.45;}}
 
 /* TOOLTIP */
 .tip{{position:relative;cursor:help;border-bottom:1px dotted var(--text-dim);}}
@@ -273,23 +292,23 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
 /* CARDS */
 .cards-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;margin-bottom:28px;}}
-.card{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;transition:all 0.3s cubic-bezier(0.4,0,0.2,1);position:relative;overflow:hidden;}}
-.card:hover{{transform:translateY(-4px);border-color:var(--cyan);box-shadow:0 8px 24px rgba(0,212,255,0.1);}}
+.card{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;transition:border-color 0.2s,box-shadow 0.2s;position:relative;overflow:hidden;}}
+.card:hover{{border-color:rgba(0,212,255,0.65);box-shadow:0 8px 24px rgba(0,212,255,0.08);}}
 .card-label{{font-size:0.75em;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px;font-weight:600;}}
-.card-value{{font-size:2.2em;font-weight:700;font-family:'Courier New',monospace;color:var(--cyan);letter-spacing:-1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}}
+.card-value{{font-size:2.2em;font-weight:700;font-family:'Courier New',monospace;color:var(--cyan);letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;font-variant-numeric:tabular-nums;}}
 .card-sub{{font-size:0.85em;color:var(--text-dim);margin-top:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
 
 /* TABLE */
-.table-wrap{{width:100%;max-width:100%;overflow-x:auto;border-radius:10px;}}
+.table-wrap{{width:100%;max-width:100%;overflow-x:auto;border-radius:8px;background:rgba(10,14,39,0.22);}}
 .data-table{{width:100%;border-collapse:collapse;font-size:0.9em;table-layout:auto;}}
 .data-table.compact{{font-size:0.84em;}}
-.data-table th{{background:#151a3a;color:var(--cyan);padding:14px 16px;text-align:left;font-weight:600;border-bottom:2px solid var(--cyan);cursor:pointer;user-select:none;white-space:nowrap;}}
+.data-table th{{background:var(--panel);color:var(--cyan);padding:12px 16px;text-align:left;font-weight:700;border-bottom:1px solid var(--cyan);cursor:pointer;user-select:none;white-space:nowrap;font-size:0.86em;letter-spacing:0.2px;}}
 .data-table th:hover{{color:var(--lime);background:#1a2250;}}
-.data-table td{{padding:12px 16px;border-bottom:1px solid var(--border);}}
-.data-table tr:hover td{{background:rgba(0,212,255,0.04);}}
+.data-table td{{padding:12px 16px;border-bottom:1px solid var(--border);vertical-align:top;}}
+.data-table tr:hover td{{background:rgba(0,212,255,0.035);}}
+.data-table th.num,.data-table td.num{{text-align:right;}}
 .trade-monitor-table th,.trade-monitor-table td{{padding:10px 12px;vertical-align:top;}}
 .trade-monitor-table .price-cell{{font-family:'Courier New',monospace;font-weight:700;color:var(--text);white-space:nowrap;}}
-.trade-monitor-table .muted-line{{display:block;color:var(--text-dim);font-size:0.78em;margin-top:2px;line-height:1.35;}}
 .trade-monitor-table .risk-cell{{font-family:'Courier New',monospace;line-height:1.45;white-space:nowrap;}}
 .trade-monitor-table .reason-row td{{padding-top:0;color:var(--text-dim);font-size:0.82em;line-height:1.45;background:rgba(13,17,48,0.32);}}
 .trade-monitor-table .reason-row strong{{color:var(--cyan);font-weight:600;}}
@@ -311,7 +330,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
 /* BOT GRID */
 .bot-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;}}
-.bot-card{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px;transition:all 0.3s;}}
+.bot-card{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:22px;transition:all 0.3s;}}
 .bot-card:hover{{border-color:var(--cyan);transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,212,255,0.1);}}
 .bot-card-header{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;}}
 .bot-card-name{{font-weight:700;font-size:1.05em;}}
@@ -323,7 +342,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
 /* CHART */
 .chart-grid{{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:28px;}}
-.chart-box{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;}}
+.chart-box{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;}}
 .chart-box h3{{font-size:1em;color:var(--text);margin-bottom:14px;font-weight:600;}}
 .chart-box canvas{{width:100%!important;height:280px!important;max-height:320px;}}
 .chart-fallback{{display:flex;flex-direction:column;gap:10px;padding:4px 0;min-height:220px;justify-content:center;}}
@@ -334,14 +353,14 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 @media(max-width:1400px){{.chart-grid{{grid-template-columns:1fr;}}}}
 
 /* PORTFOLIO */
-.portfolio-hero{{background:linear-gradient(135deg,rgba(0,212,255,0.1) 0%,rgba(57,255,20,0.1) 100%);border:1px solid var(--border);border-radius:14px;padding:40px;margin-bottom:32px;text-align:center;}}
+.portfolio-hero{{background:linear-gradient(135deg,rgba(0,212,255,0.1) 0%,rgba(57,255,20,0.1) 100%);border:1px solid var(--border);border-radius:8px;padding:40px;margin-bottom:32px;text-align:center;}}
 .portfolio-hero-value{{font-size:3.5em;font-weight:700;color:var(--cyan);font-family:'Courier New',monospace;margin:16px 0;}}
 .portfolio-hero-subtitle{{font-size:1.1em;color:var(--text-dim);}}
 .portfolio-grid{{display:grid;grid-template-columns:2fr 1fr;gap:24px;margin-bottom:32px;}}
-.portfolio-excluded{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px;}}
+.portfolio-excluded{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;margin-bottom:28px;}}
 .portfolio-excluded h3{{color:var(--amber);margin-bottom:16px;}}
 .excluded-item{{padding:12px;background:rgba(255,183,0,0.05);border-left:3px solid var(--amber);border-radius:6px;margin-bottom:10px;font-size:0.9em;}}
-.portfolio-summary{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px;}}
+.portfolio-summary{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;margin-bottom:28px;}}
 .summary-row{{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border);}}
 .summary-row:last-child{{border-bottom:none;}}
 .summary-label{{color:var(--text-dim);font-weight:500;}}
@@ -359,7 +378,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
 /* ADAPT CARDS */
 .adapt-cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-bottom:28px;}}
-.adapt-card{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;text-align:center;}}
+.adapt-card{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px;text-align:center;}}
 .adapt-score{{font-size:2.4em;font-weight:700;font-family:'Courier New',monospace;margin:12px 0;}}
 .adapt-label{{font-size:0.75em;margin-top:6px;text-transform:uppercase;letter-spacing:1px;font-weight:600;color:var(--text-dim);}}
 .progress-bar{{width:100%;height:6px;background:#151a3a;border-radius:3px;overflow:hidden;}}
@@ -396,7 +415,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .gantt-axis span{{flex:1;text-align:center;}}
 
 /* P&L CALENDAR */
-.pnl-calendar{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px;}}
+.pnl-calendar{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;margin-bottom:28px;}}
 .pnl-calendar-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;}}
 .pnl-calendar-header h3{{font-size:1.1em;color:var(--text);font-weight:600;}}
 .pnl-calendar-nav{{display:flex;align-items:center;gap:12px;}}
@@ -427,13 +446,13 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 /* FOOTER */
 .footer{{text-align:center;padding:32px 0;border-top:1px solid var(--border);margin-top:40px;font-size:0.85em;color:var(--text-dim);}}
 
-/* LAST REFRESH BADGE (top right, fixed) */
+/* LAST REFRESH BAR */
 .last-refresh-badge{{
-  position:fixed;top:16px;right:24px;z-index:200;
-  background:rgba(26,31,58,0.95);backdrop-filter:blur(10px);
-  border:1px solid var(--border);border-radius:10px;
+  position:fixed;top:18px;left:300px;right:40px;z-index:90;
+  background:rgba(13,17,48,0.92);backdrop-filter:blur(12px);
+  border:1px solid var(--border);border-radius:8px;
   padding:10px 16px;font-size:0.8em;color:var(--text-dim);
-  box-shadow:0 4px 14px rgba(0,0,0,0.3);display:flex;align-items:center;gap:10px;
+  box-shadow:0 10px 30px rgba(0,0,0,0.22);display:flex;align-items:center;justify-content:flex-end;gap:10px;
   transition:border-color 0.3s;
 }}
 .last-refresh-badge:hover{{border-color:var(--cyan);}}
@@ -447,14 +466,15 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .last-refresh-badge .lr-time{{font-family:'Courier New',monospace;color:var(--cyan);}}
 .last-refresh-badge .lr-trigger{{font-size:0.7em;padding:2px 8px;border-radius:10px;background:rgba(0,212,255,0.12);color:var(--cyan);text-transform:uppercase;letter-spacing:0.5px;}}
 .last-refresh-badge .lr-trigger.manual{{background:rgba(255,183,0,0.12);color:var(--amber);}}
-@media(max-width:900px){{.last-refresh-badge{{top:10px;right:10px;font-size:0.72em;padding:8px 12px;}}}}
+@media(max-width:900px){{.last-refresh-badge{{top:10px;left:80px;right:10px;font-size:0.72em;padding:8px 12px;}}}}
 
 @media(max-width:1200px){{
   .sidebar{{width:70px;}}
   .sidebar-header h1,.sidebar-header p,.nav-item span.label,.sidebar-footer{{display:none;}}
   .nav-item{{justify-content:center;padding:12px;}}
   .nav-item span.icon{{margin:0;}}
-  .main-content{{margin-left:70px;padding:20px;}}
+  .main-content{{margin-left:70px;padding:88px 20px 20px;}}
+  .last-refresh-badge{{left:90px;right:20px;}}
   .chart-grid,.portfolio-grid{{grid-template-columns:1fr;}}
   .bot-grid{{grid-template-columns:1fr;}}
 }}
@@ -820,69 +840,52 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   <p class="page-sub" style="color:var(--text-dim);margin-bottom:24px;">Live connection to your Alpaca paper trading account</p>
 
   <!-- Broker Selector -->
-  <div class="card" style="margin-bottom:24px;">
-    <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
-      <span style="font-size:1.2em;font-weight:600;color:var(--text);">Select Broker</span>
-    </div>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;">
-      <button id="brokerAlpacaBtn" onclick="alpLiveSelectBroker('alpaca')" class="filter-btn"
-              style="padding:14px 24px;font-size:1em;border-radius:10px;display:flex;align-items:center;gap:10px;min-width:200px;background:rgba(0,212,255,0.1);border-color:var(--cyan);color:var(--cyan);">
-        <span style="font-size:1.5em;">🦙</span>
-        <span>
-          <strong>Alpaca Paper Trading</strong><br>
-          <span style="font-size:0.8em;opacity:0.7;">Crypto &amp; stocks · free paper account</span>
-        </span>
-      </button>
-      <button id="brokerCoinbaseBtn" disabled class="filter-btn"
-              style="padding:14px 24px;font-size:1em;border-radius:10px;display:flex;align-items:center;gap:10px;min-width:200px;opacity:0.4;cursor:not-allowed;">
-        <span style="font-size:1.5em;">🪙</span>
-        <span>
-          <strong>Coinbase</strong><br>
-          <span style="font-size:0.8em;opacity:0.7;">Coming soon · real money trading</span>
-        </span>
-      </button>
+  <div class="section-card">
+    <div class="section-header" style="margin-bottom:0;">
+      <div>
+        <div class="section-title">Trading Mode</div>
+        <div class="section-sub">Read-only command center for automatic Alpaca paper trading. Manual order entry and manual closes are intentionally hidden.</div>
+      </div>
+      <div class="status-pill ok"><span class="live-dot" style="margin-right:0;"></span> Alpaca Paper · Automatic</div>
     </div>
   </div>
 
   <!-- Connection Card -->
-  <div id="alpLiveConnCard" class="card" style="margin-bottom:24px;">
+  <div id="alpLiveConnCard" class="section-card">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
       <div>
         <div style="font-size:0.9em;color:var(--text-dim);margin-bottom:4px;">Connection Status</div>
         <div id="alpLiveConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);">⚪ Not Connected</div>
-        <div id="alpLiveConnMsg" class="card-sub">Click Connect to link your Alpaca paper trading account</div>
+        <div id="alpLiveConnMsg" class="card-sub">Auto-connects when Alpaca keys are configured</div>
       </div>
-      <button id="alpLiveConnBtn" onclick="alpLiveConnect()" class="filter-btn"
-              style="padding:12px 28px;font-size:1em;background:rgba(0,212,255,0.15);border-color:var(--cyan);color:var(--cyan);font-weight:600;border-radius:8px;">
-        🔗 Connect
-      </button>
+      <div id="alpLiveConnBtn" class="status-pill warn">Auto-connecting</div>
     </div>
   </div>
 
   <!-- Account Summary (hidden until connected) -->
   <div id="alpLiveAccountSection" style="display:none;">
-    <div class="cards-row" style="margin-bottom:24px;">
-      <div class="card"><div class="card-sub">Equity</div><div id="alpLiveEquity" class="card-value">—</div></div>
-      <div class="card"><div class="card-sub">Cash (Buying Power)</div><div id="alpLiveCash" class="card-value">—</div></div>
-      <div class="card"><div class="card-sub">Today's P&L</div><div id="alpLivePL" class="card-value">—</div></div>
-      <div class="card"><div class="card-sub">Account #</div><div id="alpLiveAccNum" class="card-value" style="font-size:0.95em;">—</div></div>
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Equity</div><div id="alpLiveEquity" class="metric-value">—</div><div class="metric-sub">Cash plus live positions</div></div>
+      <div class="metric-card"><div class="metric-label">Cash / Buying Power</div><div id="alpLiveCash" class="metric-value">—</div><div class="metric-sub">Available to deploy</div></div>
+      <div class="metric-card"><div class="metric-label">Today's P&L</div><div id="alpLivePL" class="metric-value">—</div><div class="metric-sub">Live equity vs last close</div></div>
+      <div class="metric-card"><div class="metric-label">Account</div><div id="alpLiveAccNum" class="metric-value" style="font-size:1.05em;">—</div><div class="metric-sub">Paper trading</div></div>
     </div>
 
     <!-- Positions -->
-    <div class="card" style="margin-bottom:24px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
-        <span style="font-weight:600;font-size:1.1em;">Open Positions</span>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          <span style="color:var(--text-dim);font-size:0.82em;"><span class="live-dot"></span>1s price refresh</span>
-          <button onclick="alpLiveRefreshPositions()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+    <div class="section-card">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Open Positions</div>
+          <div class="section-sub">Live marks, risk prices, strategy context, and entry reason. Updates every second from the same quote snapshot as Overview and Portfolio.</div>
         </div>
+        <div class="status-pill ok"><span class="live-dot" style="margin-right:0;"></span> 1s live sync</div>
       </div>
       <div id="alpLivePositionsEmpty" style="color:var(--text-dim);padding:20px 0;text-align:center;">No open positions</div>
       <div id="alpLivePositionsTable" class="table-wrap" style="display:none;">
         <table class="data-table compact trade-monitor-table">
           <thead><tr>
-            <th>Symbol</th><th>Live Price</th><th>Value</th><th>P&L</th>
-            <th>Risk Prices</th><th>Strategy</th><th>Regime</th><th>Action</th>
+            <th>Symbol</th><th class="num">Live Price</th><th class="num">Value</th><th class="num">P&L</th>
+            <th>Risk Prices</th><th>Strategy</th><th>Regime</th>
           </tr></thead>
           <tbody id="alpLivePositionsBody"></tbody>
         </table>
@@ -890,32 +893,30 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <div id="alpLivePosSummary" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:none;">
         <span style="color:var(--text-dim);font-size:0.9em;">Total: </span>
         <span id="alpLivePosTotal" style="font-weight:600;">—</span>
-        <button onclick="alpLiveCloseAll()" class="filter-btn" style="margin-left:16px;padding:6px 14px;font-size:0.85em;color:var(--red);border-color:var(--red);">Close All</button>
       </div>
     </div>
 
     <!-- Fee-aware P&L -->
-    <div class="card" style="margin-bottom:24px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
+    <div class="section-card">
+      <div class="section-header">
         <div>
-          <span style="font-weight:600;font-size:1.1em;">Fee & Net P&L</span>
-          <div style="font-size:0.82em;color:var(--text-dim);">Estimated Alpaca crypto fees. Paper trades do not pay real fees, but this shows live-style net results.</div>
-          <div id="alpFeeLedgerPath" style="font-size:0.78em;color:var(--text-dim);margin-top:4px;">CSV ledger: loading...</div>
+          <div class="section-title">Fee & Net P&L</div>
+          <div class="section-sub">Estimated Alpaca crypto fees. Paper trades do not pay real fees, but this shows live-style net results.</div>
+          <div id="alpFeeLedgerPath" class="section-sub" style="font-size:0.78em;margin-top:4px;">CSV ledger: loading...</div>
         </div>
-        <button onclick="alpLiveRefreshFeeAnalysis()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
       </div>
-      <div class="cards-row" style="margin-bottom:16px;">
-        <div class="card"><div class="card-sub">Realized Net P&L</div><div id="alpFeeRealizedNet" class="card-value">—</div></div>
-        <div class="card"><div class="card-sub">Estimated Fees Paid</div><div id="alpFeeRealizedFees" class="card-value">—</div></div>
-        <div class="card"><div class="card-sub">Net Win Rate</div><div id="alpFeeWinRate" class="card-value">—</div></div>
-        <div class="card"><div class="card-sub">Open Net If Closed</div><div id="alpFeeOpenNet" class="card-value">—</div></div>
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">Realized Net P&L</div><div id="alpFeeRealizedNet" class="metric-value">—</div></div>
+        <div class="metric-card"><div class="metric-label">Estimated Fees Paid</div><div id="alpFeeRealizedFees" class="metric-value">—</div></div>
+        <div class="metric-card"><div class="metric-label">Net Win Rate</div><div id="alpFeeWinRate" class="metric-value">—</div></div>
+        <div class="metric-card"><div class="metric-label">Open Net If Closed</div><div id="alpFeeOpenNet" class="metric-value">—</div></div>
       </div>
       <div style="font-weight:600;margin:10px 0 8px;">Open Fee Preview</div>
       <div id="alpFeeOpenEmpty" style="color:var(--text-dim);padding:12px 0;">No open positions to estimate.</div>
       <div id="alpFeeOpenTable" class="table-wrap" style="display:none;margin-bottom:16px;">
         <table class="data-table compact">
           <thead><tr>
-            <th>Symbol</th><th>Bought</th><th>Mark / Sell Now</th><th>Gross P&L</th><th>Est. Fees</th><th>Net In Hand</th>
+            <th>Symbol</th><th class="num">Bought</th><th class="num">Mark / Sell Now</th><th class="num">Gross P&L</th><th class="num">Est. Fees</th><th class="num">Net In Hand</th>
           </tr></thead>
           <tbody id="alpFeeOpenBody"></tbody>
         </table>
@@ -925,43 +926,27 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <div id="alpFeeClosedTable" class="table-wrap" style="display:none;">
         <table class="data-table compact">
           <thead><tr>
-            <th>Time</th><th>Symbol</th><th>Buy</th><th>Sell</th><th>Gross P&L</th><th>Fees</th><th>Net In Hand</th><th>Why Sold</th>
+            <th>Time</th><th>Symbol</th><th class="num">Buy</th><th class="num">Sell</th><th class="num">Gross P&L</th><th class="num">Fees</th><th class="num">Net In Hand</th><th>Why Sold</th>
           </tr></thead>
           <tbody id="alpFeeClosedBody"></tbody>
         </table>
       </div>
     </div>
 
-    <!-- Quick Trade -->
-    <div class="card" style="margin-bottom:24px;">
-      <div style="font-weight:600;font-size:1.1em;margin-bottom:12px;">Quick Trade</div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
-        <div>
-          <label style="font-size:0.8em;color:var(--text-dim);">Symbol</label>
-          <input id="alpLiveTradeSymbol" type="text" placeholder="BTC/USD" style="display:block;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;width:120px;margin-top:4px;">
-        </div>
-        <div>
-          <label style="font-size:0.8em;color:var(--text-dim);">Amount (USD)</label>
-          <input id="alpLiveTradeAmount" type="number" placeholder="100" min="1" step="1" style="display:block;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;width:120px;margin-top:4px;">
-        </div>
-        <button onclick="alpLiveTrade('buy')" class="filter-btn" style="padding:8px 20px;background:rgba(57,255,20,0.12);color:var(--lime);border-color:var(--lime);font-weight:600;">Buy</button>
-        <button onclick="alpLiveTrade('sell')" class="filter-btn" style="padding:8px 20px;background:rgba(255,69,58,0.12);color:var(--red);border-color:var(--red);font-weight:600;">Sell</button>
-      </div>
-      <div id="alpLiveTradeResult" style="margin-top:12px;padding:10px;border-radius:6px;display:none;"></div>
-    </div>
-
     <!-- Recent Orders -->
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <span style="font-weight:600;font-size:1.1em;">Recent Orders</span>
-        <button onclick="alpLiveRefreshOrders()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+    <div class="section-card">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Recent Orders</div>
+          <div class="section-sub">Broker fills and order status. This is audit context only; no manual order entry is exposed.</div>
+        </div>
       </div>
       <div id="alpLiveOrdersEmpty" style="color:var(--text-dim);padding:20px 0;text-align:center;">No recent orders</div>
       <div id="alpLiveOrdersTable" class="table-wrap" style="display:none;">
         <table class="data-table compact">
           <thead><tr>
-            <th>Time</th><th>Symbol</th><th>Side</th><th>Amount</th>
-            <th>Fill Price</th><th>Status</th>
+            <th>Time</th><th>Symbol</th><th>Side</th><th class="num">Amount</th>
+            <th class="num">Fill Price</th><th>Status</th>
           </tr></thead>
           <tbody id="alpLiveOrdersBody"></tbody>
         </table>
@@ -969,37 +954,24 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>
 
     <!-- Real Paper Journal -->
-    <div class="card" style="margin-top:24px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <span style="font-weight:600;font-size:1.1em;">Trade & Decision Journal</span>
-        <button onclick="alpLiveRefreshJournal()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+    <div class="section-card">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Trade & Decision Journal</div>
+          <div class="section-sub">Real Alpaca paper decisions only. Seeded/backtest metrics are not included here.</div>
+        </div>
       </div>
-      <div style="font-size:0.82em;color:var(--text-dim);margin-bottom:12px;">Real Alpaca paper decisions only. Seeded/backtest metrics are not included here.</div>
       <div id="alpLiveJournalBody" style="max-height:280px;overflow:auto;color:var(--text-dim);font-size:0.88em;">No journal events loaded.</div>
     </div>
 
     <!-- Auto-Trade Controls -->
-    <div class="card" style="margin-bottom:24px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+    <div class="section-card">
+      <div class="section-header">
         <div>
-          <div style="font-weight:600;font-size:1.1em;">Auto-Trade (Alpaca)</div>
-          <div style="color:var(--text-dim);font-size:0.85em;">Automatically rebalances your Alpaca account based on the latest portfolio analysis</div>
+          <div class="section-title">Auto-Trade (Alpaca)</div>
+          <div class="section-sub">Automatic cycle status, cadence, and recent runs. Trading controls stay server-side so the dashboard is a monitoring surface, not a manual order pad.</div>
         </div>
-        <div style="display:flex;gap:10px;align-items:center;">
-          <span id="alpAutoStatusBadge" style="font-size:0.9em;padding:4px 12px;border-radius:20px;background:rgba(107,115,148,0.2);color:var(--gray);">OFF</span>
-          <button id="alpAutoToggleBtn" onclick="alpAutoToggle()" class="filter-btn"
-                  style="padding:8px 20px;font-size:0.95em;font-weight:600;">
-            Enable Auto-Trade
-          </button>
-        </div>
-      </div>
-
-      <!-- One-click run -->
-      <div style="margin-bottom:16px;">
-        <button id="alpAutoRunBtn" onclick="alpAutoOneClick()" class="filter-btn"
-                style="padding:12px 28px;font-size:1.05em;background:rgba(57,255,20,0.12);border-color:var(--lime);color:var(--lime);font-weight:700;border-radius:10px;">
-          🚀 Run Now
-        </button>
+        <span id="alpAutoStatusBadge" class="status-pill">OFF</span>
       </div>
 
       <!-- Progress + results area -->
@@ -1009,28 +981,28 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       </div>
 
       <!-- Status info -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px;">
-        <div style="padding:10px;background:var(--bg);border-radius:6px;">
-          <div style="font-size:0.75em;color:var(--text-dim);">Status</div>
-          <div id="alpAutoRunStatus" style="font-size:0.95em;margin-top:2px;">—</div>
+      <div class="metric-grid" style="margin-bottom:16px;">
+        <div class="metric-card">
+          <div class="metric-label">Status</div>
+          <div id="alpAutoRunStatus" class="metric-value" style="font-size:1.1em;">—</div>
         </div>
-        <div style="padding:10px;background:var(--bg);border-radius:6px;">
-          <div style="font-size:0.75em;color:var(--text-dim);">Last Run</div>
-          <div id="alpAutoLastRun" style="font-size:0.95em;margin-top:2px;">Never</div>
+        <div class="metric-card">
+          <div class="metric-label">Last Run</div>
+          <div id="alpAutoLastRun" class="metric-value" style="font-size:1.1em;">Never</div>
         </div>
-        <div style="padding:10px;background:var(--bg);border-radius:6px;">
-          <div style="font-size:0.75em;color:var(--text-dim);">Next Run</div>
-          <div id="alpAutoNextRun" style="font-size:0.95em;margin-top:2px;">—</div>
+        <div class="metric-card">
+          <div class="metric-label">Next Run</div>
+          <div id="alpAutoNextRun" class="metric-value" style="font-size:1.1em;">—</div>
         </div>
-        <div style="padding:10px;background:var(--bg);border-radius:6px;">
-          <div style="font-size:0.75em;color:var(--text-dim);">Interval</div>
-          <div id="alpAutoInterval" style="font-size:0.95em;margin-top:2px;">30 min</div>
+        <div class="metric-card">
+          <div class="metric-label">Interval</div>
+          <div id="alpAutoInterval" class="metric-value" style="font-size:1.1em;">30 min</div>
         </div>
       </div>
 
       <!-- Recent auto-runs log -->
       <div style="font-weight:600;font-size:0.95em;margin-bottom:8px;">Recent Auto-Runs</div>
-      <div id="alpAutoLogsEmpty" style="color:var(--text-dim);font-size:0.85em;">No auto-runs yet. Enable auto-trade or click "Run Now" to start.</div>
+      <div id="alpAutoLogsEmpty" style="color:var(--text-dim);font-size:0.85em;">No auto-runs recorded yet. Automatic cycles will appear here after the scheduler runs.</div>
       <div id="alpAutoLogs" style="display:none;max-height:250px;overflow-y:auto;font-size:0.85em;"></div>
     </div>
   </div>
@@ -1526,7 +1498,7 @@ function renderOverviewPositions(positions) {{
   }}
   var totalMV = 0;
   positions.forEach(function(p) {{ totalMV += Number(p.market_value || 0); }});
-  var html = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th>Live Price</th><th>Market Value</th><th>P&L</th><th>% of Portfolio</th></tr></thead><tbody>';
+  var html = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th class="num">Live Price</th><th class="num">Market Value</th><th class="num">P&L</th><th class="num">% of Portfolio</th></tr></thead><tbody>';
   positions.forEach(function(p) {{
     var upl = Number(p.unrealized_pl || 0);
     var mv = Number(p.market_value || 0);
@@ -1534,10 +1506,10 @@ function renderOverviewPositions(positions) {{
     var plColor = upl >= 0 ? 'var(--lime)' : 'var(--red)';
     html += '<tr>';
     html += '<td><strong>' + (p.symbol || '?') + '</strong></td>';
-    html += '<td style="font-family:Courier New,monospace;">' + money(p.current_price) + '</td>';
-    html += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + money(mv) + '</td>';
-    html += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + money(upl) + '</td>';
-    html += '<td>' + pct.toFixed(1) + '%</td>';
+    html += '<td class="num">' + money(p.current_price) + '</td>';
+    html += '<td class="num" style="color:var(--cyan);">' + money(mv) + '</td>';
+    html += '<td class="num" style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + money(upl) + '</td>';
+    html += '<td class="num">' + pct.toFixed(1) + '%</td>';
     html += '</tr>';
   }});
   html += '</tbody></table></div>';
@@ -1554,7 +1526,7 @@ function renderPortfolioPositions(positions) {{
   }}
   var totalMV = 0;
   positions.forEach(function(p) {{ totalMV += Number(p.market_value || 0); }});
-  var html = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th>Live Price</th><th>Market Value</th><th>P&L</th><th>Allocation</th></tr></thead><tbody>';
+  var html = '<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Symbol</th><th class="num">Live Price</th><th class="num">Market Value</th><th class="num">P&L</th><th class="num">Allocation</th></tr></thead><tbody>';
   positions.forEach(function(p) {{
     var upl = Number(p.unrealized_pl || 0);
     var mv = Number(p.market_value || 0);
@@ -1563,10 +1535,10 @@ function renderPortfolioPositions(positions) {{
     var uplPct = Number(p.unrealized_plpc || 0);
     html += '<tr>';
     html += '<td><strong>' + (p.symbol || '?') + '</strong><span class="muted-line">Qty ' + Number(p.qty || 0).toFixed(4) + ' · Entry ' + money(p.avg_entry_price || p.cost_basis / (p.qty || 1)) + '</span></td>';
-    html += '<td style="font-family:Courier New,monospace;">' + money(p.current_price) + '</td>';
-    html += '<td style="font-family:Courier New,monospace;color:var(--cyan);">' + money(mv) + '</td>';
-    html += '<td style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + money(upl) + ' (' + (uplPct >= 0 ? '+' : '') + uplPct.toFixed(2) + '%)</td>';
-    html += '<td>' + pct.toFixed(1) + '%</td>';
+    html += '<td class="num">' + money(p.current_price) + '</td>';
+    html += '<td class="num" style="color:var(--cyan);">' + money(mv) + '</td>';
+    html += '<td class="num" style="color:' + plColor + ';font-weight:600;">' + (upl >= 0 ? '+' : '') + money(upl) + ' (' + (uplPct >= 0 ? '+' : '') + uplPct.toFixed(2) + '%)</td>';
+    html += '<td class="num">' + pct.toFixed(1) + '%</td>';
     html += '</tr>';
   }});
   html += '</tbody></table></div>';
@@ -2927,11 +2899,11 @@ function alpLiveRenderOpenFeePreview(positions, riskMap) {{
     var netColor = net >= 0 ? 'var(--lime)' : 'var(--red)';
     body.innerHTML += '<tr>' +
       '<td style="font-weight:700;color:var(--cyan);">' + sym + '<span class="muted-line">' + (r.strategy || 'manual/legacy') + '</span></td>' +
-      '<td>' + fmtUSD(entryNotional) + '<span class="muted-line">@ ' + (entryPrice ? fmtUSD(entryPrice) : '—') + '</span></td>' +
-      '<td>' + fmtUSD(markNotional) + '<span class="muted-line">@ ' + (markPrice ? fmtUSD(markPrice) : '—') + '</span></td>' +
-      '<td style="color:' + grossColor + ';font-weight:700;">' + (gross >= 0 ? '+' : '') + fmtUSD(gross) + '</td>' +
-      '<td style="color:var(--amber);">' + fmtUSD(fees) + '</td>' +
-      '<td style="color:' + netColor + ';font-weight:800;">' + (net >= 0 ? '+' : '') + fmtUSD(net) + '</td>' +
+      '<td class="num">' + fmtUSD(entryNotional) + '<span class="muted-line">@ ' + (entryPrice ? fmtUSD(entryPrice) : '—') + '</span></td>' +
+      '<td class="num">' + fmtUSD(markNotional) + '<span class="muted-line">@ ' + (markPrice ? fmtUSD(markPrice) : '—') + '</span></td>' +
+      '<td class="num" style="color:' + grossColor + ';font-weight:700;">' + (gross >= 0 ? '+' : '') + fmtUSD(gross) + '</td>' +
+      '<td class="num" style="color:var(--amber);">' + fmtUSD(fees) + '</td>' +
+      '<td class="num" style="color:' + netColor + ';font-weight:800;">' + (net >= 0 ? '+' : '') + fmtUSD(net) + '</td>' +
       '</tr>';
   }});
   setCardText('alpFeeOpenNet', (totalNet >= 0 ? '+' : '') + fmtUSD(totalNet), totalNet >= 0 ? 'var(--lime)' : 'var(--red)');
@@ -3017,15 +2989,14 @@ async function alpLiveRefreshPositions(opts) {{
       var pnlPct = Number(p.unrealized_plpc || 0);
       body.innerHTML += '<tr>' +
         '<td style="font-weight:700;color:var(--cyan);">' + esc(sym) + '<span class="muted-line">Qty ' + Number(p.qty || 0).toFixed(4) + ' · Entry ' + fmtPrice(entry || p.avg_entry_price) + '</span></td>' +
-        '<td class="price-cell">' + fmtPrice(p.current_price) + '</td>' +
-        '<td class="nowrap">' + fmtUSD(p.market_value) + '</td>' +
-        '<td style="color:' + plColor + ';font-weight:700;">' + plSign + fmtUSD(p.unrealized_pl) + '<span class="muted-line" style="color:' + plColor + ';">' + plSign + pnlPct.toFixed(2) + '%</span></td>' +
+        '<td class="price-cell num">' + fmtPrice(p.current_price) + '</td>' +
+        '<td class="num">' + fmtUSD(p.market_value) + '</td>' +
+        '<td class="num" style="color:' + plColor + ';font-weight:700;">' + plSign + fmtUSD(p.unrealized_pl) + '<span class="muted-line" style="color:' + plColor + ';">' + plSign + pnlPct.toFixed(2) + '%</span></td>' +
         '<td class="risk-cell"><span style="color:var(--red);">SL ' + fmtPrice(sl) + '</span><br><span style="color:var(--lime);">TP ' + fmtPrice(tp) + '</span><br><span style="color:var(--amber);">Trail ' + fmtPrice(trail) + '</span></td>' +
         '<td>' + esc(strategy) + '<span class="muted-line">conf ' + (r.confidence !== undefined && r.confidence !== null ? Number(r.confidence).toFixed(2) : '—') + '</span></td>' +
         '<td>' + esc(regime) + '</td>' +
-        '<td><button onclick="alpLiveClosePos(\\x27' + sym + '\\x27)" class="filter-btn" style="padding:4px 10px;font-size:0.8em;color:var(--red);border-color:var(--red);">Close</button></td>' +
         '</tr>' +
-        '<tr class="reason-row"><td colspan="8"><strong>Why:</strong> ' + esc(reason) + '</td></tr>';
+        '<tr class="reason-row"><td colspan="7"><strong>Why:</strong> ' + esc(reason) + '</td></tr>';
     }});
     alpLiveRenderOpenFeePreview(positions, riskMap);
     if (data.summary) {{
@@ -3113,11 +3084,11 @@ async function alpLiveRefreshFeeAnalysis() {{
       body.innerHTML += '<tr>' +
         '<td style="font-size:0.82em;">' + ts + '</td>' +
         '<td style="font-weight:700;color:var(--cyan);">' + (t.symbol || '—') + '<span class="muted-line">' + (t.strategy || 'unknown') + '</span></td>' +
-        '<td>' + fmtUSD(t.entry_notional || 0) + '<span class="muted-line">@ ' + (t.entry_price ? fmtUSD(t.entry_price) : '—') + '</span></td>' +
-        '<td>' + fmtUSD(t.exit_notional || 0) + '<span class="muted-line">@ ' + (t.exit_price ? fmtUSD(t.exit_price) : '—') + '</span></td>' +
-        '<td style="color:' + grossColor + ';font-weight:700;">' + (gross >= 0 ? '+' : '') + fmtUSD(gross) + '</td>' +
-        '<td style="color:var(--amber);">' + fmtUSD(t.total_fees || 0) + '</td>' +
-        '<td style="color:' + netColor + ';font-weight:800;">' + (netPl >= 0 ? '+' : '') + fmtUSD(netPl) + '<span class="muted-line" style="color:' + netColor + ';">' + (Number(t.net_pl_pct || 0) >= 0 ? '+' : '') + Number(t.net_pl_pct || 0).toFixed(2) + '%</span></td>' +
+        '<td class="num">' + fmtUSD(t.entry_notional || 0) + '<span class="muted-line">@ ' + (t.entry_price ? fmtUSD(t.entry_price) : '—') + '</span></td>' +
+        '<td class="num">' + fmtUSD(t.exit_notional || 0) + '<span class="muted-line">@ ' + (t.exit_price ? fmtUSD(t.exit_price) : '—') + '</span></td>' +
+        '<td class="num" style="color:' + grossColor + ';font-weight:700;">' + (gross >= 0 ? '+' : '') + fmtUSD(gross) + '</td>' +
+        '<td class="num" style="color:var(--amber);">' + fmtUSD(t.total_fees || 0) + '</td>' +
+        '<td class="num" style="color:' + netColor + ';font-weight:800;">' + (netPl >= 0 ? '+' : '') + fmtUSD(netPl) + '<span class="muted-line" style="color:' + netColor + ';">' + (Number(t.net_pl_pct || 0) >= 0 ? '+' : '') + Number(t.net_pl_pct || 0).toFixed(2) + '%</span></td>' +
         '<td style="max-width:280px;">' + (t.exit_reason || '—') + '</td>' +
         '</tr>';
     }});
@@ -3154,8 +3125,8 @@ async function alpLiveRefreshOrders() {{
         '<td style="font-size:0.85em;">' + time + '</td>' +
         '<td style="font-weight:600;color:var(--cyan);">' + o.symbol + '</td>' +
         '<td style="color:' + sideColor + ';font-weight:600;">' + cleanSide.toUpperCase() + '</td>' +
-        '<td>' + amount + '</td>' +
-        '<td>' + fillPrice + '</td>' +
+        '<td class="num">' + amount + '</td>' +
+        '<td class="num">' + fillPrice + '</td>' +
         '<td style="color:' + statusColor + ';">' + cleanStatus.toUpperCase() + '</td>' +
         '</tr>';
     }});
@@ -3232,19 +3203,25 @@ function alpAutoUpdateUI(data) {{
   var badge = document.getElementById('alpAutoStatusBadge');
   var btn = document.getElementById('alpAutoToggleBtn');
   if (data.enabled) {{
-    badge.textContent = 'ON';
-    badge.style.background = 'rgba(57,255,20,0.15)';
-    badge.style.color = 'var(--lime)';
-    btn.textContent = 'Disable Auto-Trade';
-    btn.style.borderColor = 'var(--red)';
-    btn.style.color = 'var(--red)';
+    if (badge) {{
+      badge.textContent = 'ON';
+      badge.className = 'status-pill ok';
+    }}
+    if (btn) {{
+      btn.textContent = 'Disable Auto-Trade';
+      btn.style.borderColor = 'var(--red)';
+      btn.style.color = 'var(--red)';
+    }}
   }} else {{
-    badge.textContent = 'OFF';
-    badge.style.background = 'rgba(107,115,148,0.2)';
-    badge.style.color = 'var(--gray)';
-    btn.textContent = 'Enable Auto-Trade';
-    btn.style.borderColor = 'var(--lime)';
-    btn.style.color = 'var(--lime)';
+    if (badge) {{
+      badge.textContent = 'OFF';
+      badge.className = 'status-pill warn';
+    }}
+    if (btn) {{
+      btn.textContent = 'Enable Auto-Trade';
+      btn.style.borderColor = 'var(--lime)';
+      btn.style.color = 'var(--lime)';
+    }}
   }}
   var statusEl = document.getElementById('alpAutoRunStatus');
   if (data.thread_alive) {{
