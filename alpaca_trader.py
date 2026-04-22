@@ -326,6 +326,10 @@ class AlpacaTrader:
                     })
                 else:
                     try:
+                        entry_state = self.risk_book.get(sym)
+                        entry_price = float((entry_state or {}).get("entry_price") or pos.get("avg_entry_price") or 0)
+                        current_price = float(pos.get("current_price", 0) or 0)
+                        pl_pct = ((current_price - entry_price) / entry_price * 100.0) if entry_price > 0 and current_price > 0 else 0.0
                         close_result = self.client.close_position(sym)
                         close_result["reason"] = "No longer in target portfolio"
                         close_result["side"] = "close"
@@ -336,6 +340,10 @@ class AlpacaTrader:
                             "symbol": sym,
                             "side": "close",
                             "reason": "No longer in target portfolio",
+                            "entry_state": entry_state,
+                            "exit_price": current_price,
+                            "exit_notional": pos.get("market_value"),
+                            "unrealized_pl_pct": round(pl_pct, 2),
                             "order": close_result,
                         })
                     except Exception as e:
@@ -527,6 +535,8 @@ class AlpacaTrader:
                     "side": "close",
                     "reason": reason,
                     "entry_state": state,
+                    "exit_price": current_price,
+                    "exit_notional": pos.get("market_value"),
                     "unrealized_pl_pct": round(pl_pct, 2),
                     "order": close_result,
                 })

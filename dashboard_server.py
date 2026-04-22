@@ -475,7 +475,30 @@ def alpaca_close_position():
     if not symbol:
         return jsonify({"error": "Missing 'symbol'"}), 400
     try:
-        return jsonify(client.close_position(symbol))
+        from alpaca_client import normalize_crypto_symbol
+        from trade_journal import PositionRiskBook, TradeJournal
+        sym = normalize_crypto_symbol(symbol)
+        position = client.get_position(sym) or {}
+        risk_book = PositionRiskBook()
+        entry_state = risk_book.get(sym)
+        entry_price = float((entry_state or {}).get("entry_price") or position.get("avg_entry_price") or 0)
+        current_price = float(position.get("current_price") or 0)
+        pl_pct = ((current_price - entry_price) / entry_price * 100.0) if entry_price > 0 and current_price > 0 else 0.0
+        result = client.close_position(sym)
+        if not result.get("error"):
+            risk_book.remove(sym)
+            TradeJournal().append({
+                "event": "position_closed",
+                "symbol": sym,
+                "side": "close",
+                "reason": "Manual dashboard close",
+                "entry_state": entry_state,
+                "exit_price": current_price,
+                "exit_notional": position.get("market_value"),
+                "unrealized_pl_pct": round(pl_pct, 2),
+                "order": result,
+            })
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -490,7 +513,32 @@ def alpaca_close_all():
     if not data.get("confirm"):
         return jsonify({"error": "Missing 'confirm: true'"}), 400
     try:
-        return jsonify({"closed": client.close_all_positions()})
+        from trade_journal import PositionRiskBook, TradeJournal
+        risk_book = PositionRiskBook()
+        journal = TradeJournal()
+        closed = []
+        for position in client.get_positions(live_prices=True):
+            sym = position.get("symbol")
+            entry_state = risk_book.get(sym)
+            entry_price = float((entry_state or {}).get("entry_price") or position.get("avg_entry_price") or 0)
+            current_price = float(position.get("current_price") or 0)
+            pl_pct = ((current_price - entry_price) / entry_price * 100.0) if entry_price > 0 and current_price > 0 else 0.0
+            result = client.close_position(sym)
+            closed.append(result)
+            if not result.get("error"):
+                risk_book.remove(sym)
+                journal.append({
+                    "event": "position_closed",
+                    "symbol": sym,
+                    "side": "close",
+                    "reason": "Manual dashboard close all",
+                    "entry_state": entry_state,
+                    "exit_price": current_price,
+                    "exit_notional": position.get("market_value"),
+                    "unrealized_pl_pct": round(pl_pct, 2),
+                    "order": result,
+                })
+        return jsonify({"closed": closed})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -684,6 +732,29 @@ def position_risk():
         })
     except Exception as e:
         return jsonify({"error": str(e), "positions": {}})
+
+
+@app.route("/api/alpaca/fee-analysis")
+@require_auth
+def alpaca_fee_analysis():
+    """Return estimated Alpaca crypto fees and net P&L views."""
+    try:
+        from trade_journal import summarize_fee_analysis, load_position_risk_state
+        positions = []
+        live_prices = request.args.get("live", "0").lower() in ("1", "true", "yes")
+        try:
+            client, err = get_alpaca_client()
+            if not err:
+                positions = client.get_positions(live_prices=live_prices)
+        except Exception:
+            positions = []
+        return jsonify(summarize_fee_analysis(
+            open_positions=positions,
+            risk_state=load_position_risk_state(),
+        ))
+    except Exception as e:
+        logger.error(f"Alpaca fee analysis failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e), "summary": {}, "closed_trades": [], "open_trades": []})
 
 
 # ── AUTO-TRADER ENDPOINTS ──────────────────────────────────────────────

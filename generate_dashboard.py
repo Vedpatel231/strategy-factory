@@ -894,6 +894,43 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       </div>
     </div>
 
+    <!-- Fee-aware P&L -->
+    <div class="card" style="margin-bottom:24px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap;">
+        <div>
+          <span style="font-weight:600;font-size:1.1em;">Fee & Net P&L</span>
+          <div style="font-size:0.82em;color:var(--text-dim);">Estimated Alpaca crypto fees. Paper trades do not pay real fees, but this shows live-style net results.</div>
+        </div>
+        <button onclick="alpLiveRefreshFeeAnalysis()" class="filter-btn" style="padding:6px 14px;font-size:0.85em;">Refresh</button>
+      </div>
+      <div class="cards-row" style="margin-bottom:16px;">
+        <div class="card"><div class="card-sub">Realized Net P&L</div><div id="alpFeeRealizedNet" class="card-value">—</div></div>
+        <div class="card"><div class="card-sub">Estimated Fees Paid</div><div id="alpFeeRealizedFees" class="card-value">—</div></div>
+        <div class="card"><div class="card-sub">Net Win Rate</div><div id="alpFeeWinRate" class="card-value">—</div></div>
+        <div class="card"><div class="card-sub">Open Net If Closed</div><div id="alpFeeOpenNet" class="card-value">—</div></div>
+      </div>
+      <div style="font-weight:600;margin:10px 0 8px;">Open Fee Preview</div>
+      <div id="alpFeeOpenEmpty" style="color:var(--text-dim);padding:12px 0;">No open positions to estimate.</div>
+      <div id="alpFeeOpenTable" class="table-wrap" style="display:none;margin-bottom:16px;">
+        <table class="data-table compact">
+          <thead><tr>
+            <th>Symbol</th><th>Bought</th><th>Mark / Sell Now</th><th>Gross P&L</th><th>Est. Fees</th><th>Net In Hand</th>
+          </tr></thead>
+          <tbody id="alpFeeOpenBody"></tbody>
+        </table>
+      </div>
+      <div style="font-weight:600;margin:10px 0 8px;">Closed Trades</div>
+      <div id="alpFeeClosedEmpty" style="color:var(--text-dim);padding:12px 0;">No closed bot trades with fee analysis yet.</div>
+      <div id="alpFeeClosedTable" class="table-wrap" style="display:none;">
+        <table class="data-table compact">
+          <thead><tr>
+            <th>Time</th><th>Symbol</th><th>Buy</th><th>Sell</th><th>Gross P&L</th><th>Fees</th><th>Net In Hand</th><th>Why Sold</th>
+          </tr></thead>
+          <tbody id="alpFeeClosedBody"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Quick Trade -->
     <div class="card" style="margin-bottom:24px;">
       <div style="font-weight:600;font-size:1.1em;margin-bottom:12px;">Quick Trade</div>
@@ -1642,6 +1679,7 @@ function refreshPageData(page) {{
       alpLiveRefreshPositions();
       alpLiveRefreshOrders();
       alpLiveRefreshJournal();
+      alpLiveRefreshFeeAnalysis();
     }}
     alpAutoLoadStatus();
   }} else if (page === 'portfolio') {{
@@ -2464,6 +2502,7 @@ async function alpLiveAutoReconnect() {{
         alpLiveUpdateAccount(connData.account);
         alpLiveRefreshPositions();
         alpLiveRefreshOrders();
+        alpLiveRefreshFeeAnalysis();
         alpAutoLoadStatus();
       }}
     }}
@@ -2809,6 +2848,7 @@ async function alpLiveConnect() {{
       alpLiveUpdateAccount(data.account);
       alpLiveRefreshPositions();
       alpLiveRefreshOrders();
+      alpLiveRefreshFeeAnalysis();
       alpAutoLoadStatus();
     }} else {{
       statusEl.textContent = '🔴 Failed';
@@ -2844,6 +2884,58 @@ function alpLiveUpdateAccount(acct) {{
 }}
 
 var _alpLivePositionsInFlight = false;
+var _alpFeeConfig = {{maker_bps:15, taker_bps:25, default_order_type:'taker'}};
+
+function alpFeeEstimate(notional) {{
+  var bps = (_alpFeeConfig.default_order_type || 'taker') === 'maker' ? Number(_alpFeeConfig.maker_bps || 15) : Number(_alpFeeConfig.taker_bps || 25);
+  return Number(notional || 0) * bps / 10000;
+}}
+
+function alpLiveRenderOpenFeePreview(positions, riskMap) {{
+  positions = positions || [];
+  riskMap = riskMap || {{}};
+  var emptyEl = document.getElementById('alpFeeOpenEmpty');
+  var tableEl = document.getElementById('alpFeeOpenTable');
+  var body = document.getElementById('alpFeeOpenBody');
+  var openNetEl = document.getElementById('alpFeeOpenNet');
+  if (!emptyEl || !tableEl || !body) return;
+  if (!positions.length) {{
+    emptyEl.style.display = 'block';
+    tableEl.style.display = 'none';
+    if (openNetEl) openNetEl.textContent = '—';
+    return;
+  }}
+  emptyEl.style.display = 'none';
+  tableEl.style.display = 'block';
+  body.innerHTML = '';
+  var totalNet = 0;
+  var totalFees = 0;
+  positions.forEach(function(p) {{
+    var sym = p.symbol || '?';
+    var r = riskMap[sym] || riskMap[String(sym).replace('/', '')] || {{}};
+    var entryNotional = Number(r.entry_notional || p.cost_basis || 0);
+    var markNotional = Number(p.market_value || 0);
+    var entryPrice = Number(r.entry_price || p.avg_entry_price || 0);
+    var markPrice = Number(p.current_price || 0);
+    var gross = markNotional - entryNotional;
+    var fees = alpFeeEstimate(entryNotional) + alpFeeEstimate(markNotional);
+    var net = gross - fees;
+    totalNet += net;
+    totalFees += fees;
+    var grossColor = gross >= 0 ? 'var(--lime)' : 'var(--red)';
+    var netColor = net >= 0 ? 'var(--lime)' : 'var(--red)';
+    body.innerHTML += '<tr>' +
+      '<td style="font-weight:700;color:var(--cyan);">' + sym + '<span class="muted-line">' + (r.strategy || 'manual/legacy') + '</span></td>' +
+      '<td>' + fmtUSD(entryNotional) + '<span class="muted-line">@ ' + (entryPrice ? fmtUSD(entryPrice) : '—') + '</span></td>' +
+      '<td>' + fmtUSD(markNotional) + '<span class="muted-line">@ ' + (markPrice ? fmtUSD(markPrice) : '—') + '</span></td>' +
+      '<td style="color:' + grossColor + ';font-weight:700;">' + (gross >= 0 ? '+' : '') + fmtUSD(gross) + '</td>' +
+      '<td style="color:var(--amber);">' + fmtUSD(fees) + '</td>' +
+      '<td style="color:' + netColor + ';font-weight:800;">' + (net >= 0 ? '+' : '') + fmtUSD(net) + '</td>' +
+      '</tr>';
+  }});
+  setCardText('alpFeeOpenNet', (totalNet >= 0 ? '+' : '') + fmtUSD(totalNet), totalNet >= 0 ? 'var(--lime)' : 'var(--red)');
+}}
+
 async function alpLiveRefreshPositions(opts) {{
   if (!alpLiveConnected) return;
   opts = opts || {{}};
@@ -2934,6 +3026,7 @@ async function alpLiveRefreshPositions(opts) {{
         '</tr>' +
         '<tr class="reason-row"><td colspan="8"><strong>Why:</strong> ' + esc(reason) + '</td></tr>';
     }});
+    alpLiveRenderOpenFeePreview(positions, riskMap);
     if (data.summary) {{
       var s = data.summary;
       var tColor = s.total_unrealized_pl >= 0 ? 'var(--lime)' : 'var(--red)';
@@ -2981,6 +3074,53 @@ async function alpLiveRefreshJournal() {{
         '</div>';
     }}).join('');
   }} catch(e) {{}}
+}}
+
+async function alpLiveRefreshFeeAnalysis() {{
+  try {{
+    var data = await apiGet('/api/alpaca/fee-analysis?live=0');
+    if (data.fee_config) _alpFeeConfig = data.fee_config;
+    var s = data.summary || {{}};
+    var net = Number(s.realized_net_pl || 0);
+    var fees = Number(s.realized_estimated_fees || 0);
+    setCardText('alpFeeRealizedNet', (net >= 0 ? '+' : '') + fmtUSD(net), net >= 0 ? 'var(--lime)' : 'var(--red)');
+    setCardText('alpFeeRealizedFees', fmtUSD(fees), 'var(--amber)');
+    setCardText('alpFeeWinRate', s.net_win_rate === null || s.net_win_rate === undefined ? '—' : Number(s.net_win_rate).toFixed(1) + '%');
+
+    var closed = data.closed_trades || [];
+    var emptyEl = document.getElementById('alpFeeClosedEmpty');
+    var tableEl = document.getElementById('alpFeeClosedTable');
+    var body = document.getElementById('alpFeeClosedBody');
+    if (!emptyEl || !tableEl || !body) return;
+    if (!closed.length) {{
+      emptyEl.style.display = 'block';
+      tableEl.style.display = 'none';
+      body.innerHTML = '';
+      return;
+    }}
+    emptyEl.style.display = 'none';
+    tableEl.style.display = 'block';
+    body.innerHTML = '';
+    closed.slice(0, 40).forEach(function(t) {{
+      var gross = Number(t.gross_pl || 0);
+      var netPl = Number(t.net_pl || 0);
+      var grossColor = gross >= 0 ? 'var(--lime)' : 'var(--red)';
+      var netColor = netPl >= 0 ? 'var(--lime)' : 'var(--red)';
+      var ts = t.timestamp ? new Date(t.timestamp).toLocaleString() : '—';
+      body.innerHTML += '<tr>' +
+        '<td style="font-size:0.82em;">' + ts + '</td>' +
+        '<td style="font-weight:700;color:var(--cyan);">' + (t.symbol || '—') + '<span class="muted-line">' + (t.strategy || 'unknown') + '</span></td>' +
+        '<td>' + fmtUSD(t.entry_notional || 0) + '<span class="muted-line">@ ' + (t.entry_price ? fmtUSD(t.entry_price) : '—') + '</span></td>' +
+        '<td>' + fmtUSD(t.exit_notional || 0) + '<span class="muted-line">@ ' + (t.exit_price ? fmtUSD(t.exit_price) : '—') + '</span></td>' +
+        '<td style="color:' + grossColor + ';font-weight:700;">' + (gross >= 0 ? '+' : '') + fmtUSD(gross) + '</td>' +
+        '<td style="color:var(--amber);">' + fmtUSD(t.total_fees || 0) + '</td>' +
+        '<td style="color:' + netColor + ';font-weight:800;">' + (netPl >= 0 ? '+' : '') + fmtUSD(netPl) + '<span class="muted-line" style="color:' + netColor + ';">' + (Number(t.net_pl_pct || 0) >= 0 ? '+' : '') + Number(t.net_pl_pct || 0).toFixed(2) + '%</span></td>' +
+        '<td style="max-width:280px;">' + (t.exit_reason || '—') + '</td>' +
+        '</tr>';
+    }});
+  }} catch(e) {{
+    console.error('Fee analysis refresh error:', e);
+  }}
 }}
 
 async function alpLiveRefreshOrders() {{
@@ -3045,7 +3185,7 @@ async function alpLiveTrade(side) {{
       resultEl.style.color = 'var(--lime)';
       resultEl.textContent = '✅ ' + (data.side||side).toUpperCase() + ' ' + data.symbol + ' — ' +
         (data.status || 'submitted') + (data.filled_avg_price ? ' at ' + fmtUSD(data.filled_avg_price) : '');
-      setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); }}, 2000);
+      setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); alpLiveRefreshFeeAnalysis(); }}, 2000);
     }}
   }} catch(e) {{
     resultEl.style.background = 'rgba(255,69,58,0.1)';
@@ -3059,7 +3199,7 @@ async function alpLiveClosePos(symbol) {{
   try {{
     var data = await apiPost('/api/alpaca/close-position', {{ confirm: true, symbol: symbol }});
     if (data.error) {{ alert('Error: ' + data.error); }}
-    else {{ setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); }}, 2000); }}
+    else {{ setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); alpLiveRefreshFeeAnalysis(); }}, 2000); }}
   }} catch(e) {{ alert('Error: ' + e.message); }}
 }}
 
@@ -3067,7 +3207,7 @@ async function alpLiveCloseAll() {{
   if (!confirm('Close ALL open Alpaca positions?')) return;
   try {{
     var data = await apiPost('/api/alpaca/close-all', {{ confirm: true }});
-    setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); }}, 2000);
+    setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); alpLiveRefreshFeeAnalysis(); }}, 2000);
   }} catch(e) {{ alert('Error: ' + e.message); }}
 }}
 
@@ -3258,6 +3398,7 @@ async function alpAutoOneClick() {{
     await new Promise(function(r) {{ setTimeout(r, 2000); }});
     await alpLiveRefreshPositions();
     await alpLiveRefreshOrders();
+    await alpLiveRefreshFeeAnalysis();
     await alpAutoLoadStatus();
     await loadOverviewAccount();
     step(3, 'Dashboard refreshed', 'done');
