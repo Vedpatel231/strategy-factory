@@ -5,7 +5,7 @@ Run the dashboard + auto-trader 24/7 on Railway. Open the dashboard each morning
 ## What gets deployed
 
 - **Flask web server** on port `$PORT` (set by Railway)
-- **Auto-trader background thread** that re-analyzes bots and rebalances every 30 minutes
+- **Auto-trader background threads** for simulator and Alpaca, with Alpaca set to a 15-minute cycle by default
 - **Persistent volume** at `/data` holding SQLite DB, paper account state, learning state, logs
 - **HTTP Basic Auth** protecting the public URL (required on Railway)
 
@@ -50,10 +50,14 @@ In the service **Variables** tab, add:
 | `DASHBOARD_USERNAME` | `admin` or whatever you like | optional |
 | `STRATEGY_FACTORY_DATA_DIR` | `/data` | **YES** |
 | `STRATEGY_FACTORY_REPORT_DIR` | `/data/reports` | **YES** |
-| `AUTO_TRADE_INTERVAL_MIN` | `30` | optional |
+| `ALPACA_API_KEY` | your Alpaca paper API key | **YES for Alpaca trading** |
+| `ALPACA_API_SECRET` | your Alpaca paper API secret | **YES for Alpaca trading** |
+| `ALPACA_AUTO_TRADE_INTERVAL_MIN` | `15` | recommended |
+| `AUTO_TRADE_INTERVAL_MIN` | `30` | optional simulator interval |
+| `INTRADAY_GATE_ENABLED` | `true` | recommended |
 | `RAILWAY_ENVIRONMENT` | leave as-is, Railway sets this automatically | auto |
 
-**If `DASHBOARD_PASSWORD` is missing, the service will refuse to start** — this is a safety check so your trading panel can never be exposed to strangers.
+If `DASHBOARD_PASSWORD` is missing, the service still starts, but auth is disabled. For Railway, set it so the dashboard is not exposed publicly.
 
 ### Step 5 — Wait for the build to finish
 
@@ -69,9 +73,9 @@ Check the **Deploy Logs** tab. You should see:
 [entrypoint] DB not found at /data/strategy_factory.db, seeding...
 [entrypoint] DB seeded ✓
 [entrypoint] Dashboard generated ✓
-[entrypoint] Bootstrap complete — handing off to web server.
+[entrypoint] Bootstrap complete — starting gunicorn via exec...
 [INFO] Starting gunicorn
-[INFO] Listening at: http://0.0.0.0:8765
+[INFO] Listening at: http://0.0.0.0:$PORT
 ```
 
 ### Step 6 — Open your URL
@@ -82,18 +86,18 @@ Railway gives you a free subdomain like `strategy-factory-production.up.railway.
 2. Browser prompts for the username/password you set
 3. Dashboard loads
 
-### Step 7 — Enable auto-trading
+### Step 7 — Enable Alpaca auto-trading
 
-1. Click the **💵 Paper Trading** tab
-2. Click **🔌 Connect** (initializes the $1,000 paper account)
-3. Scroll to **🤖 Auto-Trading** section
-4. Click **▶️ Enable Auto-Trading**
+1. Open the **Alpaca** page
+2. Click **Connect** and confirm the Alpaca paper account loads
+3. Confirm the page shows a `15 min` auto-trading interval
+4. Enable Alpaca auto-trading
 5. Optionally click **⚡ Run Cycle Now** for the first pass
 
-Within 30 minutes (or immediately if you clicked Run Now), the system will:
+Within 15 minutes (or immediately if you clicked Run Now), the system will:
 - Re-evaluate all 18 bots
 - Regenerate the portfolio allocation
-- Rebalance your paper account to match
+- Apply the intraday gate and rebalance your Alpaca paper account
 
 From now on, check the dashboard each morning to see overnight P&L.
 
@@ -114,11 +118,11 @@ From now on, check the dashboard each morning to see overnight P&L.
 
 | Symptom | Fix |
 |---|---|
-| `DASHBOARD_PASSWORD is required when deployed` | Add it as an env var |
+| Dashboard opens without auth | Set `DASHBOARD_PASSWORD` in Railway Variables |
 | Dashboard loads but Connect button fails | Check logs — Binance might be blocked in your Railway region. Move the service region in Settings. |
-| Auto-trader never runs | Check logs for `AutoTrader thread started`; ensure `AUTO_TRADE_INTERVAL_MIN` is set |
+| Alpaca auto-trader never runs | Check logs for `AlpacaAutoTrader thread started`; ensure `ALPACA_AUTO_TRADE_INTERVAL_MIN=15` is set |
 | State resets on every deploy | Verify the volume is mounted at `/data`, not a different path |
-| Dashboard doesn't reflect recent runs | Force-refresh browser (`Cmd+Shift+R`) or wait 30s for the auto-refresh |
+| Dashboard doesn't reflect recent runs | Force-refresh browser (`Cmd+Shift+R`) or wait for the page refresh; Alpaca live numbers update every second |
 | Orders fail with "price fetch failed" | Binance API geo-blocks some regions — switch Railway region to US East |
 
 ## Updating the deployment
