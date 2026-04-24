@@ -423,9 +423,12 @@ def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None):
     for pos in open_positions or []:
         symbol = pos.get("symbol")
         state = risk_state.get(symbol, {}) if isinstance(risk_state, dict) else {}
-        entry_notional = _as_float(state.get("entry_notional") or pos.get("cost_basis"))
+        # Alpaca's live position cost_basis is the authoritative full basis for
+        # scaled-in positions. Fall back to the risk book only when broker data
+        # is unavailable.
+        entry_notional = _as_float(pos.get("cost_basis") or state.get("entry_notional"))
         exit_notional = _as_float(pos.get("market_value"))
-        entry_price = _as_float(state.get("entry_price") or pos.get("avg_entry_price"))
+        entry_price = _as_float(pos.get("avg_entry_price") or state.get("entry_price"))
         current_price = _as_float(pos.get("current_price"))
         gross_pl = exit_notional - entry_notional
         entry_fee = estimate_alpaca_fee(entry_notional, order_type)

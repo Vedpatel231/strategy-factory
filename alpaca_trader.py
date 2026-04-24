@@ -553,6 +553,17 @@ class AlpacaTrader:
 
         if side == "buy" and not order_result.get("error"):
             entry_price = order_result.get("filled_avg_price") or self.client.get_latest_price(sym)
+            entry_notional = order_usd
+            # Prefer Alpaca's aggregated position basis after the fill. This keeps
+            # the risk book aligned with the full live position instead of only
+            # the latest buy notional when a symbol is scaled in over time.
+            try:
+                position = self.client.get_position(sym)
+                if position:
+                    entry_price = position.get("avg_entry_price") or entry_price
+                    entry_notional = position.get("cost_basis") or entry_notional
+            except Exception:
+                pass
             stop, take, trail = self._risk_params(signal)
             self.risk_book.register_entry(
                 symbol=sym,
@@ -560,7 +571,7 @@ class AlpacaTrader:
                 regime=event["regime"],
                 confidence=event["confidence"],
                 entry_price=entry_price,
-                notional=order_usd,
+                notional=entry_notional,
                 stop_loss_pct=stop,
                 take_profit_pct=take,
                 trailing_stop_pct=trail,
@@ -665,10 +676,17 @@ class AlpacaTrader:
                 close_result["reason"] = reason
                 close_result["side"] = "close"
                 orders.append(close_result)
+                close_entry_state = dict(state)
+                close_entry_state["entry_notional"] = float(
+                    pos.get("cost_basis", 0) or state.get("entry_notional", 0) or 0
+                )
+                close_entry_state["entry_price"] = float(
+                    pos.get("avg_entry_price", 0) or state.get("entry_price", 0) or 0
+                )
                 # PHASE 6: Record real trade outcome in learning engine
                 if self.learner:
                     try:
-                        entry_notional = float(state.get("entry_notional", 0) or 0)
+                        entry_notional = float(close_entry_state.get("entry_notional", 0) or 0)
                         exit_notional = float(pos.get("market_value", 0) or 0)
                         # Estimate net P&L (gross P&L minus ~0.5% round-trip fee)
                         gross_pl = exit_notional - entry_notional
@@ -687,7 +705,7 @@ class AlpacaTrader:
                     "symbol": sym,
                     "side": "close",
                     "reason": reason,
-                    "entry_state": state,
+                    "entry_state": close_entry_state,
                     "exit_price": current_price,
                     "exit_notional": pos.get("market_value"),
                     "unrealized_pl_pct": round(pl_pct, 2),

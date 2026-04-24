@@ -3544,9 +3544,11 @@ function alpLiveRenderOpenFeePreview(positions, riskMap) {{
   positions.forEach(function(p) {{
     var sym = p.symbol || '?';
     var r = riskMap[sym] || riskMap[String(sym).replace('/', '')] || {{}};
-    var entryNotional = Number(r.entry_notional || p.cost_basis || 0);
+    // Always use Alpaca cost_basis — risk book entry_notional only tracks
+    // the last fill, not accumulated position cost.
+    var entryNotional = Number(p.cost_basis || 0);
     var markNotional = Number(p.market_value || 0);
-    var entryPrice = Number(r.entry_price || p.avg_entry_price || 0);
+    var entryPrice = Number(p.avg_entry_price || 0);
     var markPrice = Number(p.current_price || 0);
     var gross = markNotional - entryNotional;
     var fees = alpFeeEstimate(entryNotional) + alpFeeEstimate(markNotional);
