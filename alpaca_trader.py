@@ -430,11 +430,20 @@ class AlpacaTrader:
                 del target_by_symbol[sym]
 
     def _risk_params(self, signal):
+        """Compute per-position risk levels, fee-aware.
+
+        Take-profit is padded by the estimated round-trip fee (~0.50%) so that
+        a TP exit always locks in real profit after costs.
+        """
+        from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
+        round_trip_fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 100.0  # ~0.50%
+
         features = signal.get("features", {}) if isinstance(signal, dict) else {}
         atr_pct = float(features.get("atr_pct_15m", 0.0) or 0.0)
         confidence = float(signal.get("confidence", 0.0) or 0.0) if isinstance(signal, dict) else 0.0
         stop = max(BASE_STOP_LOSS_PCT, min(7.0, atr_pct * 1.6 if atr_pct else BASE_STOP_LOSS_PCT))
-        take = max(BASE_TAKE_PROFIT_PCT, stop * (1.6 + confidence * 0.7))
+        take_raw = max(BASE_TAKE_PROFIT_PCT, stop * (1.6 + confidence * 0.7))
+        take = take_raw + round_trip_fee_pct  # pad TP by fee so net P&L is always positive
         trail = max(BASE_TRAILING_STOP_PCT, min(5.0, stop * 0.7))
         return round(stop, 2), round(take, 2), round(trail, 2)
 
