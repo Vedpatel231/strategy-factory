@@ -1003,7 +1003,44 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
           <div class="section-sub">Real Alpaca paper decisions only. Seeded/backtest metrics are not included here.</div>
         </div>
       </div>
-      <div id="alpLiveJournalBody" style="max-height:280px;overflow:auto;color:var(--text-dim);font-size:0.88em;">No journal events loaded.</div>
+    <div id="alpLiveJournalBody" style="max-height:280px;overflow:auto;color:var(--text-dim);font-size:0.88em;">No journal events loaded.</div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Live Guards & Exit Readout</div>
+          <div class="section-sub">Shows when the system is being throttled, what is being blocked, and which exit reasons are actually firing.</div>
+        </div>
+      </div>
+      <div class="metric-grid">
+        <div class="metric-card"><div class="metric-label">Cooldown Symbols</div><div id="alpGuardCooldown" class="metric-value">—</div><div class="metric-sub">Loss exits in cooldown window</div></div>
+        <div class="metric-card"><div class="metric-label">Daily Trade Caps</div><div id="alpGuardTradeCaps" class="metric-value">—</div><div class="metric-sub">Symbols at max entries today</div></div>
+        <div class="metric-card"><div class="metric-label">Loss Exits 24h</div><div id="alpGuardLossExits" class="metric-value">—</div><div class="metric-sub">Recent red closes</div></div>
+        <div class="metric-card"><div class="metric-label">Learning Blocks</div><div id="alpGuardBlocks" class="metric-value">—</div><div class="metric-sub">Blocked strategy-regime pairs</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <div style="font-weight:600;margin:10px 0 8px;">Recent Exit Reasons</div>
+          <div id="alpGuardExitEmpty" style="color:var(--text-dim);padding:12px 0;">No recent exit reasons yet.</div>
+          <div id="alpGuardExitTable" class="table-wrap" style="display:none;">
+            <table class="data-table compact">
+              <thead><tr><th>Exit Type</th><th class="num">Count</th></tr></thead>
+              <tbody id="alpGuardExitBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div style="font-weight:600;margin:10px 0 8px;">Current Learning Blocks</div>
+          <div id="alpGuardBlockEmpty" style="color:var(--text-dim);padding:12px 0;">No strategy blocks active.</div>
+          <div id="alpGuardBlockTable" class="table-wrap" style="display:none;">
+            <table class="data-table compact">
+              <thead><tr><th>Strategy</th><th>Regime</th><th class="num">Trades</th><th class="num">Win Rate</th></tr></thead>
+              <tbody id="alpGuardBlockBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Auto-Trade Controls -->
@@ -1157,6 +1194,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="metric-card"><div class="metric-label">Symbols Checked</div><div class="metric-value" id="signalsSymbols">—</div><div class="metric-sub">Latest intraday cycle</div></div>
     <div class="metric-card"><div class="metric-label">Tradable Signals</div><div class="metric-value" id="signalsTradable" style="color:var(--lime);">—</div><div class="metric-sub">Passed quality gate</div></div>
     <div class="metric-card"><div class="metric-label">Rejected / Waiting</div><div class="metric-value" id="signalsRejected" style="color:var(--amber);">—</div><div class="metric-sub">Skipped with reason</div></div>
+    <div class="metric-card"><div class="metric-label">Learning Blocks</div><div class="metric-value" id="signalsBlocked" style="color:var(--red);">—</div><div class="metric-sub">Strategy-regime pairs suppressed</div></div>
+    <div class="metric-card"><div class="metric-label">Top Reject Driver</div><div class="metric-value" id="signalsTopReject" style="font-size:1.1em;">—</div><div class="metric-sub">Most common skip reason</div></div>
   </div>
   <div class="section-card">
     <div class="section-header">
@@ -1239,6 +1278,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="metric-card"><div class="metric-label">Trusted Strategies</div><div class="metric-value" id="learnTrusted">—</div><div class="metric-sub">10+ closed trades</div></div>
     <div class="metric-card"><div class="metric-label">Collecting Data</div><div class="metric-value" id="learnCollecting">—</div><div class="metric-sub">Not enough exits yet</div></div>
     <div class="metric-card"><div class="metric-label">Downweight Candidates</div><div class="metric-value" id="learnDownweight" style="color:var(--red);">—</div><div class="metric-sub">Negative or weak real evidence</div></div>
+    <div class="metric-card"><div class="metric-label">Active Blocks</div><div class="metric-value" id="learnBlocked" style="color:var(--red);">—</div><div class="metric-sub">Strategy-regime pairs currently blocked</div></div>
   </div>
   <div class="section-card">
     <div class="section-header"><div><div class="section-title">Real Paper Learning Board</div><div class="section-sub">Operator readout from the persistent fee-aware ledger.</div></div><span class="status-pill" id="learnLiveStatus">Loading</span></div>
@@ -1246,6 +1286,14 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div id="learnRealTable" class="table-wrap" style="display:none;"><table class="data-table compact">
       <thead><tr><th>Strategy</th><th class="num">Closed</th><th class="num">Net P&L</th><th class="num">Win Rate</th><th class="num">Avg Net</th><th>Learning Action</th><th>Reason</th></tr></thead>
       <tbody id="learnRealBody"></tbody>
+    </table></div>
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Real Regime Blocks</div><div class="section-sub">These are the strategy/regime combinations the live learner is actively suppressing based only on real paper outcomes.</div></div></div>
+    <div id="learnBlockEmpty" class="read-only-note">No active real-performance blocks right now.</div>
+    <div id="learnBlockTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Strategy</th><th>Regime</th><th class="num">Trades</th><th class="num">Win Rate</th><th class="num">Net P&L</th><th>Reason</th></tr></thead>
+      <tbody id="learnBlockBody"></tbody>
     </table></div>
   </div>
   <div class="section-card">
@@ -1843,7 +1891,7 @@ function sortTable(col) {{
 }}
 
 // ── Operator Insight Pages ─────────────────────────────────────
-var _insightCache = {{state:null, journal:null, ledger:null, fetchedAt:0}};
+var _insightCache = {{state:null, journal:null, ledger:null, learning:null, fetchedAt:0}};
 var _insightInFlight = false;
 
 function escHtml(txt) {{
@@ -1890,11 +1938,74 @@ async function loadInsightData(force) {{
     var state = await apiGet('/api/intraday/state').catch(function() {{ return {{symbols: {{}}}}; }});
     var journal = await apiGet('/api/trade-journal?limit=200').catch(function() {{ return {{events: []}}; }});
     var ledger = await apiGet('/api/alpaca/trade-ledger?limit=500').catch(function() {{ return {{rows: [], summary: {{}}}}; }});
-    _insightCache = {{state: state, journal: journal, ledger: ledger, fetchedAt: Date.now()}};
+    var learning = await apiGet('/api/learning/live-status').catch(function() {{ return {{strategies: [], blocked_pairs: []}}; }});
+    _insightCache = {{state: state, journal: journal, ledger: ledger, learning: learning, fetchedAt: Date.now()}};
   }} finally {{
     _insightInFlight = false;
   }}
   return _insightCache;
+}}
+
+function summarizeSignalReasons(symbols) {{
+  var counts = {{}};
+  (symbols || []).forEach(function(s) {{
+    if (s && !s.accepted) {{
+      var reason = String(s.reason || 'Unknown skip reason');
+      var key = reason.split(';')[0].trim() || 'Unknown skip reason';
+      counts[key] = (counts[key] || 0) + 1;
+    }}
+  }});
+  var items = Object.keys(counts).map(function(k) {{ return {{reason:k, count:counts[k]}}; }});
+  items.sort(function(a,b) {{ return b.count - a.count; }});
+  return items;
+}}
+
+function summarizeGuardData(events) {{
+  var now = new Date();
+  var today = now.toISOString().slice(0, 10);
+  var perSymbolBuys = {{}};
+  var cooldownSymbols = {{}};
+  var lossExits24h = 0;
+  var exitReasonCounts = {{}};
+
+  (events || []).forEach(function(e) {{
+    var symbol = e.symbol || '';
+    var ts = String(e.timestamp || e.closed_at || '');
+    if (e.event === 'order_submitted' && e.side === 'buy' && symbol && ts.slice(0, 10) === today) {{
+      perSymbolBuys[symbol] = (perSymbolBuys[symbol] || 0) + 1;
+    }}
+    if (e.event === 'position_closed') {{
+      var plPct = Number(e.unrealized_pl_pct || 0);
+      var dt = ts ? new Date(ts) : null;
+      var hoursAgo = dt && !isNaN(dt.getTime()) ? ((now - dt) / 3600000) : null;
+      if (hoursAgo !== null && hoursAgo <= 24 && plPct < 0) {{
+        lossExits24h += 1;
+      }}
+      if (hoursAgo !== null && hoursAgo <= 3 && plPct < 0 && symbol) {{
+        cooldownSymbols[symbol] = true;
+      }}
+      var reason = String(e.reason || 'Unknown exit');
+      var key = 'Other';
+      if (reason.indexOf('Stop loss') === 0) key = 'Stop loss';
+      else if (reason.indexOf('Take profit') === 0) key = 'Take profit';
+      else if (reason.indexOf('Trailing stop') === 0) key = 'Trailing stop';
+      else if (reason.indexOf('Regime exit') === 0) key = 'Regime exit';
+      else if (reason.indexOf('Early timeout') === 0) key = 'Early timeout';
+      else if (reason.indexOf('Timeout exit') === 0) key = 'Timeout exit';
+      else if (reason.indexOf('Stale position') === 0) key = 'Stale exit';
+      exitReasonCounts[key] = (exitReasonCounts[key] || 0) + 1;
+    }}
+  }});
+
+  var cappedSymbols = Object.keys(perSymbolBuys).filter(function(sym) {{ return perSymbolBuys[sym] >= 3; }});
+  var exitRows = Object.keys(exitReasonCounts).map(function(k) {{ return {{reason:k, count:exitReasonCounts[k]}}; }});
+  exitRows.sort(function(a,b) {{ return b.count - a.count; }});
+  return {{
+    cooldownSymbols: Object.keys(cooldownSymbols).sort(),
+    cappedSymbols: cappedSymbols.sort(),
+    lossExits24h: lossExits24h,
+    exitRows: exitRows
+  }};
 }}
 
 function groupLedger(rows, key) {{
@@ -1967,15 +2078,19 @@ async function renderStrategyScorecard(force) {{
 async function renderSignalBoard(force) {{
   var data = await loadInsightData(force);
   var symbols = Object.values((data.state && data.state.symbols) || {{}});
+  var blockedPairs = (data.learning && data.learning.blocked_pairs) || [];
   var body = document.getElementById('signalsBody');
   var table = document.getElementById('signalsTable');
   var empty = document.getElementById('signalsEmpty');
   if (!body || !table || !empty) return;
   var tradable = symbols.filter(function(s) {{ return !!s.accepted; }}).length;
   var rejected = symbols.length - tradable;
+  var topRejects = summarizeSignalReasons(symbols);
   setCardText('signalsSymbols', String(symbols.length));
   setCardText('signalsTradable', String(tradable));
   setCardText('signalsRejected', String(rejected));
+  setCardText('signalsBlocked', String(blockedPairs.length), blockedPairs.length ? 'var(--red)' : null);
+  setCardText('signalsTopReject', topRejects.length ? topRejects[0].reason : '—');
   setStatusPill('signalsLiveStatus', symbols.length ? 'Live state loaded' : 'No state yet', symbols.length ? 'ok' : 'warn');
   if (!symbols.length) {{
     table.style.display = 'none';
@@ -2050,12 +2165,14 @@ async function renderPerformancePage(force) {{
 async function renderLearningPage(force) {{
   var data = await loadInsightData(force);
   var groups = groupLedger((data.ledger && data.ledger.rows) || [], 'strategy');
+  var blockedPairs = (data.learning && data.learning.blocked_pairs) || [];
   var trusted = groups.filter(function(g) {{ return g.trades >= 10; }}).length;
   var collecting = groups.filter(function(g) {{ return g.trades < 10; }}).length;
   var down = groups.filter(function(g) {{ return actionForGroup(g).label === 'Downweight'; }}).length;
   setCardText('learnTrusted', String(trusted));
   setCardText('learnCollecting', String(collecting));
   setCardText('learnDownweight', String(down));
+  setCardText('learnBlocked', String(blockedPairs.length), blockedPairs.length ? 'var(--red)' : null);
   setStatusPill('learnLiveStatus', groups.length ? 'Real ledger active' : 'Collecting', groups.length ? 'ok' : 'warn');
   var table = document.getElementById('learnRealTable');
   var empty = document.getElementById('learnRealEmpty');
@@ -2082,6 +2199,29 @@ async function renderLearningPage(force) {{
       '<td>' + escHtml(a.reason) + '</td>' +
       '</tr>';
   }}).join('');
+
+  var blockTable = document.getElementById('learnBlockTable');
+  var blockEmpty = document.getElementById('learnBlockEmpty');
+  var blockBody = document.getElementById('learnBlockBody');
+  if (blockTable && blockEmpty && blockBody) {{
+    if (!blockedPairs.length) {{
+      blockTable.style.display = 'none';
+      blockEmpty.style.display = 'block';
+    }} else {{
+      blockEmpty.style.display = 'none';
+      blockTable.style.display = 'block';
+      blockBody.innerHTML = blockedPairs.map(function(row) {{
+        return '<tr>' +
+          '<td><strong>' + escHtml(row.strategy || 'unknown') + '</strong></td>' +
+          '<td>' + escHtml(row.regime || 'unknown') + '</td>' +
+          '<td class="num">' + Number(row.trades || 0) + '</td>' +
+          '<td class="num">' + pct(row.win_rate || 0) + '</td>' +
+          '<td class="num" style="color:' + plColor(row.pnl || 0) + ';">' + signedMoney(row.pnl || 0) + '</td>' +
+          '<td>' + escHtml(shortText(row.reason || '', 180)) + '</td>' +
+          '</tr>';
+      }}).join('');
+    }}
+  }}
 }}
 
 async function renderRegimePage(force) {{
@@ -3563,6 +3703,56 @@ async function alpLiveRefreshJournal() {{
         '<span>' + reason + '</span>' +
         '</div>';
     }}).join('');
+    await alpLiveRefreshGuardReadout(events);
+  }} catch(e) {{}}
+}}
+
+async function alpLiveRefreshGuardReadout(events) {{
+  try {{
+    var learning = await apiGet('/api/learning/live-status').catch(function() {{ return {{blocked_pairs: []}}; }});
+    var blockedPairs = learning.blocked_pairs || [];
+    var guard = summarizeGuardData(events || []);
+    setCardText('alpGuardCooldown', String(guard.cooldownSymbols.length), guard.cooldownSymbols.length ? 'var(--amber)' : null);
+    setCardText('alpGuardTradeCaps', String(guard.cappedSymbols.length), guard.cappedSymbols.length ? 'var(--amber)' : null);
+    setCardText('alpGuardLossExits', String(guard.lossExits24h), guard.lossExits24h ? 'var(--red)' : null);
+    setCardText('alpGuardBlocks', String(blockedPairs.length), blockedPairs.length ? 'var(--red)' : null);
+
+    var exitEmpty = document.getElementById('alpGuardExitEmpty');
+    var exitTable = document.getElementById('alpGuardExitTable');
+    var exitBody = document.getElementById('alpGuardExitBody');
+    if (exitEmpty && exitTable && exitBody) {{
+      if (!guard.exitRows.length) {{
+        exitEmpty.style.display = 'block';
+        exitTable.style.display = 'none';
+      }} else {{
+        exitEmpty.style.display = 'none';
+        exitTable.style.display = 'block';
+        exitBody.innerHTML = guard.exitRows.map(function(row) {{
+          return '<tr><td>' + escHtml(row.reason) + '</td><td class="num">' + Number(row.count || 0) + '</td></tr>';
+        }}).join('');
+      }}
+    }}
+
+    var blockEmpty = document.getElementById('alpGuardBlockEmpty');
+    var blockTable = document.getElementById('alpGuardBlockTable');
+    var blockBody = document.getElementById('alpGuardBlockBody');
+    if (blockEmpty && blockTable && blockBody) {{
+      if (!blockedPairs.length) {{
+        blockEmpty.style.display = 'block';
+        blockTable.style.display = 'none';
+      }} else {{
+        blockEmpty.style.display = 'none';
+        blockTable.style.display = 'block';
+        blockBody.innerHTML = blockedPairs.slice(0, 8).map(function(row) {{
+          return '<tr>' +
+            '<td><strong>' + escHtml(row.strategy || 'unknown') + '</strong></td>' +
+            '<td>' + escHtml(row.regime || 'unknown') + '</td>' +
+            '<td class="num">' + Number(row.trades || 0) + '</td>' +
+            '<td class="num">' + pct(row.win_rate || 0) + '</td>' +
+            '</tr>';
+        }}).join('');
+      }}
+    }}
   }} catch(e) {{}}
 }}
 

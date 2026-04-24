@@ -720,6 +720,62 @@ def trade_journal():
         return jsonify({"error": str(e), "events": []})
 
 
+@app.route("/api/learning/live-status")
+@require_auth
+def learning_live_status():
+    """Return real-paper learning state and currently blocked strategy/regime pairs."""
+    try:
+        from learning_engine import LearningEngine
+
+        learner = LearningEngine()
+        strategies = []
+        blocked_pairs = []
+        for strategy_id, strategy_state in (learner.state.get("strategies") or {}).items():
+            real_regimes = strategy_state.get("real_regime_performance") or {}
+            total_trades = 0
+            total_wins = 0
+            total_pnl = 0.0
+            for regime, perf in real_regimes.items():
+                trades = int(perf.get("trades", 0) or 0)
+                wins = int(perf.get("wins", 0) or 0)
+                pnl = float(perf.get("pnl", 0) or 0)
+                total_trades += trades
+                total_wins += wins
+                total_pnl += pnl
+                blocked, reason = learner.should_block_strategy(strategy_id, regime)
+                if blocked:
+                    blocked_pairs.append({
+                        "strategy": strategy_id,
+                        "regime": regime,
+                        "trades": trades,
+                        "wins": wins,
+                        "win_rate": float(perf.get("win_rate", 0) or 0),
+                        "pnl": round(pnl, 2),
+                        "reason": reason,
+                    })
+            strategies.append({
+                "strategy": strategy_id,
+                "trades": total_trades,
+                "wins": total_wins,
+                "win_rate": round(total_wins / total_trades * 100, 1) if total_trades else 0.0,
+                "pnl": round(total_pnl, 2),
+                "real_regime_performance": real_regimes,
+                "real_symbol_performance": strategy_state.get("real_symbol_performance") or {},
+            })
+
+        blocked_pairs.sort(key=lambda row: (row["strategy"], row["regime"]))
+        strategies.sort(key=lambda row: (row["pnl"], row["trades"]), reverse=True)
+        return jsonify({
+            "source": "learning_engine_real_paper_state",
+            "seeded_metrics_included": False,
+            "strategies": strategies,
+            "blocked_pairs": blocked_pairs,
+        })
+    except Exception as e:
+        logger.error(f"Learning live status failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e), "strategies": [], "blocked_pairs": []})
+
+
 @app.route("/api/position-risk")
 @require_auth
 def position_risk():

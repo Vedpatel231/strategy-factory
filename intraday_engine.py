@@ -582,6 +582,13 @@ class IntradaySignalEngine:
     def __init__(self, data_provider=None):
         self.data = data_provider or MarketDataProvider()
         self.regime_detector = RegimeDetector()
+        # PHASE 6/7: Load learning engine for real-performance feedback
+        self._learner = None
+        try:
+            from learning_engine import LearningEngine
+            self._learner = LearningEngine()
+        except Exception:
+            pass
 
     def evaluate_symbol(self, symbol):
         frame_data = {}
@@ -610,14 +617,54 @@ class IntradaySignalEngine:
             return self._reject(symbol, "Liquidity/volume ratio below minimum",
                                 trade_regime, setup_regime, primary_confirm, confirm_regimes)
 
+        # ── PHASE 1 FIX: Higher-timeframe regime gate ──────────────────
+        # Hard-reject ONLY extreme_volatility (historically worst losses).
+        # trending_down / breakdown get a heavy confidence penalty instead
+        # of a hard block — they can still produce valid short-term entries.
+        daily_regime = confirm_regimes.get("1D")
+        if daily_regime and daily_regime.label == "extreme_volatility":
+            return self._reject(symbol,
+                f"1D regime '{daily_regime.label}' blocks new entries",
+                trade_regime, setup_regime, primary_confirm, confirm_regimes)
+        _1d_penalty_regimes = ("trending_down", "breakdown")
+        _1d_confidence_penalty = 1.0
+        if daily_regime and daily_regime.label in _1d_penalty_regimes:
+            _1d_confidence_penalty = 0.35  # applied after direction is resolved
+
+        # ── Collect signals per timeframe ─────────────────────────────
         signals = []
+        signals_by_tf = {}  # tf -> list of signals
         for tf in TRADE_TIMEFRAMES:
             f = frame_data[tf]
             regime = self.regime_detector.classify(f)
+            tf_signals = []
             for strategy in STRATEGIES:
+                # PHASE 4 FIX: Skip strategies in their bad regimes entirely.
+                if regime.label in strategy.bad_regimes:
+                    continue
+                # PHASE 6/7: Skip strategies proven to lose in this regime
+                if self._learner:
+                    blocked, _ = self._learner.should_block_strategy(strategy.name, regime.label)
+                    if blocked:
+                        continue
                 sig = strategy.evaluate(f, regime, tf)
-                if sig.action != "hold":
+                if sig.action != "hold" and sig.weighted_confidence() >= 0.35:
+                    # PHASE 1 FIX: Drop very weak individual signals (noise)
+                    tf_signals.append(sig)
                     signals.append(sig)
+            signals_by_tf[tf] = tf_signals
+
+        # ── PHASE 1 FIX: Multi-timeframe confirmation ────────────────
+        # Count how many timeframes agree on buy vs sell direction.
+        tf_buy = 0
+        tf_sell = 0
+        for tf, sigs in signals_by_tf.items():
+            tf_buy_score = sum(s.weighted_confidence() for s in sigs if s.action == "buy")
+            tf_sell_score = sum(s.weighted_confidence() for s in sigs if s.action == "sell")
+            if tf_buy_score > tf_sell_score and tf_buy_score > 0:
+                tf_buy += 1
+            elif tf_sell_score > tf_buy_score and tf_sell_score > 0:
+                tf_sell += 1
 
         buy_score = sum(s.weighted_confidence() for s in signals if s.action == "buy")
         sell_score = sum(s.weighted_confidence() for s in signals if s.action == "sell")
@@ -632,13 +679,38 @@ class IntradaySignalEngine:
                 direction = "sell"
                 confidence = sell_score / total_score
 
+        # PHASE 1 FIX: Require at least 2 of 3 timeframes to agree on
+        # direction for buy entries.  Single-TF signals are too noisy.
+        agreeing_tfs = tf_buy if direction == "buy" else tf_sell
+        if direction == "buy" and agreeing_tfs < 2:
+            confidence *= 0.4  # heavy penalty — likely won't pass threshold
+
+        # ── Higher-TF alignment penalty (strengthened) ────────────────
         alignment_penalty = 0.0
         for tf, confirm_regime in confirm_regimes.items():
             if direction == "buy" and confirm_regime.trend_bias == "down":
-                alignment_penalty += 0.12 if tf == "4h" else 0.10
+                alignment_penalty += 0.18 if tf == "4h" else 0.15  # was 0.12/0.10
             if direction == "sell" and confirm_regime.trend_bias == "up":
-                alignment_penalty += 0.08 if tf == "4h" else 0.06
+                alignment_penalty += 0.10 if tf == "4h" else 0.08  # was 0.08/0.06
         confidence = max(0.0, confidence - alignment_penalty)
+
+        # PHASE 1 FIX: Require 1h trend alignment for buy entries.
+        # If 1h EMA20 slope is negative, buying into a falling setup is
+        # the #1 cause of timeout exits.
+        hourly_slope = frame_data["1h"].ema20_slope_pct
+        if direction == "buy" and hourly_slope < -0.05:
+            confidence *= 0.5  # strong penalty for buying against 1h trend
+
+        # PHASE 1 FIX: Choppy/range_bound 4h regime penalty for buys.
+        # Pullback_continuation and breakout strategies lose consistently
+        # in choppy conditions.
+        if direction == "buy" and primary_confirm.label in ("choppy", "range_bound", "high_volatility"):
+            confidence *= 0.7
+
+        # Apply deferred 1D regime penalty (trending_down / breakdown).
+        # Placed here so it stacks with all other penalties above.
+        if direction == "buy":
+            confidence *= _1d_confidence_penalty
 
         reasons = sorted(signals, key=lambda s: s.weighted_confidence(), reverse=True)[:5]
         accepted = direction in ("buy", "sell") and confidence >= MIN_SIGNAL_CONFIDENCE

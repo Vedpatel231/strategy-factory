@@ -49,6 +49,46 @@ class LearningEngine:
             },
         }
 
+    def _empty_regime_stats(self):
+        return {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0}
+
+    def _default_seeded_regime_performance(self):
+        return {
+            "trending_up": self._empty_regime_stats(),
+            "trending_down": self._empty_regime_stats(),
+            "mean_reverting": self._empty_regime_stats(),
+            "high_volatility": self._empty_regime_stats(),
+            "low_volatility": self._empty_regime_stats(),
+            "choppy": self._empty_regime_stats(),
+            "unknown": self._empty_regime_stats(),
+        }
+
+    def _default_real_regime_performance(self):
+        return {
+            "trending_up": self._empty_regime_stats(),
+            "trending_down": self._empty_regime_stats(),
+            "range_bound": self._empty_regime_stats(),
+            "choppy": self._empty_regime_stats(),
+            "breakout": self._empty_regime_stats(),
+            "breakdown": self._empty_regime_stats(),
+            "high_volatility": self._empty_regime_stats(),
+            "extreme_volatility": self._empty_regime_stats(),
+            "unknown": self._empty_regime_stats(),
+        }
+
+    def _normalize_real_regime(self, regime):
+        if not regime:
+            return "unknown"
+        regime = str(regime).strip().lower()
+        aliases = {
+            "mean_reverting": "range_bound",
+            "low_volatility": "range_bound",
+        }
+        regime = aliases.get(regime, regime)
+        if regime in self._default_real_regime_performance():
+            return regime
+        return "unknown"
+
     def load_state(self):
         """Load learning state from disk if it exists."""
         if os.path.exists(self.learning_state_file):
@@ -79,19 +119,118 @@ class LearningEngine:
         """
         if strategy_id not in self.state["strategies"]:
             self.state["strategies"][strategy_id] = {
-                "regime_performance": {
-                    "trending_up": {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0},
-                    "trending_down": {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0},
-                    "mean_reverting": {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0},
-                    "high_volatility": {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0},
-                    "low_volatility": {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0},
-                    "choppy": {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0},
-                    "unknown": {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0},
-                },
+                "regime_performance": self._default_seeded_regime_performance(),
+                "real_regime_performance": self._default_real_regime_performance(),
+                "real_symbol_performance": {},
                 "adaptation_history": [],
                 "pause_events": [],
             }
-        return self.state["strategies"][strategy_id]
+        strategy_state = self.state["strategies"][strategy_id]
+        strategy_state.setdefault("regime_performance", self._default_seeded_regime_performance())
+        strategy_state.setdefault("real_regime_performance", self._default_real_regime_performance())
+        strategy_state.setdefault("real_symbol_performance", {})
+        for regime_name, empty_stats in self._default_real_regime_performance().items():
+            strategy_state["real_regime_performance"].setdefault(regime_name, dict(empty_stats))
+        return strategy_state
+
+    # ── PHASE 6 FIX: Feed REAL Alpaca trade outcomes ──────────────
+    def record_real_trade(self, strategy_id, regime, net_pl, symbol=None, save=True):
+        """
+        Record a real Alpaca paper trade outcome into the learning state.
+        This is the critical link between real performance and strategy adaptation.
+
+        Args:
+            strategy_id: Strategy name (e.g. 'pullback_continuation', 'breakout')
+            regime: Market regime when trade was entered
+            net_pl: Net P&L after fees (positive = win, negative = loss)
+            symbol: Trading pair (optional, for per-symbol tracking)
+        """
+        strategy_state = self.get_strategy_state(strategy_id)
+
+        regime_key = self._normalize_real_regime(regime)
+        perf = strategy_state["real_regime_performance"][regime_key]
+
+        perf["trades"] += 1
+        perf["pnl"] = round(perf["pnl"] + net_pl, 2)
+        if net_pl > 0:
+            perf["wins"] += 1
+        perf["win_rate"] = round(perf["wins"] / perf["trades"] * 100, 1) if perf["trades"] > 0 else 0
+
+        # Track per-symbol performance
+        if symbol:
+            sym_perf = strategy_state["real_symbol_performance"].setdefault(
+                symbol, {"trades": 0, "wins": 0, "pnl": 0}
+            )
+            sym_perf["trades"] += 1
+            sym_perf["pnl"] = round(sym_perf["pnl"] + net_pl, 2)
+            if net_pl > 0:
+                sym_perf["wins"] += 1
+
+        if save:
+            self.save_state()
+
+    def get_strategy_real_win_rate(self, strategy_id, regime=None):
+        """Get real win rate for a strategy, optionally filtered by regime."""
+        strategy_state = self.get_strategy_state(strategy_id)
+        if regime:
+            regime_key = self._normalize_real_regime(regime)
+            perf = strategy_state["real_regime_performance"][regime_key]
+            return perf.get("win_rate", 0), perf.get("trades", 0)
+        # Overall across all regimes
+        total_trades = sum(p["trades"] for p in strategy_state["real_regime_performance"].values())
+        total_wins = sum(p["wins"] for p in strategy_state["real_regime_performance"].values())
+        if total_trades == 0:
+            return 0, 0
+        return round(total_wins / total_trades * 100, 1), total_trades
+
+    def should_block_strategy(self, strategy_id, regime):
+        """
+        PHASE 6: Return True if this strategy has proven to lose in this regime.
+        Requires at least 5 trades to have statistical confidence.
+        """
+        win_rate, trades = self.get_strategy_real_win_rate(strategy_id, regime)
+        if trades >= 5 and win_rate < 30:
+            return True, f"Strategy '{strategy_id}' has {win_rate}% real win rate in '{regime}' ({trades} trades)"
+        return False, ""
+
+    def ingest_trade_ledger(self):
+        """
+        PHASE 6: Bulk-import closed trades from the trade ledger CSV into
+        the learning state.  Idempotent — skips already-counted trade IDs.
+        """
+        try:
+            from trade_journal import load_trade_ledger
+            rows = load_trade_ledger(limit=500)
+            imported_ids = set(self.state.get("imported_trade_ids") or [])
+
+            new_count = 0
+            for row in rows:
+                trade_id = row.get("trade_id", "")
+                # Fallback ID when trade_id is missing — prevents all rows
+                # colliding on empty string and only first one being imported.
+                if not trade_id:
+                    trade_id = f"{row.get('symbol', 'UNK')}-{row.get('closed_at', row.get('timestamp', ''))}"
+                if not trade_id or trade_id in imported_ids:
+                    continue
+                strategy = row.get("strategy", "unknown")
+                regime = row.get("regime", "unknown")
+                try:
+                    net_pl = float(row.get("net_pl", 0) or 0)
+                except (TypeError, ValueError):
+                    net_pl = 0
+                symbol = row.get("symbol", "")
+                self.record_real_trade(strategy, regime, net_pl, symbol, save=False)
+                imported_ids.add(trade_id)
+                new_count += 1
+
+            self.state["imported_trade_ids"] = sorted(imported_ids)
+            if new_count:
+                self.save_state()
+            return new_count
+        except Exception as e:
+            import logging
+            logging.getLogger("learning_engine").warning(f"Trade ledger ingestion failed: {e}")
+            return 0
 
     def detect_regime(self, equity_curves):
         """

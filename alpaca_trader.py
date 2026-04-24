@@ -29,6 +29,9 @@ BASE_STOP_LOSS_PCT = float(os.environ.get("INTRADAY_BASE_STOP_LOSS_PCT", "3.5"))
 BASE_TAKE_PROFIT_PCT = float(os.environ.get("INTRADAY_BASE_TAKE_PROFIT_PCT", "6.0"))
 BASE_TRAILING_STOP_PCT = float(os.environ.get("INTRADAY_BASE_TRAILING_STOP_PCT", "2.5"))
 EXISTING_POSITION_DECAY_PCT = float(os.environ.get("INTRADAY_EXISTING_DECAY_PCT", "0.35"))
+# PHASE 3: Post-exit cooldown — don't re-enter a symbol for N hours after closing at a loss
+POST_EXIT_COOLDOWN_HOURS = float(os.environ.get("POST_EXIT_COOLDOWN_HOURS", "3.0"))
+MAX_TRADES_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_TRADES_PER_SYMBOL_DAY", "3"))
 
 # Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
 # If a portfolio symbol isn't in this set, its allocation gets redistributed.
@@ -77,6 +80,13 @@ class AlpacaTrader:
         self.journal = TradeJournal()
         self.risk_book = PositionRiskBook()
         self.signal_engine = IntradaySignalEngine()
+        # PHASE 6: Connect learning engine for real trade outcome tracking
+        try:
+            from learning_engine import LearningEngine
+            self.learner = LearningEngine()
+            self.learner.ingest_trade_ledger()  # catch up on any un-imported trades
+        except Exception:
+            self.learner = None
 
     def _load_runs(self):
         if os.path.exists(ALPACA_TRADE_HISTORY):
@@ -381,10 +391,63 @@ class AlpacaTrader:
 
         return results
 
+    def _check_post_exit_cooldown(self, symbol):
+        """PHASE 3: Check if symbol was recently closed at a loss.
+        Returns (blocked, reason) tuple."""
+        try:
+            from trade_journal import JOURNAL_FILE, _read_json
+            events = list(reversed(_read_json(JOURNAL_FILE, [])))
+            now = datetime.datetime.now(datetime.timezone.utc)
+            today_str = now.strftime("%Y-%m-%d")
+            symbol_trades_today = 0
+            for ev in events:
+                if ev.get("symbol") != symbol:
+                    continue
+                ts = ev.get("timestamp", ev.get("closed_at", ""))
+                if not ts:
+                    continue
+                # Count trades per symbol per day
+                if (
+                    ev.get("event") == "order_submitted"
+                    and ev.get("side") == "buy"
+                    and ts[:10] == today_str
+                ):
+                    symbol_trades_today += 1
+                # Check cooldown after losing close
+                if ev.get("event") == "position_closed":
+                    pl_pct = float(ev.get("unrealized_pl_pct", 0) or 0)
+                    if pl_pct < 0:
+                        try:
+                            closed_at = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            hours_since = (now - closed_at).total_seconds() / 3600
+                            if hours_since < POST_EXIT_COOLDOWN_HOURS:
+                                return True, f"Post-exit cooldown: closed at {pl_pct:.1f}% loss {hours_since:.1f}h ago"
+                        except Exception:
+                            pass
+                    break  # only check most recent close for this symbol
+            if symbol_trades_today >= MAX_TRADES_PER_SYMBOL_PER_DAY:
+                return True, f"Max {MAX_TRADES_PER_SYMBOL_PER_DAY} trades/day reached for {symbol}"
+        except Exception as e:
+            logger.debug(f"Cooldown check failed for {symbol}: {e}")
+        return False, ""
+
     def _apply_intraday_gate(self, target_by_symbol, positions, results):
         for sym in list(target_by_symbol.keys()):
             target = target_by_symbol[sym]
             existing = positions.get(sym)
+
+            # PHASE 3: Post-exit cooldown for new entries
+            if not existing:
+                blocked, cooldown_reason = self._check_post_exit_cooldown(sym)
+                if blocked:
+                    results["skipped"].append({
+                        "bot": f"{sym} ({len(target.get('bot_names', []))} bots)",
+                        "pair": sym,
+                        "reason": cooldown_reason,
+                    })
+                    del target_by_symbol[sym]
+                    continue
+
             signal = self.signal_engine.evaluate_symbol(sym)
             results["signals"][sym] = signal
             target["signal"] = signal
@@ -405,7 +468,18 @@ class AlpacaTrader:
 
             if signal.get("accepted") and signal.get("action") == "buy":
                 confidence = float(signal.get("confidence", 0.0))
-                multiplier = max(0.55, min(1.25, 0.55 + confidence * 0.8))
+                # PHASE 5 FIX: Scale position size by confidence AND volatility.
+                # High confidence + low ATR = full size.
+                # Low confidence or high ATR = reduced size.
+                atr_pct = float((signal.get("features", {}) or {}).get("atr_pct_15m", 0) or 0)
+                vol_penalty = 1.0
+                if atr_pct > 3.0:
+                    vol_penalty = 0.6   # high vol = smaller size
+                elif atr_pct > 2.0:
+                    vol_penalty = 0.75
+                elif atr_pct > 1.5:
+                    vol_penalty = 0.85
+                multiplier = max(0.4, min(1.15, 0.5 + confidence * 0.7)) * vol_penalty
                 target["target_usd"] = round(target["target_usd"] * multiplier, 2)
                 target["intraday_reason"] = signal.get("reason", "")
                 continue
@@ -528,19 +602,61 @@ class AlpacaTrader:
             trail_dd = (high_water - current_price) / high_water * 100.0 if high_water > 0 else 0.0
 
             reason = None
+
+            # ── PHASE 2 FIX: Priority-ordered exit checks ─────────────
+            # 1. Hard stop loss (unchanged)
             if pl_pct <= -float(state.get("stop_loss_pct", BASE_STOP_LOSS_PCT)):
                 reason = f"Stop loss hit ({pl_pct:.2f}%)"
+
+            # 2. Take profit (unchanged)
             elif pl_pct >= float(state.get("take_profit_pct", BASE_TAKE_PROFIT_PCT)):
                 reason = f"Take profit hit ({pl_pct:.2f}%)"
+
+            # 3. Trailing stop (unchanged)
             elif trail_dd >= float(state.get("trailing_stop_pct", BASE_TRAILING_STOP_PCT)) and pl_pct > 0:
                 reason = f"Trailing stop hit ({trail_dd:.2f}% from high)"
-            else:
+
+            # 4. PHASE 2 NEW: Early exit if losing AND regime turned against us
+            #    Instead of waiting 18h to timeout, exit sooner if conditions deteriorated.
+            elif pl_pct < -1.0:
+                try:
+                    signal = self.signal_engine.evaluate_symbol(sym)
+                    regime_4h = (signal.get("confirm_regimes", {}).get("4h", {}) or {}).get("label", "")
+                    regime_1d = (signal.get("confirm_regimes", {}).get("1D", {}) or {}).get("label", "")
+                    sell_conf = signal.get("confidence", 0) if signal.get("action") == "sell" else 0
+                    # Exit if: losing >1% AND (strong sell signal OR hostile regime)
+                    if sell_conf >= 0.55:
+                        reason = f"Regime exit: losing {pl_pct:.2f}% with strong sell signal (conf={sell_conf:.2f})"
+                    elif regime_1d in ("extreme_volatility", "trending_down", "breakdown"):
+                        reason = f"Regime exit: losing {pl_pct:.2f}% in hostile 1D regime '{regime_1d}'"
+                except Exception as e:
+                    logger.debug(f"Regime exit check failed for {sym}: {e}")
+
+            # 5. PHASE 2 FIX: Tighter timeout — exit at 12h if losing >0.5%
+            #    The old 18h timeout let losers bleed too long.
+            if not reason:
                 opened_at = state.get("opened_at", "")
                 try:
                     opened = datetime.datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
                     age_hours = (now - opened).total_seconds() / 3600
                     if age_hours >= float(state.get("max_hold_hours", MAX_HOLD_HOURS)) and pl_pct <= 0:
                         reason = f"Timeout exit after {age_hours:.1f}h without profit"
+                    # NEW: Early timeout — if losing after 12h, don't wait till 18h
+                    elif age_hours >= 12.0 and pl_pct <= -0.5:
+                        reason = f"Early timeout: losing {pl_pct:.2f}% after {age_hours:.1f}h"
+                    # Breakeven timeout — only exit flat positions after 12h AND
+                    # when ATR has compressed (no catalyst expected).  8h was too
+                    # aggressive — crypto 1h setups commonly need 8-16h to resolve.
+                    elif age_hours >= 12.0 and abs(pl_pct) < 0.3:
+                        try:
+                            stale_signal = self.signal_engine.evaluate_symbol(sym)
+                            atr_pct = float((stale_signal.get("features", {}) or {}).get("atr_pct_15m", 0) or 0)
+                            if atr_pct < 1.5:  # low vol = no catalyst coming
+                                reason = f"Stale position: flat ({pl_pct:+.2f}%) after {age_hours:.1f}h, low ATR ({atr_pct:.1f}%)"
+                        except Exception:
+                            # Fallback: exit if flat after 14h regardless
+                            if age_hours >= 14.0:
+                                reason = f"Stale position: flat ({pl_pct:+.2f}%) after {age_hours:.1f}h"
                 except Exception:
                     pass
 
@@ -549,6 +665,22 @@ class AlpacaTrader:
                 close_result["reason"] = reason
                 close_result["side"] = "close"
                 orders.append(close_result)
+                # PHASE 6: Record real trade outcome in learning engine
+                if self.learner:
+                    try:
+                        entry_notional = float(state.get("entry_notional", 0) or 0)
+                        exit_notional = float(pos.get("market_value", 0) or 0)
+                        # Estimate net P&L (gross P&L minus ~0.5% round-trip fee)
+                        gross_pl = exit_notional - entry_notional
+                        from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
+                        fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 10000.0
+                        total_fees = (entry_notional + exit_notional) * fee_pct / 2
+                        net_pl = gross_pl - total_fees
+                        strategy = state.get("strategy", "unknown")
+                        regime = state.get("regime", "unknown")
+                        self.learner.record_real_trade(strategy, regime, net_pl, sym)
+                    except Exception as e:
+                        logger.debug(f"Learning engine record failed: {e}")
                 self.risk_book.remove(sym)
                 self.journal.append({
                     "event": "position_closed",
