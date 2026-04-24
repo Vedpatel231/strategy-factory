@@ -94,6 +94,13 @@ class AlpacaAutoTrader:
         except Exception as e:
             logger.warning(f"Could not write log: {e}")
 
+    def _refresh_live_monitor(self):
+        try:
+            from live_monitor import write_live_monitor_snapshot
+            write_live_monitor_snapshot(hours=24)
+        except Exception as e:
+            logger.warning(f"Could not refresh live monitor snapshot: {e}")
+
     # ── WORKER LOOP ──────────────────────────────────────────────────────
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -139,8 +146,8 @@ class AlpacaAutoTrader:
             "steps": {},
         }
 
-        # Risk checks before any trading
         try:
+            # Risk checks before any trading
             rm = RiskManager()
             from alpaca_client import AlpacaPaperClient
             client = AlpacaPaperClient()
@@ -153,6 +160,7 @@ class AlpacaAutoTrader:
                 entry["status"] = "risk_blocked"
                 entry["risk_reasons"] = reasons
                 self._append_log(entry)
+                self._refresh_live_monitor()
                 self._last_result = entry
                 return
 
@@ -180,11 +188,13 @@ class AlpacaAutoTrader:
                 entry["status"] = "analysis_failed"
                 entry["error"] = result.stderr[-500:]
                 self._append_log(entry)
+                self._refresh_live_monitor()
                 self._last_result = entry
                 return
         except subprocess.TimeoutExpired:
             entry["status"] = "timeout"
             self._append_log(entry)
+            self._refresh_live_monitor()
             self._last_result = entry
             return
 
@@ -215,6 +225,7 @@ class AlpacaAutoTrader:
         self._last_result = entry
         self._last_error = None
         self._append_log(entry)
+        self._refresh_live_monitor()
         logger.info(f"🦙 Alpaca auto-trade cycle complete ({entry['status']})")
 
     # ── STATUS ───────────────────────────────────────────────────────────

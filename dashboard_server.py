@@ -776,6 +776,25 @@ def learning_live_status():
         return jsonify({"error": str(e), "strategies": [], "blocked_pairs": []})
 
 
+@app.route("/api/monitor/24h")
+@require_auth
+def monitor_24h():
+    """Return the rolling 24h live monitor snapshot."""
+    try:
+        from live_monitor import load_live_monitor_snapshot, write_live_monitor_snapshot
+
+        refresh = request.args.get("refresh", "0").lower() in ("1", "true", "yes")
+        data = write_live_monitor_snapshot(hours=24) if refresh else load_live_monitor_snapshot()
+        return jsonify({
+            "source": "live_monitor_24h",
+            "path": os.path.join(DATA_DIR, "live_monitor_24h.json"),
+            "data": data,
+        })
+    except Exception as e:
+        logger.error(f"24h monitor failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e), "data": {}})
+
+
 @app.route("/api/position-risk")
 @require_auth
 def position_risk():
