@@ -4,8 +4,8 @@ Takes a starting capital (e.g. $1,000) and intelligently distributes it
 across active strategies based on quantum scores, risk metrics, and diversification.
 """
 
-ACTIVE_COINS = {"BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "DOGE", "ADA"}
-ACTIVE_STRATEGIES = {"grid", "mean_reversion", "momentum"}
+ACTIVE_COINS = {"BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "DOGE", "ADA", "DOT", "UNI", "AAVE", "LTC"}
+ACTIVE_STRATEGIES = {"grid", "mean_reversion", "momentum", "trend_following", "breakout"}
 
 
 def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocation_pct=25.0):
@@ -58,7 +58,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
             excluded.append({"bot_name": ev.get("bot_name"), "reason": "Zero or negative profit factor"})
             continue
 
-        if pf < 1.1 or win_rate < 45 or sharpe < 0.3:
+        if pf < 1.1 or win_rate < 45 or sharpe < 0.2:
             excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Below quality threshold (WR={win_rate:.0f}%, PF={pf:.2f}, Sharpe={sharpe:.2f})"})
             continue
 
@@ -104,7 +104,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
     for e in eligible:
         raw_pct = (e["score"] / total_score) * 100.0
         # Cap any single strategy at 8% of portfolio
-        e["final_pct"] = min(raw_pct, 8.0)
+        e["final_pct"] = min(raw_pct, 10.0)
 
     # Re-normalize after capping
     capped_total = sum(e["final_pct"] for e in eligible)

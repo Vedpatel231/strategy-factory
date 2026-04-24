@@ -416,28 +416,34 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .gantt-axis span{{flex:1;text-align:center;}}
 
 /* P&L CALENDAR */
-.pnl-calendar{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;margin-bottom:28px;}}
-.pnl-calendar-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;gap:12px;flex-wrap:wrap;}}
-.pnl-calendar-header h3{{font-size:1.1em;color:var(--text);font-weight:600;}}
-.pnl-calendar-nav{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}}
-.pnl-calendar-nav button{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 14px;cursor:pointer;color:var(--text-dim);font-size:0.9em;font-weight:500;transition:all 0.2s;}}
+.pnl-calendar{{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:28px;}}
+.cal-stats-bar{{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px;padding:16px 0;border-bottom:1px solid var(--border);}}
+.cal-stat-box{{text-align:center;}}
+.cal-stat-value{{font-size:1.15em;font-weight:700;font-family:'Courier New',monospace;color:var(--cyan);}}
+.cal-stat-label{{font-size:0.68em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.8px;margin-top:4px;font-weight:600;}}
+.pnl-calendar-header{{display:flex;justify-content:center;align-items:center;margin-bottom:18px;}}
+.pnl-calendar-nav{{display:flex;align-items:center;gap:16px;}}
+.pnl-calendar-nav button{{background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 16px;cursor:pointer;color:var(--text-dim);font-size:0.9em;font-weight:600;transition:all 0.2s;}}
 .pnl-calendar-nav button:hover{{border-color:var(--cyan);color:var(--cyan);}}
-.pnl-calendar-nav .cal-month-label{{font-size:1em;font-weight:600;color:var(--cyan);min-width:140px;text-align:center;font-family:'Courier New',monospace;}}
-.pnl-calendar-grid{{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}}
-.pnl-cal-dayheader{{text-align:center;font-size:0.7em;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;padding:8px 0;font-weight:600;}}
-.pnl-cal-cell{{background:rgba(13,17,48,0.5);border:1px solid rgba(45,53,97,0.4);border-radius:8px;padding:8px 6px;min-height:68px;text-align:center;transition:all 0.2s;position:relative;}}
-.pnl-cal-cell:hover{{border-color:var(--cyan);background:rgba(0,212,255,0.04);}}
+.pnl-calendar-nav .cal-month-label{{font-size:1.15em;font-weight:700;color:var(--text);min-width:180px;text-align:center;}}
+.pnl-calendar-grid{{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}}
+.pnl-cal-dayheader{{text-align:center;font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;padding:8px 0;font-weight:600;}}
+.pnl-cal-cell{{background:rgba(13,17,48,0.4);border:1px solid rgba(45,53,97,0.3);border-radius:10px;padding:10px 6px 8px;min-height:76px;text-align:center;transition:all 0.2s;position:relative;}}
+.pnl-cal-cell:hover{{border-color:var(--cyan);background:rgba(0,212,255,0.04);transform:translateY(-1px);}}
 .pnl-cal-cell.empty{{background:transparent;border-color:transparent;min-height:0;}}
-.pnl-cal-cell .cal-day{{font-size:0.75em;color:var(--text-dim);margin-bottom:4px;font-weight:500;}}
-.pnl-cal-cell .cal-pnl-usd{{font-size:0.85em;font-weight:700;font-family:'Courier New',monospace;}}
-.pnl-cal-cell .cal-pnl-pct{{font-size:0.7em;font-family:'Courier New',monospace;margin-top:2px;}}
+.pnl-cal-cell .cal-day{{font-size:0.72em;color:var(--text-dim);margin-bottom:5px;font-weight:600;}}
+.pnl-cal-cell .cal-pnl-usd{{font-size:0.88em;font-weight:700;font-family:'Courier New',monospace;}}
+.pnl-cal-cell .cal-pnl-pct{{font-size:0.68em;font-family:'Courier New',monospace;margin-top:2px;opacity:0.8;}}
+.pnl-cal-cell .cal-trades{{font-size:0.62em;color:var(--text-dim);margin-top:3px;font-weight:500;}}
+.pnl-cal-cell.positive{{background:rgba(57,255,20,0.06);border-color:rgba(57,255,20,0.2);}}
 .pnl-cal-cell.positive .cal-pnl-usd{{color:var(--lime);}}
 .pnl-cal-cell.positive .cal-pnl-pct{{color:var(--lime);}}
+.pnl-cal-cell.negative{{background:rgba(255,68,68,0.06);border-color:rgba(255,68,68,0.2);}}
 .pnl-cal-cell.negative .cal-pnl-usd{{color:var(--red);}}
 .pnl-cal-cell.negative .cal-pnl-pct{{color:var(--red);}}
 .pnl-cal-cell.zero .cal-pnl-usd{{color:var(--text-dim);}}
 .pnl-cal-cell.zero .cal-pnl-pct{{color:var(--text-dim);}}
-.pnl-cal-cell.today{{border-color:var(--cyan);box-shadow:0 0 8px rgba(0,212,255,0.2);}}
+.pnl-cal-cell.today{{border-color:var(--cyan);box-shadow:0 0 10px rgba(0,212,255,0.25);}}
 .pnl-cal-summary{{display:flex;gap:24px;margin-top:16px;padding:14px 20px;background:rgba(0,212,255,0.04);border:1px solid rgba(45,53,97,0.6);border-radius:10px;flex-wrap:wrap;}}
 .pnl-cal-summary-item{{display:flex;flex-direction:column;gap:2px;}}
 .pnl-cal-summary-label{{font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;}}
@@ -482,13 +488,15 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 @media(max-width:520px){{
   .page-title{{font-size:1.65em;gap:10px;}}
   .data-badge{{font-size:0.48em;}}
-  .pnl-calendar-header{{align-items:flex-start;}}
-  .pnl-calendar-nav{{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;}}
-  .pnl-calendar-nav .cal-month-label{{grid-column:1 / -1;grid-row:1;min-width:0;text-align:left;}}
-  .pnl-calendar-nav button{{grid-row:2;width:100%;padding:6px 8px;}}
-  .pnl-calendar{{padding:18px;}}
+  .cal-stats-bar{{grid-template-columns:repeat(3,1fr);gap:8px;}}
+  .pnl-calendar-header{{align-items:center;}}
+  .pnl-calendar-nav .cal-month-label{{min-width:140px;font-size:1em;}}
+  .pnl-calendar{{padding:16px;}}
   .pnl-calendar-grid{{gap:3px;}}
-  .pnl-cal-cell{{min-height:56px;padding:6px 3px;}}
+  .pnl-cal-cell{{min-height:60px;padding:6px 3px;}}
+  .pnl-cal-cell .cal-pnl-usd{{font-size:0.78em;}}
+  .pnl-cal-cell .cal-pnl-pct{{font-size:0.6em;}}
+  .pnl-cal-cell .cal-trades{{font-size:0.58em;}}
 }}
 </style>
 </head>
@@ -588,12 +596,38 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   </div>
   <!-- P&L CALENDAR -->
   <div class="pnl-calendar" id="pnlCalendarSection">
+    <!-- Month stats bar (like YouTuber screenshot) -->
+    <div class="cal-stats-bar" id="calStatsBar" style="display:none;">
+      <div class="cal-stat-box">
+        <div class="cal-stat-value" id="calStatPnl">$0.00</div>
+        <div class="cal-stat-label">Month P&L</div>
+      </div>
+      <div class="cal-stat-box">
+        <div class="cal-stat-value" id="calStatPct">0.00%</div>
+        <div class="cal-stat-label">Month %</div>
+      </div>
+      <div class="cal-stat-box">
+        <div class="cal-stat-value" id="calStatTrades">0</div>
+        <div class="cal-stat-label">Trades</div>
+      </div>
+      <div class="cal-stat-box">
+        <div class="cal-stat-value" id="calStatWinRate">—</div>
+        <div class="cal-stat-label">Win Rate</div>
+      </div>
+      <div class="cal-stat-box">
+        <div class="cal-stat-value" id="calStatGreen">0</div>
+        <div class="cal-stat-label">Green Days</div>
+      </div>
+      <div class="cal-stat-box">
+        <div class="cal-stat-value" id="calStatRed">0</div>
+        <div class="cal-stat-label">Red Days</div>
+      </div>
+    </div>
     <div class="pnl-calendar-header">
-      <h3>📅 Daily P&L Calendar</h3>
       <div class="pnl-calendar-nav">
-        <button onclick="calPrev()">◀ Prev</button>
+        <button onclick="calPrev()">&#9664;</button>
         <span class="cal-month-label" id="calMonthLabel">—</span>
-        <button onclick="calNext()">Next ▶</button>
+        <button onclick="calNext()">&#9654;</button>
       </div>
     </div>
     <div class="pnl-calendar-grid" id="calGrid">
@@ -607,20 +641,16 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>
     <div class="pnl-cal-summary" id="calSummary" style="display:none;">
       <div class="pnl-cal-summary-item">
-        <span class="pnl-cal-summary-label">Monthly P&L</span>
-        <span class="pnl-cal-summary-value" id="calSumPnl">—</span>
-      </div>
-      <div class="pnl-cal-summary-item">
-        <span class="pnl-cal-summary-label">Monthly %</span>
-        <span class="pnl-cal-summary-value" id="calSumPct">—</span>
-      </div>
-      <div class="pnl-cal-summary-item">
         <span class="pnl-cal-summary-label">Best Day</span>
         <span class="pnl-cal-summary-value" id="calSumBest">—</span>
       </div>
       <div class="pnl-cal-summary-item">
         <span class="pnl-cal-summary-label">Worst Day</span>
         <span class="pnl-cal-summary-value" id="calSumWorst">—</span>
+      </div>
+      <div class="pnl-cal-summary-item">
+        <span class="pnl-cal-summary-label">Avg Day</span>
+        <span class="pnl-cal-summary-value" id="calSumAvg">—</span>
       </div>
       <div class="pnl-cal-summary-item">
         <span class="pnl-cal-summary-label">Days Tracked</span>
@@ -753,7 +783,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         <div style="flex:1;min-width:280px;">
           <h3 style="margin-bottom:8px;display:flex;align-items:center;gap:10px;">🤖 Auto-Trading <span id="autoStateBadge" class="badge" style="background:rgba(107,115,148,0.15);color:var(--gray);">OFF</span></h3>
           <div style="color:var(--text-dim);font-size:0.9em;line-height:1.5;" id="autoDescription">
-            When enabled, the system re-analyzes all bots every 30 minutes and automatically rebalances your paper portfolio. No clicks needed — just check the dashboard each morning.
+            When enabled, the system re-analyzes all bots every 15 minutes and automatically rebalances your paper portfolio. No clicks needed — just check the dashboard each morning.
           </div>
         </div>
         <div style="display:flex;gap:10px;flex-direction:column;align-items:flex-end;">
@@ -764,7 +794,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
         <div>
           <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Interval</div>
-          <div id="autoInterval" style="font-family:'Courier New',monospace;color:var(--cyan);font-weight:600;">30 min</div>
+          <div id="autoInterval" style="font-family:'Courier New',monospace;color:var(--cyan);font-weight:600;">15 min</div>
         </div>
         <div>
           <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Last Run</div>
@@ -1008,7 +1038,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         </div>
         <div class="metric-card">
           <div class="metric-label">Interval</div>
-          <div id="alpAutoInterval" class="metric-value" style="font-size:1.1em;">30 min</div>
+          <div id="alpAutoInterval" class="metric-value" style="font-size:1.1em;">15 min</div>
         </div>
       </div>
 
@@ -2781,7 +2811,7 @@ async function autoRefresh() {{
       btn.style.color = 'var(--lime)';
       btn.style.borderColor = 'var(--lime)';
     }}
-    document.getElementById('autoInterval').textContent = (s.interval_min || 30) + ' min';
+    document.getElementById('autoInterval').textContent = (s.interval_min || 15) + ' min';
     document.getElementById('autoLastRun').textContent = s.last_run ? formatNyTime(s.last_run) + ' (' + humanAgo(s.last_run) + ')' : '—';
     document.getElementById('autoNextRun').textContent = s.next_run ? formatNyTime(s.next_run) : '—';
     var lr = s.last_result;
@@ -2819,7 +2849,7 @@ async function autoToggle() {{
     var s = await apiGet('/api/auto/status');
     var newState = !s.enabled;
     await apiPost('/api/auto/toggle', {{enabled: newState}});
-    alpMsg(newState ? '🤖 Auto-trading ENABLED — first cycle will run within 30 min' : '⏸️ Auto-trading DISABLED',
+    alpMsg(newState ? '🤖 Auto-trading ENABLED — first cycle will run within 15 min' : '⏸️ Auto-trading DISABLED',
            newState ? 'var(--lime)' : 'var(--amber)');
     autoRefresh();
   }} catch (e) {{
@@ -3018,10 +3048,12 @@ setTimeout(ganttLoad, 1000);
 
 // ── P&L CALENDAR ──────────────────────────────────────────────
 var calData = {{}};
+var calTradeData = {{}};
 var calYear = new Date().getFullYear();
 var calMonth = new Date().getMonth(); // 0-indexed
 
 async function calLoadData() {{
+  // Load P&L snapshots
   try {{
     if (await isAlpacaConfigured()) {{
       var json = await apiGet('/api/alpaca/daily-pnl');
@@ -3036,6 +3068,27 @@ async function calLoadData() {{
     }} catch (e2) {{
       calData = {{}};
     }}
+  }}
+  // Load trade journal for per-day trade counts
+  try {{
+    var journal = await apiGet('/api/trade-journal?limit=2000');
+    var events = journal.events || [];
+    calTradeData = {{}};
+    events.forEach(function(ev) {{
+      if (ev.event === 'order_submitted' || ev.event === 'position_closed') {{
+        var ts = ev.timestamp || '';
+        var dateKey = ts.substring(0, 10);
+        if (!dateKey) return;
+        if (!calTradeData[dateKey]) calTradeData[dateKey] = {{ count: 0, wins: 0 }};
+        calTradeData[dateKey].count++;
+        if (ev.event === 'position_closed') {{
+          var plPct = Number(ev.unrealized_pl_pct || 0);
+          if (plPct > 0) calTradeData[dateKey].wins++;
+        }}
+      }}
+    }});
+  }} catch (e3) {{
+    calTradeData = {{}};
   }}
   calRender();
 }}
@@ -3076,7 +3129,6 @@ function calRender() {{
   document.getElementById('calMonthLabel').textContent = monthNames[calMonth] + ' ' + calYear;
 
   var grid = document.getElementById('calGrid');
-  // Keep the day headers (first 7 children)
   var headers = [];
   for (var h = 0; h < 7 && h < grid.children.length; h++) {{
     headers.push(grid.children[h]);
@@ -3089,7 +3141,6 @@ function calRender() {{
   var today = new Date();
   var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
 
-  // Collect daily P&L changes (compare each day to previous day)
   var sortedDates = Object.keys(calData).sort();
   var dailyChanges = {{}};
   for (var i = 0; i < sortedDates.length; i++) {{
@@ -3099,7 +3150,6 @@ function calRender() {{
     dailyChanges[d] = calExtractChange(snap, prevSnap);
   }}
 
-  // Empty cells before first day
   for (var e = 0; e < firstDay; e++) {{
     var empty = document.createElement('div');
     empty.className = 'pnl-cal-cell empty';
@@ -3110,8 +3160,12 @@ function calRender() {{
   var bestDay = null;
   var worstDay = null;
   var daysTracked = 0;
+  var greenDays = 0;
+  var redDays = 0;
   var firstEquity = null;
   var lastEquity = null;
+  var totalTrades = 0;
+  var winningTrades = 0;
 
   for (var day = 1; day <= daysInMonth; day++) {{
     var dateStr = calYear + '-' + String(calMonth+1).padStart(2,'0') + '-' + String(day).padStart(2,'0');
@@ -3132,9 +3186,21 @@ function calRender() {{
       lastEquity = change.equity;
       monthPnl += change.pnl;
 
+      // Count trades for this day from journal data
+      var dayTrades = (calTradeData && calTradeData[dateStr]) || {{}};
+      var dayTradeCount = dayTrades.count || 0;
+      var dayWins = dayTrades.wins || 0;
+      totalTrades += dayTradeCount;
+      winningTrades += dayWins;
+
       var pnlEl = document.createElement('div');
       pnlEl.className = 'cal-pnl-usd';
-      pnlEl.textContent = (change.pnl >= 0 ? '+$' : '-$') + Math.abs(change.pnl).toFixed(2);
+      var absPnl = Math.abs(change.pnl);
+      if (absPnl >= 1000) {{
+        pnlEl.textContent = (change.pnl >= 0 ? '+$' : '-$') + (absPnl/1000).toFixed(1) + 'K';
+      }} else {{
+        pnlEl.textContent = (change.pnl >= 0 ? '+$' : '-$') + absPnl.toFixed(2);
+      }}
       cell.appendChild(pnlEl);
 
       var pctEl = document.createElement('div');
@@ -3142,8 +3208,15 @@ function calRender() {{
       pctEl.textContent = (change.pct >= 0 ? '+' : '') + change.pct.toFixed(2) + '%';
       cell.appendChild(pctEl);
 
-      if (change.pnl > 0) cell.classList.add('positive');
-      else if (change.pnl < 0) cell.classList.add('negative');
+      if (dayTradeCount > 0) {{
+        var tradeEl = document.createElement('div');
+        tradeEl.className = 'cal-trades';
+        tradeEl.textContent = dayTradeCount + ' trade' + (dayTradeCount !== 1 ? 's' : '');
+        cell.appendChild(tradeEl);
+      }}
+
+      if (change.pnl > 0) {{ cell.classList.add('positive'); greenDays++; }}
+      else if (change.pnl < 0) {{ cell.classList.add('negative'); redDays++; }}
       else cell.classList.add('zero');
 
       if (bestDay === null || change.pnl > bestDay.pnl) bestDay = {{ pnl: change.pnl, date: dateStr }};
@@ -3153,27 +3226,52 @@ function calRender() {{
     grid.appendChild(cell);
   }}
 
-  // Summary
+  // Stats bar (top of calendar)
+  var statsBar = document.getElementById('calStatsBar');
+  if (daysTracked > 0) {{
+    statsBar.style.display = 'grid';
+    var pnlColor = monthPnl >= 0 ? 'var(--lime)' : 'var(--red)';
+    var monthPct = firstEquity > 0 ? (monthPnl / firstEquity * 100) : 0;
+
+    var statPnl = document.getElementById('calStatPnl');
+    var absMPnl = Math.abs(monthPnl);
+    statPnl.textContent = (monthPnl >= 0 ? '+$' : '-$') + (absMPnl >= 1000 ? (absMPnl/1000).toFixed(2) + 'K' : absMPnl.toFixed(2));
+    statPnl.style.color = pnlColor;
+
+    var statPct = document.getElementById('calStatPct');
+    statPct.textContent = (monthPct >= 0 ? '+' : '') + monthPct.toFixed(2) + '%';
+    statPct.style.color = pnlColor;
+
+    document.getElementById('calStatTrades').textContent = totalTrades;
+    var winRate = totalTrades > 0 ? ((winningTrades / totalTrades) * 100).toFixed(1) + '%' : '—';
+    document.getElementById('calStatWinRate').textContent = winRate;
+    var greenEl = document.getElementById('calStatGreen');
+    greenEl.textContent = greenDays;
+    greenEl.style.color = 'var(--lime)';
+    var redEl = document.getElementById('calStatRed');
+    redEl.textContent = redDays;
+    redEl.style.color = 'var(--red)';
+  }} else {{
+    statsBar.style.display = 'none';
+  }}
+
+  // Bottom summary
   var summaryEl = document.getElementById('calSummary');
   if (daysTracked > 0) {{
     summaryEl.style.display = 'flex';
-    var pnlColor = monthPnl >= 0 ? 'var(--lime)' : 'var(--red)';
-    var monthPct = firstEquity > 0 ? (monthPnl / firstEquity * 100) : 0;
-    document.getElementById('calSumPnl').textContent = (monthPnl >= 0 ? '+$' : '-$') + Math.abs(monthPnl).toFixed(2);
-    document.getElementById('calSumPnl').style.color = pnlColor;
-    document.getElementById('calSumPct').textContent = (monthPct >= 0 ? '+' : '') + monthPct.toFixed(2) + '%';
-    document.getElementById('calSumPct').style.color = pnlColor;
     document.getElementById('calSumBest').textContent = bestDay ? ((bestDay.pnl >= 0 ? '+$' : '-$') + Math.abs(bestDay.pnl).toFixed(2)) : '—';
     document.getElementById('calSumBest').style.color = bestDay && bestDay.pnl >= 0 ? 'var(--lime)' : 'var(--red)';
     document.getElementById('calSumWorst').textContent = worstDay ? ((worstDay.pnl >= 0 ? '+$' : '-$') + Math.abs(worstDay.pnl).toFixed(2)) : '—';
     document.getElementById('calSumWorst').style.color = worstDay && worstDay.pnl >= 0 ? 'var(--lime)' : 'var(--red)';
+    var avgDay = daysTracked > 0 ? monthPnl / daysTracked : 0;
+    var avgEl = document.getElementById('calSumAvg');
+    avgEl.textContent = (avgDay >= 0 ? '+$' : '-$') + Math.abs(avgDay).toFixed(2);
+    avgEl.style.color = avgDay >= 0 ? 'var(--lime)' : 'var(--red)';
     document.getElementById('calSumDays').textContent = daysTracked;
-    // Remove first-day notice if it exists
     var notice = document.getElementById('calFirstDayNotice');
     if (notice) notice.style.display = 'none';
   }} else {{
     summaryEl.style.display = 'none';
-    // Show first-day notice
     var notice = document.getElementById('calFirstDayNotice');
     if (!notice) {{
       notice = document.createElement('div');
@@ -3651,7 +3749,7 @@ function alpAutoUpdateUI(data) {{
     statusEl.textContent = '⚪ Stopped';
     statusEl.style.color = 'var(--gray)';
   }}
-  document.getElementById('alpAutoInterval').textContent = (data.interval_min || 30) + ' min';
+  document.getElementById('alpAutoInterval').textContent = (data.interval_min || 15) + ' min';
   if (data.last_run) {{
     document.getElementById('alpAutoLastRun').textContent = new Date(data.last_run).toLocaleString();
   }}

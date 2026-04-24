@@ -22,12 +22,12 @@ from trade_journal import PositionRiskBook, TradeJournal
 logger = logging.getLogger("alpaca_trader")
 
 ALPACA_TRADE_HISTORY = os.path.join(config.DATA_DIR, "alpaca_trade_runs.json")
-REBALANCE_THRESHOLD_PCT = 25.0  # only trade if position drifts >25% from target
+REBALANCE_THRESHOLD_PCT = 20.0  # only trade if position drifts >20% from target
 INTRADAY_GATE_ENABLED = os.environ.get("INTRADAY_GATE_ENABLED", "true").lower() != "false"
 MAX_HOLD_HOURS = float(os.environ.get("INTRADAY_MAX_HOLD_HOURS", "18"))
-BASE_STOP_LOSS_PCT = float(os.environ.get("INTRADAY_BASE_STOP_LOSS_PCT", "2.2"))
-BASE_TAKE_PROFIT_PCT = float(os.environ.get("INTRADAY_BASE_TAKE_PROFIT_PCT", "4.2"))
-BASE_TRAILING_STOP_PCT = float(os.environ.get("INTRADAY_BASE_TRAILING_STOP_PCT", "1.6"))
+BASE_STOP_LOSS_PCT = float(os.environ.get("INTRADAY_BASE_STOP_LOSS_PCT", "3.5"))
+BASE_TAKE_PROFIT_PCT = float(os.environ.get("INTRADAY_BASE_TAKE_PROFIT_PCT", "6.0"))
+BASE_TRAILING_STOP_PCT = float(os.environ.get("INTRADAY_BASE_TRAILING_STOP_PCT", "2.5"))
 
 # Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
 # If a portfolio symbol isn't in this set, its allocation gets redistributed.
@@ -433,9 +433,9 @@ class AlpacaTrader:
         features = signal.get("features", {}) if isinstance(signal, dict) else {}
         atr_pct = float(features.get("atr_pct_15m", 0.0) or 0.0)
         confidence = float(signal.get("confidence", 0.0) or 0.0) if isinstance(signal, dict) else 0.0
-        stop = max(BASE_STOP_LOSS_PCT, min(5.0, atr_pct * 1.4 if atr_pct else BASE_STOP_LOSS_PCT))
-        take = max(BASE_TAKE_PROFIT_PCT, stop * (1.45 + confidence * 0.6))
-        trail = max(BASE_TRAILING_STOP_PCT, min(3.8, stop * 0.75))
+        stop = max(BASE_STOP_LOSS_PCT, min(7.0, atr_pct * 1.6 if atr_pct else BASE_STOP_LOSS_PCT))
+        take = max(BASE_TAKE_PROFIT_PCT, stop * (1.6 + confidence * 0.7))
+        trail = max(BASE_TRAILING_STOP_PCT, min(5.0, stop * 0.7))
         return round(stop, 2), round(take, 2), round(trail, 2)
 
     def _record_trade_event(self, order_result, target, side, order_usd, results):

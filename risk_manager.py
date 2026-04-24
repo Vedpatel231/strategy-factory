@@ -148,7 +148,7 @@ class DailyLossGuard:
 
     STATE_FILE = os.path.join(config.DATA_DIR, "daily_loss_guard.json")
 
-    def __init__(self, max_daily_loss_pct: float = 3.0):
+    def __init__(self, max_daily_loss_pct: float = 5.0):
         self.max_daily_loss_pct = max_daily_loss_pct
         self._load()
 
@@ -605,7 +605,7 @@ class RiskManager:
     Facade that initialises and orchestrates all risk controls.
     """
 
-    def __init__(self, max_daily_loss_pct: float = 3.0, max_position_loss_pct: float = 8.0):
+    def __init__(self, max_daily_loss_pct: float = 5.0, max_position_loss_pct: float = 12.0):
         self.circuit_breaker = DrawdownCircuitBreaker()
         self.daily_loss_guard = DailyLossGuard(max_daily_loss_pct=max_daily_loss_pct)
         self.position_stop_loss = PositionStopLoss(max_loss_pct=max_position_loss_pct)

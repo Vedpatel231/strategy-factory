@@ -30,7 +30,7 @@ LOG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.log.json")
 DEFAULT_INTERVAL_MIN = int(
     os.environ.get("ALPACA_AUTO_TRADE_INTERVAL_MIN")
     or os.environ.get("AUTO_TRADE_INTERVAL_MIN")
-    or "1440"
+    or "15"
 )
 
 
