@@ -101,6 +101,17 @@ def evaluate_bot(metrics, bot_status):
     }
 
 
+def _trade_is_win(trade):
+    """Interpret recent-trade rows from normalized or raw source shapes."""
+    if "win" in trade:
+        return bool(trade.get("win"))
+    pnl = trade.get("pnl", trade.get("profit", 0))
+    try:
+        return float(pnl) >= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _check_reactivation_criteria(metrics, reasons):
     """
     Check if paused bot meets ALL reactivation criteria.
@@ -214,8 +225,9 @@ def _check_pause_triggers(metrics, reasons):
     # Trigger 7: Recent win rate degradation (last 20 trades if available)
     recent_trades = metrics.get("recent_trades", [])
     if len(recent_trades) >= 10:
-        recent_wins = sum(1 for t in recent_trades[-LOOKBACK_TRADES:] if t.get("win", False))
-        recent_win_rate = (recent_wins / LOOKBACK_TRADES * 100) if LOOKBACK_TRADES > 0 else 0
+        window = recent_trades[-LOOKBACK_TRADES:]
+        recent_wins = sum(1 for t in window if _trade_is_win(t))
+        recent_win_rate = (recent_wins / len(window) * 100) if window else 0
         win_rate_floor = MIN_WIN_RATE - 5
         if recent_win_rate < win_rate_floor:
             triggered = True

@@ -306,6 +306,17 @@ class LearningEngine:
 
         return probs
 
+    @staticmethod
+    def _trade_is_win(trade):
+        """Interpret recent-trade rows from normalized or raw source shapes."""
+        if "win" in trade:
+            return bool(trade.get("win"))
+        pnl = trade.get("pnl", trade.get("profit", 0))
+        try:
+            return float(pnl) >= 0
+        except (TypeError, ValueError):
+            return False
+
     def compute_adaptation_score(self, metrics, regime, strategy_id):
         """
         Compute adaptive fitness score for a strategy in current regime.
@@ -362,7 +373,7 @@ class LearningEngine:
         recent_trades = metrics.get("recent_trades", [])
         overall_win_rate = metrics.get("win_rate", 50)
         if len(recent_trades) >= 10:
-            recent_wins = sum(1 for t in recent_trades[-10:] if t.get("win", False))
+            recent_wins = sum(1 for t in recent_trades[-10:] if self._trade_is_win(t))
             recent_rate = (recent_wins / 10) * 100
             diff = recent_rate - overall_win_rate
 
@@ -383,8 +394,8 @@ class LearningEngine:
         # Component 3: Edge stability (compare halves of recent trades)
         if len(recent_trades) >= 4:
             mid = len(recent_trades) // 2
-            first_half_wins = sum(1 for t in recent_trades[:mid] if t.get("win", False))
-            second_half_wins = sum(1 for t in recent_trades[mid:] if t.get("win", False))
+            first_half_wins = sum(1 for t in recent_trades[:mid] if self._trade_is_win(t))
+            second_half_wins = sum(1 for t in recent_trades[mid:] if self._trade_is_win(t))
 
             first_half_rate = (first_half_wins / mid * 100) if mid > 0 else 50
             second_half_rate = (second_half_wins / (len(recent_trades) - mid) * 100) if (len(recent_trades) - mid) > 0 else 50

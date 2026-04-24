@@ -19,9 +19,9 @@ logger = logging.getLogger("intraday_engine")
 
 STATE_FILE = os.path.join(config.DATA_DIR, "intraday_state.json")
 
-TRADE_TIMEFRAMES = ("15m", "30m")
+TRADE_TIMEFRAMES = ("15m", "30m", "1h")
 SETUP_TIMEFRAME = "1h"
-CONFIRM_TIMEFRAME = "4h"
+CONFIRM_TIMEFRAMES = ("4h", "1D")
 MIN_SIGNAL_CONFIDENCE = float(os.environ.get("INTRADAY_MIN_SIGNAL_CONFIDENCE", "0.56"))
 EXTREME_ATR_PCT = float(os.environ.get("INTRADAY_EXTREME_ATR_PCT", "8.0"))
 MIN_VOLUME_RATIO = float(os.environ.get("INTRADAY_MIN_VOLUME_RATIO", "0.35"))
@@ -585,22 +585,30 @@ class IntradaySignalEngine:
 
     def evaluate_symbol(self, symbol):
         frame_data = {}
-        for tf in (*TRADE_TIMEFRAMES, SETUP_TIMEFRAME, CONFIRM_TIMEFRAME):
+        ordered_frames = []
+        for tf in (*TRADE_TIMEFRAMES, *CONFIRM_TIMEFRAMES):
+            if tf not in ordered_frames:
+                ordered_frames.append(tf)
+        for tf in ordered_frames:
             candles = self.data.get_candles(symbol, tf)
             if len(candles) < 60:
                 return self._reject(symbol, f"Insufficient {tf} candles ({len(candles)})")
             frame_data[tf] = FeatureSet(candles)
 
-        confirm_regime = self.regime_detector.classify(frame_data[CONFIRM_TIMEFRAME])
         setup_regime = self.regime_detector.classify(frame_data[SETUP_TIMEFRAME])
         trade_regime = self.regime_detector.classify(frame_data[TRADE_TIMEFRAMES[0]])
+        confirm_regimes = {
+            tf: self.regime_detector.classify(frame_data[tf])
+            for tf in CONFIRM_TIMEFRAMES
+        }
+        primary_confirm = confirm_regimes[CONFIRM_TIMEFRAMES[0]]
 
         if trade_regime.label == "extreme_volatility" or setup_regime.label == "extreme_volatility":
             return self._reject(symbol, trade_regime.reason or setup_regime.reason,
-                                trade_regime, setup_regime, confirm_regime)
+                                trade_regime, setup_regime, primary_confirm, confirm_regimes)
         if frame_data[TRADE_TIMEFRAMES[0]].volume_ratio < MIN_VOLUME_RATIO:
             return self._reject(symbol, "Liquidity/volume ratio below minimum",
-                                trade_regime, setup_regime, confirm_regime)
+                                trade_regime, setup_regime, primary_confirm, confirm_regimes)
 
         signals = []
         for tf in TRADE_TIMEFRAMES:
@@ -625,10 +633,11 @@ class IntradaySignalEngine:
                 confidence = sell_score / total_score
 
         alignment_penalty = 0.0
-        if direction == "buy" and confirm_regime.trend_bias == "down":
-            alignment_penalty = 0.18
-        if direction == "sell" and confirm_regime.trend_bias == "up":
-            alignment_penalty = 0.12
+        for tf, confirm_regime in confirm_regimes.items():
+            if direction == "buy" and confirm_regime.trend_bias == "down":
+                alignment_penalty += 0.12 if tf == "4h" else 0.10
+            if direction == "sell" and confirm_regime.trend_bias == "up":
+                alignment_penalty += 0.08 if tf == "4h" else 0.06
         confidence = max(0.0, confidence - alignment_penalty)
 
         reasons = sorted(signals, key=lambda s: s.weighted_confidence(), reverse=True)[:5]
@@ -647,10 +656,12 @@ class IntradaySignalEngine:
             "strategy_signals": [asdict(s) for s in signals],
             "trade_regime": asdict(trade_regime),
             "setup_regime": asdict(setup_regime),
-            "confirm_regime": asdict(confirm_regime),
+            "confirm_regime": asdict(primary_confirm),
+            "confirm_regimes": {tf: asdict(regime) for tf, regime in confirm_regimes.items()},
             "features": {
                 "atr_pct_15m": round(frame_data["15m"].atr_pct, 3),
                 "volume_ratio_15m": round(frame_data["15m"].volume_ratio, 3),
+                "volume_ratio_30m": round(frame_data["30m"].volume_ratio, 3),
                 "ema20_slope_1h": round(frame_data["1h"].ema20_slope_pct, 3),
             },
             "evaluated_at": datetime.now(timezone.utc).isoformat(),
@@ -658,7 +669,7 @@ class IntradaySignalEngine:
         self._save_last(result)
         return result
 
-    def _reject(self, symbol, reason, trade_regime=None, setup_regime=None, confirm_regime=None):
+    def _reject(self, symbol, reason, trade_regime=None, setup_regime=None, confirm_regime=None, confirm_regimes=None):
         result = {
             "symbol": symbol,
             "accepted": False,
@@ -669,6 +680,7 @@ class IntradaySignalEngine:
             "trade_regime": asdict(trade_regime) if trade_regime else {},
             "setup_regime": asdict(setup_regime) if setup_regime else {},
             "confirm_regime": asdict(confirm_regime) if confirm_regime else {},
+            "confirm_regimes": {tf: asdict(regime) for tf, regime in (confirm_regimes or {}).items()},
             "features": {},
             "evaluated_at": datetime.now(timezone.utc).isoformat(),
         }

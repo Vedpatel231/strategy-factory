@@ -420,7 +420,7 @@ class DuplicateOrderGuard:
     """
 
     STATE_FILE = os.path.join(config.DATA_DIR, "duplicate_order_guard.json")
-    MIN_REPEAT_SECONDS = 20 * 60
+    MIN_REPEAT_SECONDS = int(os.environ.get("DUPLICATE_ORDER_MIN_REPEAT_SECONDS", str(12 * 60)))
 
     def __init__(self):
         self._state = _read_json(self.STATE_FILE, {})
@@ -671,6 +671,25 @@ class RiskManager:
     def record_submitted_order(self, symbol: str, side: str):
         """Record duplicate guard state for the submitted symbol/side pair."""
         self.duplicate_guard.record(symbol, side)
+
+    def should_trade_strategy(self, bot_name: str) -> bool:
+        """Return True when the persisted strategy disabler allows trading."""
+        return self.strategy_disabler.should_trade(bot_name)
+
+    def update_strategy_disable_state(
+        self,
+        bot_name: str,
+        consecutive_loss_days: int = 0,
+        rolling_sharpe: float = 0.0,
+        stop_losses_week: int = 0,
+    ) -> bool:
+        """Persist a strategy disable when real-paper damage is sustained."""
+        return self.strategy_disabler.check_and_disable(
+            bot_name,
+            consecutive_loss_days=consecutive_loss_days,
+            rolling_sharpe=rolling_sharpe,
+            stop_losses_week=stop_losses_week,
+        )
 
     # ── Cooldown multiplier ────────────────────────────────────────────
     def get_exposure_multiplier(self) -> float:

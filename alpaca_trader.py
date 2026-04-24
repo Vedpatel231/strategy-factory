@@ -28,6 +28,7 @@ MAX_HOLD_HOURS = float(os.environ.get("INTRADAY_MAX_HOLD_HOURS", "18"))
 BASE_STOP_LOSS_PCT = float(os.environ.get("INTRADAY_BASE_STOP_LOSS_PCT", "3.5"))
 BASE_TAKE_PROFIT_PCT = float(os.environ.get("INTRADAY_BASE_TAKE_PROFIT_PCT", "6.0"))
 BASE_TRAILING_STOP_PCT = float(os.environ.get("INTRADAY_BASE_TRAILING_STOP_PCT", "2.5"))
+EXISTING_POSITION_DECAY_PCT = float(os.environ.get("INTRADAY_EXISTING_DECAY_PCT", "0.35"))
 
 # Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
 # If a portfolio symbol isn't in this set, its allocation gets redistributed.
@@ -410,10 +411,21 @@ class AlpacaTrader:
                 continue
 
             if existing:
-                # No fresh long setup: hold existing exposure without churn unless
-                # normal risk controls or exit rules fire.
-                target["target_usd"] = existing.get("market_value", target["target_usd"])
-                target["intraday_reason"] = f"Held existing position: {signal.get('reason')}"
+                current_value = float(existing.get("market_value", target["target_usd"]) or target["target_usd"])
+                allocator_target = float(target.get("target_usd", current_value) or current_value)
+                if allocator_target < current_value:
+                    excess = current_value - allocator_target
+                    decayed_target = current_value - (excess * EXISTING_POSITION_DECAY_PCT)
+                    target["target_usd"] = round(max(allocator_target, decayed_target), 2)
+                    target["intraday_reason"] = (
+                        f"No fresh long setup: decaying exposure toward allocator target. "
+                        f"{signal.get('reason')}"
+                    )
+                else:
+                    # Do not add without a fresh intraday confirmation, but do
+                    # allow the existing winner/holder to stay on the books.
+                    target["target_usd"] = current_value
+                    target["intraday_reason"] = f"Held existing position: {signal.get('reason')}"
             else:
                 results["skipped"].append({
                     "bot": f"{sym} ({len(target.get('bot_names', []))} bots)",

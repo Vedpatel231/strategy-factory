@@ -299,6 +299,22 @@ class StrategyMetrics:
         """Extract last N trades (most recent)."""
         return trades_list[-LOOKBACK_TRADES:] if trades_list else []
 
+    def _normalize_recent_trades(self) -> List[Dict]:
+        """
+        Export recent trades in a stable shape for decision/learning logic.
+
+        Upstream sources are inconsistent and often expose only `pnl` or
+        `profit`, while downstream code expects a `win` boolean.
+        """
+        normalized = []
+        for trade in self.recent_trades:
+            pnl = to_float(trade.get("pnl", trade.get("profit", 0)))
+            normalized.append({
+                "pnl": round(pnl, 4),
+                "win": pnl >= 0,
+            })
+        return normalized
+
     def _calculate_recent_win_rate(self) -> float:
         """Calculate win rate for recent trades only."""
         if not self.recent_trades:
@@ -336,6 +352,7 @@ class StrategyMetrics:
             "avg_loss": round(self.avg_loss, 2),
             "consecutive_losses": self.consecutive_losses,
             "avg_loss_to_avg_win": round(self.avg_loss_to_avg_win, 2),
+            "recent_trades": self._normalize_recent_trades(),
             "recent_trades_count": len(self.recent_trades),
             "recent_win_rate": round(self.recent_win_rate, 2),
             "recent_pnl": round(self.recent_pnl, 2)

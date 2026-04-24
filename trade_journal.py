@@ -394,12 +394,14 @@ def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None):
         exit_fee = estimate_alpaca_fee(exit_notional, order_type)
         total_fees = entry_fee + exit_fee
         net_pl = gross_pl - total_fees
+        bot_names = entry.get("bot_names") or event.get("bot_names") or []
 
         closed.append({
             "timestamp": event.get("timestamp"),
             "symbol": symbol,
             "strategy": entry.get("strategy") or event.get("strategy") or "unknown",
             "regime": entry.get("regime") or event.get("regime") or "unknown",
+            "bot_names": ";".join(str(b) for b in bot_names),
             "entry_price": round(entry_price, 6) if entry_price else 0,
             "exit_price": round(exit_price, 6) if exit_price else 0,
             "entry_notional": _round_money(entry_notional),
@@ -480,7 +482,9 @@ def summarize_real_paper_performance(limit=2000):
     exist, so the dashboard does not pretend that missing data is evidence.
     """
     events = TradeJournal().recent(limit=limit)
+    fee_rows = summarize_fee_analysis(limit=limit).get("closed_trades", [])
     by_bot = {}
+    stop_cutoff = datetime.now(timezone.utc).timestamp() - (7 * 24 * 3600)
 
     def ensure(bot_name):
         if bot_name not in by_bot:
@@ -491,6 +495,8 @@ def summarize_real_paper_performance(limit=2000):
                 "losses": 0,
                 "total_pl_pct": 0.0,
                 "avg_pl_pct": 0.0,
+                "consecutive_net_losses": 0,
+                "stop_loss_exits_7d": 0,
                 "score": None,
                 "label": "NO_REAL_DATA",
                 "source": "alpaca_paper_journal",
@@ -502,17 +508,20 @@ def summarize_real_paper_performance(limit=2000):
         if event_type == "order_submitted" and event.get("side") == "buy":
             for bot_name in event.get("bot_names", []) or []:
                 ensure(bot_name)["entries"] += 1
-            continue
-
-        if event_type != "position_closed":
-            continue
-
-        entry_state = event.get("entry_state") or {}
-        bot_names = entry_state.get("bot_names") or event.get("bot_names") or []
+    for fee_row in reversed(fee_rows):
+        bot_names = [b for b in str(fee_row.get("bot_names", "")).split(";") if b]
         try:
-            pl_pct = float(event.get("unrealized_pl_pct", 0.0) or 0.0)
+            pl_pct = float(fee_row.get("net_pl_pct", 0.0) or 0.0)
         except (TypeError, ValueError):
             pl_pct = 0.0
+        exit_reason = str(fee_row.get("exit_reason", "") or "")
+        row_ts = str(fee_row.get("timestamp", "") or "")
+        row_epoch = None
+        if row_ts:
+            try:
+                row_epoch = datetime.fromisoformat(row_ts.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                row_epoch = None
 
         for bot_name in bot_names:
             row = ensure(bot_name)
@@ -520,8 +529,12 @@ def summarize_real_paper_performance(limit=2000):
             row["total_pl_pct"] += pl_pct
             if pl_pct > 0:
                 row["wins"] += 1
+                row["consecutive_net_losses"] = 0
             else:
                 row["losses"] += 1
+                row["consecutive_net_losses"] += 1
+            if "stop loss" in exit_reason.lower() and row_epoch and row_epoch >= stop_cutoff:
+                row["stop_loss_exits_7d"] += 1
 
     for row in by_bot.values():
         closed = row["closed_trades"]

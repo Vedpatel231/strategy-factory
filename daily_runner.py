@@ -157,6 +157,17 @@ def run_analysis(args, logger):
           f"(confidence: {regime_conf:.0%})")
     logger.info(f"Market regime: {regime} ({regime_conf:.0%})")
 
+    try:
+        from trade_journal import summarize_real_paper_performance
+        real_paper_stats = summarize_real_paper_performance()
+    except Exception:
+        real_paper_stats = {}
+    try:
+        from risk_manager import RiskManager
+        rm = RiskManager()
+    except Exception:
+        rm = None
+
     # ── Step 5: Run learning engine ──────────────────────────────────
     print_step(5, "Running adaptive learning engine...")
     # Compute adaptation scores
@@ -168,9 +179,24 @@ def run_analysis(args, logger):
         bd["adapt_result"] = adapt_result
         bd["adaptation_score"] = adapt_result.get("score", 50)
         bd["adaptation_label"] = adapt_result.get("label", "NEUTRAL")
+        bot_name = bd["bot"].get("name", "")
+        real_stats = real_paper_stats.get(bot_name, {}) if bot_name else {}
+        bd["real_paper_stats"] = real_stats
 
         # Update regime-strategy performance tracking
         learner.update_regime_performance(sid, regime, bd["metrics_dict"])
+
+        if rm and bot_name:
+            if int(real_stats.get("closed_trades", 0) or 0) > 0:
+                rm.update_strategy_disable_state(
+                    bot_name,
+                    consecutive_loss_days=int(real_stats.get("consecutive_net_losses", 0) or 0),
+                    rolling_sharpe=float(bd["metrics_dict"].get("sharpe_ratio", 0) or 0),
+                    stop_losses_week=int(real_stats.get("stop_loss_exits_7d", 0) or 0),
+                )
+            bd["strategy_disabled"] = not rm.should_trade_strategy(bot_name)
+        else:
+            bd["strategy_disabled"] = False
 
     # Run hindsight analysis on previously paused strategies
     current_metrics_map = {}
@@ -205,6 +231,9 @@ def run_analysis(args, logger):
         )
         enhanced_verdict = enhanced_result.get("verdict", base_verdict)
         all_reasons = base_result.get("reasons", []) + enhanced_result.get("reasons", [])
+        if bd.get("strategy_disabled"):
+            enhanced_verdict = "PAUSE"
+            all_reasons.append("Risk manager disabled this strategy after repeated real-paper damage")
 
         # Print verdict
         print_verdict(bot.get("name", "?"), bot.get("pair", ""),
@@ -236,6 +265,13 @@ def run_analysis(args, logger):
             "enhanced_verdict": enhanced_verdict,
             "adaptation_score": bd["adaptation_score"],
             "adaptation_label": bd["adaptation_label"],
+            "strategy_disabled": bd.get("strategy_disabled", False),
+            "real_paper_score": bd.get("real_paper_stats", {}).get("score"),
+            "real_paper_label": bd.get("real_paper_stats", {}).get("label", "NO_REAL_DATA"),
+            "real_paper_closed_trades": bd.get("real_paper_stats", {}).get("closed_trades", 0),
+            "real_paper_entries": bd.get("real_paper_stats", {}).get("entries", 0),
+            "real_paper_win_rate": bd.get("real_paper_stats", {}).get("win_rate"),
+            "real_paper_avg_pl_pct": bd.get("real_paper_stats", {}).get("avg_pl_pct"),
             "reasons": all_reasons,
             "metrics": m,
         })
@@ -283,7 +319,7 @@ def run_analysis(args, logger):
     for bd in bot_data_list:
         bot_name = bd["bot"].get("name", "")
         if bot_name:
-            real_stats = real_paper_stats.get(bot_name, {})
+            real_stats = bd.get("real_paper_stats", {})
             learning_stats[bot_name] = {
                 "adaptation_score": bd.get("adaptation_score", 50),
                 "adaptation_label": bd.get("adaptation_label", "NEUTRAL"),
