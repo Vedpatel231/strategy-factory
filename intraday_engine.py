@@ -492,8 +492,13 @@ class PullbackContinuationStrategy(BaseStrategy):
     name = "pullback_continuation"
     good_regimes = {"trending_up"}
     bad_regimes = {"range_bound", "breakdown"}
+    # ── HARD BLOCK: 0 wins in 15 live trades, -$1,608 net loss.
+    # Disabled until backtesting proves edge exists. See trade analysis 2026-04-26.
+    _blocked = True
 
     def evaluate(self, f, regime, timeframe):
+        if self._blocked:
+            return super().evaluate(f, regime, timeframe)  # always returns hold
         near_ema = abs(f.close - f.ema20[-1]) / f.close * 100 <= max(0.8, f.atr_pct * 0.45)
         if regime.trend_bias == "up" and near_ema and 42 <= f.rsi14[-1] <= 62:
             return Signal(self.name, "buy", 0.65, "Pullback to rising EMA20 in uptrend", timeframe, self.regime_fit(regime))
@@ -610,19 +615,25 @@ class IntradaySignalEngine:
         }
         primary_confirm = confirm_regimes[CONFIRM_TIMEFRAMES[0]]
 
-        if trade_regime.label == "extreme_volatility" or setup_regime.label == "extreme_volatility":
-            return self._reject(symbol, trade_regime.reason or setup_regime.reason,
-                                trade_regime, setup_regime, primary_confirm, confirm_regimes)
+        # ── Hard-reject regimes with proven negative edge ──────────────
+        # extreme_volatility: historically worst losses.
+        # low_volatility: 7/7 trades lost (-$814) — price doesn't move
+        # enough to overcome 0.5% fee floor. See trade analysis 2026-04-26.
+        _hard_block_regimes = ("extreme_volatility", "low_volatility")
+        if trade_regime.label in _hard_block_regimes or setup_regime.label in _hard_block_regimes:
+            return self._reject(symbol,
+                f"Regime '{trade_regime.label}'/'{setup_regime.label}' hard-blocked (no edge)",
+                trade_regime, setup_regime, primary_confirm, confirm_regimes)
         if frame_data[TRADE_TIMEFRAMES[0]].volume_ratio < MIN_VOLUME_RATIO:
             return self._reject(symbol, "Liquidity/volume ratio below minimum",
                                 trade_regime, setup_regime, primary_confirm, confirm_regimes)
 
         # ── PHASE 1 FIX: Higher-timeframe regime gate ──────────────────
-        # Hard-reject ONLY extreme_volatility (historically worst losses).
+        # Hard-reject extreme_volatility and low_volatility on daily frame too.
         # trending_down / breakdown get a heavy confidence penalty instead
         # of a hard block — they can still produce valid short-term entries.
         daily_regime = confirm_regimes.get("1D")
-        if daily_regime and daily_regime.label == "extreme_volatility":
+        if daily_regime and daily_regime.label in _hard_block_regimes:
             return self._reject(symbol,
                 f"1D regime '{daily_regime.label}' blocks new entries",
                 trade_regime, setup_regime, primary_confirm, confirm_regimes)
@@ -702,18 +713,34 @@ class IntradaySignalEngine:
             confidence *= 0.5  # strong penalty for buying against 1h trend
 
         # PHASE 1 FIX: Choppy/range_bound 4h regime penalty for buys.
-        # Pullback_continuation and breakout strategies lose consistently
-        # in choppy conditions.
+        # Choppy lost -$233 on 2 trades; range_bound is structurally similar.
         if direction == "buy" and primary_confirm.label in ("choppy", "range_bound", "high_volatility"):
-            confidence *= 0.7
+            confidence *= 0.5  # was 0.7 — strengthened after live trade analysis
 
         # Apply deferred 1D regime penalty (trending_down / breakdown).
-        # Placed here so it stacks with all other penalties above.
+        # trending_down lost -$440 on 2 trades (both stop losses).
         if direction == "buy":
             confidence *= _1d_confidence_penalty
 
         reasons = sorted(signals, key=lambda s: s.weighted_confidence(), reverse=True)[:5]
         accepted = direction in ("buy", "sell") and confidence >= MIN_SIGNAL_CONFIDENCE
+
+        # ── Confidence model recalibration (2026-04-26) ──────────────
+        # Live data showed confidence=1.0 trades lost the MOST (-$767/6 trades).
+        # Root cause: grid_range and other non-trend strategies got inflated
+        # confidence in regimes where they have no edge.
+        # Fix: Cap confidence for strategies that aren't trend_following or
+        # swing_trading (the only 2 that produced wins) and penalize further
+        # when the trade regime isn't trending_up.
+        if accepted and direction == "buy":
+            winning_strats = {"trend_following", "swing_trading"}
+            dominant_strat = reasons[0].strategy if reasons else ""
+            if dominant_strat not in winning_strats:
+                confidence = min(confidence, 0.72)  # cap non-winning strategies
+            if trade_regime.label != "trending_up" and dominant_strat not in winning_strats:
+                confidence *= 0.6  # heavy penalty: wrong strategy + wrong regime
+            # Re-evaluate acceptance after recalibration
+            accepted = confidence >= MIN_SIGNAL_CONFIDENCE
         if direction == "sell" and accepted:
             # Alpaca crypto path is long-only here; sell means close/downweight,
             # not open a new short.
