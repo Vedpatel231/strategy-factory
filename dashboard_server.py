@@ -46,6 +46,7 @@ except ImportError:
     print("❌ Flask not installed. Run: pip install flask")
     sys.exit(1)
 
+import threading
 import config
 from auto_trader import AutoTrader
 from alpaca_auto_trader import AlpacaAutoTrader
@@ -947,10 +948,114 @@ def banner():
     print()
 
 
+# ── DAILY ANALYSIS SCHEDULER ──────────────────────────────────────────
+# Runs daily_trade_analysis at a configured hour and sends the report
+# via Telegram. Runs inside Railway 24/7 — no laptop needed.
+
+DAILY_REPORT_HOUR_UTC = int(os.getenv("DAILY_REPORT_HOUR_UTC", "12"))  # 12 UTC = 8 AM EST
+
+
+class DailyAnalysisScheduler:
+    """Background thread that fires once per day at the configured UTC hour."""
+
+    _instance = None
+
+    def __init__(self):
+        self._thread = None
+        self._stop = threading.Event()
+        self._last_run_date = None
+
+    @classmethod
+    def get(cls):
+        if cls._instance is None:
+            cls._instance = DailyAnalysisScheduler()
+        return cls._instance
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="daily-analysis")
+        self._thread.start()
+        logger.info(f"Daily analysis scheduler started (fires at {DAILY_REPORT_HOUR_UTC}:00 UTC)")
+
+    def _loop(self):
+        import datetime as _dt
+        while not self._stop.is_set():
+            try:
+                now = _dt.datetime.now(_dt.timezone.utc)
+                today = now.date()
+
+                # Fire if we're at or past the target hour and haven't run today
+                if now.hour >= DAILY_REPORT_HOUR_UTC and self._last_run_date != today:
+                    self._run_analysis()
+                    self._last_run_date = today
+            except Exception as e:
+                logger.error(f"Daily analysis scheduler error: {e}", exc_info=True)
+
+            # Check every 5 minutes
+            self._stop.wait(300)
+
+    def _run_analysis(self):
+        logger.info("Running daily trade analysis...")
+        try:
+            from daily_trade_analysis import run_daily_analysis
+            report_text, analysis = run_daily_analysis(hours=24, save_report=True)
+
+            # Send via Telegram
+            try:
+                from telegram_notifier import send_daily_report, is_configured as tg_configured
+                if tg_configured():
+                    ok = send_daily_report(report_text)
+                    logger.info(f"Telegram daily report sent: {ok}")
+                else:
+                    logger.info("Telegram not configured — report saved to file only")
+            except Exception as e:
+                logger.error(f"Telegram send failed: {e}", exc_info=True)
+
+            logger.info(f"Daily analysis complete: {analysis.get('total_trades', 0)} trades, "
+                        f"net ${analysis.get('net_pl', 0):.2f}")
+        except Exception as e:
+            logger.error(f"Daily analysis failed: {e}", exc_info=True)
+            # Try to send error alert via Telegram
+            try:
+                from telegram_notifier import send_alert, is_configured as tg_configured
+                if tg_configured():
+                    send_alert(f"Daily analysis failed: {e}", level="critical")
+            except Exception:
+                pass
+
+    def trigger_now(self):
+        """Manually trigger the analysis (for API endpoint)."""
+        threading.Thread(target=self._run_analysis, daemon=True, name="daily-analysis-manual").start()
+        return {"status": "triggered", "message": "Daily analysis running in background"}
+
+
+# ── API endpoint to manually trigger daily analysis ───────────────────
+
+@app.route("/api/daily-analysis/trigger", methods=["POST"])
+@require_auth
+def trigger_daily_analysis():
+    """Manually trigger the daily analysis + Telegram report."""
+    return jsonify(DailyAnalysisScheduler.get().trigger_now())
+
+
+@app.route("/api/daily-analysis/status")
+@require_auth
+def daily_analysis_status():
+    sched = DailyAnalysisScheduler.get()
+    return jsonify({
+        "target_hour_utc": DAILY_REPORT_HOUR_UTC,
+        "last_run_date": str(sched._last_run_date) if sched._last_run_date else None,
+        "thread_alive": sched._thread.is_alive() if sched._thread else False,
+    })
+
+
 # Start the auto-trader thread as soon as this module loads so it also runs
 # under WSGI/gunicorn on Railway (not only when __main__).
 AutoTrader.get().start()
 AlpacaAutoTrader.get().start()
+DailyAnalysisScheduler.get().start()
 
 
 if __name__ == "__main__":

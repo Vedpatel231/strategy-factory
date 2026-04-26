@@ -32,6 +32,11 @@ REPORT_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
 
 # ── API helpers ────────────────────────────────────────────────────────
 
+def _is_local():
+    """Return True if running inside the same process as dashboard_server (Railway)."""
+    return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER"))
+
+
 def _api_get(path, params=None):
     """GET from dashboard API with basic auth."""
     import requests
@@ -42,23 +47,92 @@ def _api_get(path, params=None):
     return resp.json()
 
 
+def _local_trade_ledger(limit=500):
+    """Fetch trade ledger directly (when running on Railway in same process)."""
+    try:
+        from trade_journal import load_trade_ledger, rebuild_trade_ledger_from_journal
+        rebuild_trade_ledger_from_journal()
+        rows = load_trade_ledger(limit=limit)
+        net_values = [float(r.get("net_pl") or 0) for r in rows]
+        wins = sum(1 for v in net_values if v > 0)
+        losses = sum(1 for v in net_values if v < 0)
+        return {
+            "rows": rows,
+            "summary": {
+                "trades": len(rows), "wins": wins, "losses": losses,
+                "win_rate": round(wins / len(rows) * 100, 1) if rows else None,
+                "net_pl": round(sum(net_values), 2),
+            }
+        }
+    except Exception as e:
+        logger.error(f"Local trade ledger fetch failed: {e}")
+        return {"rows": [], "summary": {}}
+
+
+def _local_account():
+    """Fetch account directly via Alpaca client."""
+    try:
+        from alpaca_client import AlpacaPaperClient
+        client = AlpacaPaperClient()
+        return client.get_account()
+    except Exception as e:
+        logger.error(f"Local account fetch failed: {e}")
+        return {}
+
+
+def _local_positions():
+    """Fetch positions directly via Alpaca client."""
+    try:
+        from alpaca_client import AlpacaPaperClient
+        client = AlpacaPaperClient()
+        positions = client.get_positions()
+        total_cost = sum(p.get("cost_basis", 0) for p in positions)
+        total_mv = sum(p.get("market_value", 0) for p in positions)
+        total_upl = sum(p.get("unrealized_pl", 0) for p in positions)
+        return {
+            "positions": positions,
+            "summary": {
+                "count": len(positions),
+                "total_cost_basis": round(total_cost, 2),
+                "total_market_value": round(total_mv, 2),
+                "total_unrealized_pl": round(total_upl, 2),
+                "total_unrealized_plpc": round(total_upl / total_cost * 100, 2) if total_cost else 0,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Local positions fetch failed: {e}")
+        return {"positions": [], "summary": {}}
+
+
 def fetch_trade_ledger(limit=500):
     """Fetch the full trade ledger."""
+    if _is_local():
+        return _local_trade_ledger(limit)
     return _api_get("/api/alpaca/trade-ledger", {"limit": limit})
 
 
 def fetch_account():
     """Fetch current account snapshot."""
+    if _is_local():
+        return _local_account()
     return _api_get("/api/alpaca/account")
 
 
 def fetch_positions():
     """Fetch open positions."""
+    if _is_local():
+        return _local_positions()
     return _api_get("/api/alpaca/positions")
 
 
 def fetch_auto_status():
     """Fetch auto-trader status."""
+    if _is_local():
+        try:
+            from alpaca_auto_trader import AlpacaAutoTrader
+            return AlpacaAutoTrader.get().status()
+        except Exception:
+            return {}
     return _api_get("/api/alpaca/auto/status")
 
 
