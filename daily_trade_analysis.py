@@ -52,8 +52,8 @@ def _local_trade_ledger(limit=500):
     try:
         from trade_journal import load_trade_ledger, rebuild_trade_ledger_from_journal
         rebuild_trade_ledger_from_journal()
-        rows = load_trade_ledger(limit=limit)
-        net_values = [float(r.get("net_pl") or 0) for r in rows]
+        rows = load_trade_ledger(limit=limit) or []
+        net_values = [float(r.get("net_pl") or 0) for r in rows if r]
         wins = sum(1 for v in net_values if v > 0)
         losses = sum(1 for v in net_values if v < 0)
         return {
@@ -65,7 +65,7 @@ def _local_trade_ledger(limit=500):
             }
         }
     except Exception as e:
-        logger.error(f"Local trade ledger fetch failed: {e}")
+        logger.error(f"Local trade ledger fetch failed: {e}", exc_info=True)
         return {"rows": [], "summary": {}}
 
 
@@ -74,9 +74,10 @@ def _local_account():
     try:
         from alpaca_client import AlpacaPaperClient
         client = AlpacaPaperClient()
-        return client.get_account()
+        result = client.get_account()
+        return result if result else {}
     except Exception as e:
-        logger.error(f"Local account fetch failed: {e}")
+        logger.error(f"Local account fetch failed: {e}", exc_info=True)
         return {}
 
 
@@ -85,10 +86,10 @@ def _local_positions():
     try:
         from alpaca_client import AlpacaPaperClient
         client = AlpacaPaperClient()
-        positions = client.get_positions()
-        total_cost = sum(p.get("cost_basis", 0) for p in positions)
-        total_mv = sum(p.get("market_value", 0) for p in positions)
-        total_upl = sum(p.get("unrealized_pl", 0) for p in positions)
+        positions = client.get_positions() or []
+        total_cost = sum(float(p.get("cost_basis", 0) or 0) for p in positions)
+        total_mv = sum(float(p.get("market_value", 0) or 0) for p in positions)
+        total_upl = sum(float(p.get("unrealized_pl", 0) or 0) for p in positions)
         return {
             "positions": positions,
             "summary": {
@@ -100,7 +101,7 @@ def _local_positions():
             }
         }
     except Exception as e:
-        logger.error(f"Local positions fetch failed: {e}")
+        logger.error(f"Local positions fetch failed: {e}", exc_info=True)
         return {"positions": [], "summary": {}}
 
 
@@ -461,19 +462,38 @@ def run_daily_analysis(hours=24, save_report=True):
     """Run the full daily analysis pipeline. Returns (report_text, analysis_dict)."""
     logger.info(f"Starting daily trade analysis (last {hours}h)...")
 
-    # Fetch data
+    # Fetch data — each call is wrapped individually so one failure
+    # doesn't kill the whole report.
+    ledger, account, positions, auto_status = None, None, None, None
     try:
         ledger = fetch_trade_ledger(limit=500)
+    except Exception as e:
+        logger.error(f"Failed to fetch trade ledger: {e}", exc_info=True)
+    try:
         account = fetch_account()
+    except Exception as e:
+        logger.error(f"Failed to fetch account: {e}", exc_info=True)
+    try:
         positions = fetch_positions()
+    except Exception as e:
+        logger.error(f"Failed to fetch positions: {e}", exc_info=True)
+    try:
         auto_status = fetch_auto_status()
     except Exception as e:
-        error_msg = f"Failed to fetch data from dashboard: {e}"
-        logger.error(error_msg)
-        return error_msg, {"error": str(e)}
+        logger.error(f"Failed to fetch auto status: {e}", exc_info=True)
+
+    # Guard against None returns
+    if ledger is None:
+        ledger = {"rows": [], "summary": {}}
+    if account is None:
+        account = {}
+    if positions is None:
+        positions = {"positions": [], "summary": {}}
+    if auto_status is None:
+        auto_status = {}
 
     # Filter and analyze
-    all_rows = ledger.get("rows", [])
+    all_rows = ledger.get("rows", []) or []
     recent_rows = filter_last_24h(all_rows, hours=hours)
 
     analysis = analyze_trades(recent_rows)
