@@ -359,22 +359,26 @@ def format_report(analysis, account=None, positions=None, auto_status=None, reco
     # Account snapshot
     if account:
         lines.append("── ACCOUNT ──────────────────────────────────────────")
-        lines.append(f"  Equity:       ${account.get('equity', 0):,.2f}")
-        lines.append(f"  Cash:         ${account.get('cash', 0):,.2f}")
-        lines.append(f"  Day P&L:      ${account.get('total_pl', 0):,.2f} ({account.get('total_pl_pct', 0):+.2f}%)")
-        lines.append(f"  Status:       {account.get('status', 'UNKNOWN')}")
+        lines.append(f"  Equity:       ${float(account.get('equity') or 0):,.2f}")
+        lines.append(f"  Cash:         ${float(account.get('cash') or 0):,.2f}")
+        lines.append(f"  Day P&L:      ${float(account.get('total_pl') or 0):,.2f} ({float(account.get('total_pl_pct') or 0):+.2f}%)")
+        lines.append(f"  Status:       {account.get('status') or 'UNKNOWN'}")
         lines.append("")
 
     # Open positions
     if positions:
-        pos_list = positions.get("positions", [])
-        summary = positions.get("summary", {})
+        pos_list = positions.get("positions") or []
+        summary = positions.get("summary") or {}
         lines.append(f"── OPEN POSITIONS ({summary.get('count', len(pos_list))}) ─────────────────────────")
-        lines.append(f"  Total Cost:   ${summary.get('total_cost_basis', 0):,.2f}")
-        lines.append(f"  Market Value: ${summary.get('total_market_value', 0):,.2f}")
-        lines.append(f"  Unrealized:   ${summary.get('total_unrealized_pl', 0):,.2f} ({summary.get('total_unrealized_plpc', 0):+.2f}%)")
+        lines.append(f"  Total Cost:   ${float(summary.get('total_cost_basis') or 0):,.2f}")
+        lines.append(f"  Market Value: ${float(summary.get('total_market_value') or 0):,.2f}")
+        lines.append(f"  Unrealized:   ${float(summary.get('total_unrealized_pl') or 0):,.2f} ({float(summary.get('total_unrealized_plpc') or 0):+.2f}%)")
         for p in pos_list:
-            lines.append(f"    {p['symbol']:12s}  entry ${p['avg_entry_price']:<10.4f}  P&L ${p['unrealized_pl']:+8.2f} ({p['unrealized_plpc']:+.1f}%)")
+            sym = p.get('symbol') or '?'
+            entry = float(p.get('avg_entry_price') or 0)
+            upl = float(p.get('unrealized_pl') or 0)
+            uplpc = float(p.get('unrealized_plpc') or 0)
+            lines.append(f"    {sym:12s}  entry ${entry:<10.4f}  P&L ${upl:+8.2f} ({uplpc:+.1f}%)")
         lines.append("")
 
     # Auto-trader status
@@ -384,8 +388,9 @@ def format_report(analysis, account=None, positions=None, auto_status=None, reco
         lines.append(f"  Interval:     {auto_status.get('interval_min', '?')} min")
         lines.append(f"  Last run:     {auto_status.get('last_run', 'never')}")
         lines.append(f"  Last error:   {auto_status.get('last_error', 'none')}")
-        last_result = auto_status.get("last_result", {})
-        trade_summary = last_result.get("steps", {}).get("trade", {}).get("summary", {})
+        last_result = auto_status.get("last_result") or {}
+        trade_summary = (last_result.get("steps") or {}).get("trade") or {}
+        trade_summary = trade_summary.get("summary") or {}
         if trade_summary:
             lines.append(f"  Last cycle:   {trade_summary.get('total_orders', 0)} orders, {trade_summary.get('buys', 0)} buys, {trade_summary.get('sells', 0)} sells, {trade_summary.get('skipped', 0)} skipped")
         lines.append("")
