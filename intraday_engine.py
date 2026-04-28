@@ -616,14 +616,28 @@ class IntradaySignalEngine:
         primary_confirm = confirm_regimes[CONFIRM_TIMEFRAMES[0]]
 
         # ── Hard-reject regimes with proven negative edge ──────────────
-        # extreme_volatility: historically worst losses.
-        # low_volatility: 7/7 trades lost (-$814) — price doesn't move
-        # enough to overcome 0.5% fee floor. See trade analysis 2026-04-26.
-        _hard_block_regimes = ("extreme_volatility", "low_volatility")
-        if trade_regime.label in _hard_block_regimes or setup_regime.label in _hard_block_regimes:
+        # extreme_volatility: always hard-blocked on either timeframe.
+        # low_volatility: hard-blocked only when BOTH timeframes agree.
+        #   When just one TF is low_vol and the other is trending, we
+        #   apply a confidence penalty instead — the old OR-gate was
+        #   rejecting 80 trending_up entries per day for no good reason.
+        _always_block = ("extreme_volatility",)
+        if trade_regime.label in _always_block or setup_regime.label in _always_block:
             return self._reject(symbol,
-                f"Regime '{trade_regime.label}'/'{setup_regime.label}' hard-blocked (no edge)",
+                f"Regime '{trade_regime.label}'/'{setup_regime.label}' hard-blocked (extreme vol)",
                 trade_regime, setup_regime, primary_confirm, confirm_regimes)
+
+        _both_low_vol = (trade_regime.label == "low_volatility"
+                         and setup_regime.label == "low_volatility")
+        if _both_low_vol:
+            return self._reject(symbol,
+                f"Both regimes low_volatility — no price movement to cover fees",
+                trade_regime, setup_regime, primary_confirm, confirm_regimes)
+
+        # Single-TF low_vol penalty (applied later after confidence is computed)
+        _low_vol_penalty = 1.0
+        if trade_regime.label == "low_volatility" or setup_regime.label == "low_volatility":
+            _low_vol_penalty = 0.55  # steep haircut but not a hard block
         if frame_data[TRADE_TIMEFRAMES[0]].volume_ratio < MIN_VOLUME_RATIO:
             return self._reject(symbol, "Liquidity/volume ratio below minimum",
                                 trade_regime, setup_regime, primary_confirm, confirm_regimes)
@@ -633,10 +647,14 @@ class IntradaySignalEngine:
         # trending_down / breakdown get a heavy confidence penalty instead
         # of a hard block — they can still produce valid short-term entries.
         daily_regime = confirm_regimes.get("1D")
-        if daily_regime and daily_regime.label in _hard_block_regimes:
+        _1d_hard_block = ("extreme_volatility",)
+        if daily_regime and daily_regime.label in _1d_hard_block:
             return self._reject(symbol,
                 f"1D regime '{daily_regime.label}' blocks new entries",
                 trade_regime, setup_regime, primary_confirm, confirm_regimes)
+        # 1D low_vol: penalty, not hard block
+        if daily_regime and daily_regime.label == "low_volatility":
+            _low_vol_penalty = min(_low_vol_penalty, 0.55)
         _1d_penalty_regimes = ("trending_down", "breakdown")
         _1d_confidence_penalty = 1.0
         if daily_regime and daily_regime.label in _1d_penalty_regimes:
@@ -721,6 +739,8 @@ class IntradaySignalEngine:
         # trending_down lost -$440 on 2 trades (both stop losses).
         if direction == "buy":
             confidence *= _1d_confidence_penalty
+            # Apply single-TF low_volatility penalty (see regime gate above).
+            confidence *= _low_vol_penalty
 
         reasons = sorted(signals, key=lambda s: s.weighted_confidence(), reverse=True)[:5]
         accepted = direction in ("buy", "sell") and confidence >= MIN_SIGNAL_CONFIDENCE

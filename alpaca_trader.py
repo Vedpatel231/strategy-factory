@@ -97,6 +97,57 @@ class AlpacaTrader:
                 pass
         return []
 
+    def _backfill_risk_book(self, positions):
+        """Auto-populate risk book entries for open positions missing from the book.
+
+        After a Railway redeploy the in-memory risk book is empty, which causes
+        _enforce_intraday_exits() to skip ALL exit logic (TP/SL/trail/timeout)
+        for every open position.  This method creates conservative fallback
+        entries using each position's avg_entry_price and cost_basis so that
+        exit protection is always active.
+        """
+        if not positions:
+            return
+        backfilled = []
+        for sym, pos in positions.items():
+            if self.risk_book.get(sym):
+                continue  # already tracked
+
+            entry_price = float(pos.get("avg_entry_price", 0) or 0)
+            cost_basis = float(pos.get("cost_basis", 0) or 0)
+            if entry_price <= 0:
+                continue
+
+            # Build a minimal synthetic signal so _risk_params can compute stops.
+            # We don't know the original ATR or confidence, so use conservative
+            # defaults that map to the BASE_* constants.
+            synthetic_signal = {
+                "confidence": 0.5,       # middle-of-road — won't widen TP too much
+                "features": {},          # no ATR → falls back to BASE_STOP_LOSS_PCT
+            }
+            stop, take, trail = self._risk_params(synthetic_signal)
+
+            self.risk_book.register_entry(
+                symbol=sym,
+                strategy="backfill_recovery",
+                regime="unknown",
+                confidence=0.5,
+                entry_price=entry_price,
+                notional=cost_basis or entry_price,
+                stop_loss_pct=stop,
+                take_profit_pct=take,
+                trailing_stop_pct=trail,
+                max_hold_hours=MAX_HOLD_HOURS,
+                reason="Auto-backfilled after risk book loss (redeploy recovery)",
+                bot_names=[],
+            )
+            backfilled.append(sym)
+            logger.warning(f"Risk book backfill: {sym} @ ${entry_price:.4f} "
+                           f"(SL={stop}%, TP={take}%, trail={trail}%)")
+
+        if backfilled:
+            logger.info(f"Risk book backfilled {len(backfilled)} positions: {backfilled}")
+
     def _save_runs(self):
         os.makedirs(os.path.dirname(ALPACA_TRADE_HISTORY), exist_ok=True)
         with open(ALPACA_TRADE_HISTORY, "w") as f:
@@ -151,6 +202,12 @@ class AlpacaTrader:
             "intraday_gate_enabled": INTRADAY_GATE_ENABLED,
             "summary": {},
         }
+
+        # Backfill risk book for any open positions missing entries (e.g. after redeploy)
+        try:
+            self._backfill_risk_book(positions)
+        except Exception as e:
+            logger.warning(f"Risk book backfill failed: {e}")
 
         # Soft exits (TP/SL/trailing/timeout) before new entries or rebalances.
         if not dry_run:
