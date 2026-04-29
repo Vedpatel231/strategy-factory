@@ -15,6 +15,16 @@ from alpaca_client import AlpacaPaperClient
 
 logger = logging.getLogger("risk_manager")
 
+
+def _send_risk_alert(message, level="critical"):
+    """Fire-and-forget Telegram alert for risk events."""
+    try:
+        from telegram_notifier import send_alert, is_configured
+        if is_configured():
+            send_alert(message, level=level)
+    except Exception as e:
+        logger.debug(f"Telegram risk alert failed: {e}")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -103,6 +113,16 @@ class DrawdownCircuitBreaker:
         return True
 
     def _emergency_shutdown(self, current_equity, drawdown_pct):
+        # 0. IMMEDIATE Telegram alert — trader must know NOW
+        _send_risk_alert(
+            f"CIRCUIT BREAKER FIRED\n\n"
+            f"Equity: ${current_equity:,.2f}\n"
+            f"Peak: ${self.peak_equity:,.2f}\n"
+            f"Drawdown: {drawdown_pct:.1f}%\n\n"
+            f"Auto-trading DISABLED. All positions being closed.",
+            level="critical",
+        )
+
         # 1. Remove auto-trade flag
         try:
             if os.path.exists(self.FLAG_FILE):
@@ -188,6 +208,14 @@ class DailyLossGuard:
                 "DAILY LOSS GUARD: equity $%.2f is down %.2f%% from SOD $%.2f (limit %.1f%%)",
                 current_equity, loss_pct, self._start_equity, self.max_daily_loss_pct,
             )
+            _send_risk_alert(
+                f"DAILY LOSS LIMIT HIT\n\n"
+                f"Equity: ${current_equity:,.2f}\n"
+                f"Start of day: ${self._start_equity:,.2f}\n"
+                f"Day loss: {loss_pct:.1f}% (limit: {self.max_daily_loss_pct}%)\n\n"
+                f"New trades BLOCKED until tomorrow.",
+                level="critical",
+            )
             return False
 
         return True
@@ -256,6 +284,16 @@ class PositionStopLoss:
 
         if closed:
             self._log_stops(closed)
+            # Alert on every stop loss closure
+            for c in closed:
+                _send_risk_alert(
+                    f"POSITION STOP LOSS\n\n"
+                    f"Symbol: {c.get('symbol')}\n"
+                    f"Loss: {c.get('loss_pct', 0):.1f}%\n"
+                    f"Cost: ${c.get('cost_basis', 0):,.2f}\n"
+                    f"Value: ${c.get('market_value', 0):,.2f}",
+                    level="warning",
+                )
 
         return closed
 

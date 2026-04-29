@@ -14,7 +14,7 @@ import logging
 import datetime
 
 import config
-from alpaca_client import AlpacaPaperClient, is_equity_symbol, normalize_crypto_symbol
+from alpaca_client import AlpacaPaperClient, is_equity_symbol, is_us_market_open, normalize_crypto_symbol
 from risk_manager import RiskManager
 from intraday_engine import IntradaySignalEngine
 from trade_journal import PositionRiskBook, TradeJournal
@@ -25,6 +25,7 @@ ALPACA_TRADE_HISTORY = os.path.join(config.DATA_DIR, "alpaca_trade_runs.json")
 REBALANCE_THRESHOLD_PCT = 20.0  # only trade if position drifts >20% from target
 INTRADAY_GATE_ENABLED = os.environ.get("INTRADAY_GATE_ENABLED", "true").lower() != "false"
 MAX_HOLD_HOURS = float(os.environ.get("INTRADAY_MAX_HOLD_HOURS", "18"))
+MAX_HOLD_HOURS_EQUITY = float(os.environ.get("EQUITY_MAX_HOLD_HOURS", "168"))  # 7 days for ETFs
 BASE_STOP_LOSS_PCT = float(os.environ.get("INTRADAY_BASE_STOP_LOSS_PCT", "3.5"))
 BASE_TAKE_PROFIT_PCT = float(os.environ.get("INTRADAY_BASE_TAKE_PROFIT_PCT", "6.0"))
 BASE_TRAILING_STOP_PCT = float(os.environ.get("INTRADAY_BASE_TRAILING_STOP_PCT", "2.5"))
@@ -133,7 +134,8 @@ class AlpacaTrader:
                 "confidence": 0.5,       # middle-of-road — won't widen TP too much
                 "features": {},          # no ATR → falls back to BASE_STOP_LOSS_PCT
             }
-            stop, take, trail = self._risk_params(synthetic_signal)
+            stop, take, trail = self._risk_params(synthetic_signal, symbol=sym)
+            max_hold = MAX_HOLD_HOURS_EQUITY if is_equity_symbol(sym) else MAX_HOLD_HOURS
 
             self.risk_book.register_entry(
                 symbol=sym,
@@ -145,7 +147,7 @@ class AlpacaTrader:
                 stop_loss_pct=stop,
                 take_profit_pct=take,
                 trailing_stop_pct=trail,
-                max_hold_hours=MAX_HOLD_HOURS,
+                max_hold_hours=max_hold,
                 reason="Auto-backfilled after risk book loss (redeploy recovery)",
                 bot_names=[],
             )
@@ -357,6 +359,14 @@ class AlpacaTrader:
                     })
                     continue
 
+            # ── Market hours guard: equities can only trade during RTH ──
+            if is_equity_symbol(sym) and not is_us_market_open():
+                results["skipped"].append({
+                    "bot": label, "pair": sym,
+                    "reason": "US equity market closed — skipping ETF order",
+                })
+                continue
+
             if dry_run:
                 results["orders"].append({
                     "bot": label, "symbol": sym, "side": side,
@@ -393,6 +403,12 @@ class AlpacaTrader:
         # Close positions that dropped out of the plan
         for sym, pos in positions.items():
             if sym not in target_by_symbol:
+                if is_equity_symbol(sym) and not is_us_market_open():
+                    results["skipped"].append({
+                        "bot": sym, "pair": sym,
+                        "reason": "US market closed — deferring equity close",
+                    })
+                    continue
                 if dry_run:
                     results["orders"].append({
                         "symbol": sym, "side": "close",
@@ -584,22 +600,32 @@ class AlpacaTrader:
                 })
                 del target_by_symbol[sym]
 
-    def _risk_params(self, signal):
+    def _risk_params(self, signal, symbol=None):
         """Compute per-position risk levels, fee-aware.
 
-        Take-profit is padded by the estimated round-trip fee (~0.50%) so that
+        Take-profit is padded by the estimated round-trip fee so that
         a TP exit always locks in real profit after costs.
+        Equities use tighter stops and zero fee padding (commission-free).
         """
-        from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
-        round_trip_fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 100.0  # ~0.50%
+        equity = symbol and is_equity_symbol(symbol)
 
-        features = signal.get("features", {}) if isinstance(signal, dict) else {}
-        atr_pct = float(features.get("atr_pct_15m", 0.0) or 0.0)
-        confidence = float(signal.get("confidence", 0.0) or 0.0) if isinstance(signal, dict) else 0.0
-        stop = max(BASE_STOP_LOSS_PCT, min(7.0, atr_pct * 1.6 if atr_pct else BASE_STOP_LOSS_PCT))
-        take_raw = max(BASE_TAKE_PROFIT_PCT, stop * (1.6 + confidence * 0.7))
-        take = take_raw + round_trip_fee_pct  # pad TP by fee so net P&L is always positive
-        trail = max(BASE_TRAILING_STOP_PCT, min(5.0, stop * 0.7))
+        if equity:
+            # ETFs: tighter risk bands, no fee drag, longer holds
+            round_trip_fee_pct = 0.0  # Alpaca equities are commission-free
+            stop = 2.5   # SPY rarely drops >2.5% intraday
+            take = 4.0   # take profit at 4%
+            trail = 1.5  # tight trail — ETFs trend smoothly
+        else:
+            from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
+            round_trip_fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 100.0  # ~0.50%
+            features = signal.get("features", {}) if isinstance(signal, dict) else {}
+            atr_pct = float(features.get("atr_pct_15m", 0.0) or 0.0)
+            confidence = float(signal.get("confidence", 0.0) or 0.0) if isinstance(signal, dict) else 0.0
+            stop = max(BASE_STOP_LOSS_PCT, min(7.0, atr_pct * 1.6 if atr_pct else BASE_STOP_LOSS_PCT))
+            take_raw = max(BASE_TAKE_PROFIT_PCT, stop * (1.6 + confidence * 0.7))
+            take = take_raw + round_trip_fee_pct
+            trail = max(BASE_TRAILING_STOP_PCT, min(5.0, stop * 0.7))
+
         return round(stop, 2), round(take, 2), round(trail, 2)
 
     def _record_trade_event(self, order_result, target, side, order_usd, results):
@@ -633,7 +659,8 @@ class AlpacaTrader:
                     entry_notional = position.get("cost_basis") or entry_notional
             except Exception:
                 pass
-            stop, take, trail = self._risk_params(signal)
+            stop, take, trail = self._risk_params(signal, symbol=sym)
+            max_hold = MAX_HOLD_HOURS_EQUITY if is_equity_symbol(sym) else MAX_HOLD_HOURS
             self.risk_book.register_entry(
                 symbol=sym,
                 strategy=event["strategy"],
@@ -644,7 +671,7 @@ class AlpacaTrader:
                 stop_loss_pct=stop,
                 take_profit_pct=take,
                 trailing_stop_pct=trail,
-                max_hold_hours=MAX_HOLD_HOURS,
+                max_hold_hours=max_hold,
                 reason=event["entry_reason"],
                 bot_names=target.get("bot_names", []),
             )
@@ -682,22 +709,45 @@ class AlpacaTrader:
             trail_dd = (high_water - current_price) / high_water * 100.0 if high_water > 0 else 0.0
 
             reason = None
+            base_sl = float(state.get("stop_loss_pct", BASE_STOP_LOSS_PCT))
+            base_tp = float(state.get("take_profit_pct", BASE_TAKE_PROFIT_PCT))
+            base_trail = float(state.get("trailing_stop_pct", BASE_TRAILING_STOP_PCT))
 
-            # ── PHASE 2 FIX: Priority-ordered exit checks ─────────────
-            # 1. Hard stop loss (unchanged)
-            if pl_pct <= -float(state.get("stop_loss_pct", BASE_STOP_LOSS_PCT)):
+            # ── STAGED EXIT LOGIC (priority-ordered) ─────────────────
+            #
+            # Philosophy: protect capital first, then protect profits.
+            # A winner should NEVER become a loser.
+
+            # 1. Hard stop loss — non-negotiable
+            if pl_pct <= -base_sl:
                 reason = f"Stop loss hit ({pl_pct:.2f}%)"
 
-            # 2. Take profit (unchanged)
-            elif pl_pct >= float(state.get("take_profit_pct", BASE_TAKE_PROFIT_PCT)):
+            # 2. Take profit — book the gain
+            elif pl_pct >= base_tp:
                 reason = f"Take profit hit ({pl_pct:.2f}%)"
 
-            # 3. Trailing stop (unchanged)
-            elif trail_dd >= float(state.get("trailing_stop_pct", BASE_TRAILING_STOP_PCT)) and pl_pct > 0:
-                reason = f"Trailing stop hit ({trail_dd:.2f}% from high)"
+            # 3. BREAKEVEN STOP — once up 1.5%+, never let it go red.
+            #    This single rule saves more money than any indicator.
+            elif pl_pct >= 1.5 and current_price <= entry_price * 1.002:
+                reason = f"Breakeven stop: was +{high_water/entry_price*100-100:.1f}%, now back to entry"
 
-            # 4. PHASE 2 NEW: Early exit if losing AND regime turned against us
-            #    Instead of waiting 18h to timeout, exit sooner if conditions deteriorated.
+            # 4. STAGED TRAILING STOP — tighten as profit grows.
+            #    Small profit = wide trail. Big profit = tight trail.
+            #    This locks in gains progressively instead of giving back
+            #    large chunks on a single reversal candle.
+            elif pl_pct > 0:
+                if pl_pct >= 4.0:
+                    effective_trail = min(base_trail, 1.0)   # tight: protect big wins
+                elif pl_pct >= 2.0:
+                    effective_trail = min(base_trail, 1.5)   # medium
+                else:
+                    effective_trail = base_trail              # standard
+
+                if trail_dd >= effective_trail:
+                    reason = (f"Staged trailing stop ({trail_dd:.2f}% from high, "
+                              f"trail={effective_trail:.1f}% at +{pl_pct:.1f}% profit)")
+
+            # 5. Early exit if losing AND regime turned against us
             elif pl_pct < -1.0:
                 try:
                     signal = self.signal_engine.evaluate_symbol(sym)
@@ -741,6 +791,10 @@ class AlpacaTrader:
                     pass
 
             if reason:
+                # Don't close equity positions outside market hours
+                if is_equity_symbol(sym) and not is_us_market_open():
+                    logger.info(f"Exit deferred for {sym}: {reason} (market closed)")
+                    continue
                 close_result = self.client.close_position(sym)
                 close_result["reason"] = reason
                 close_result["side"] = "close"
@@ -757,11 +811,14 @@ class AlpacaTrader:
                     try:
                         entry_notional = float(close_entry_state.get("entry_notional", 0) or 0)
                         exit_notional = float(pos.get("market_value", 0) or 0)
-                        # Estimate net P&L (gross P&L minus ~0.5% round-trip fee)
+                        # Estimate net P&L — equities are commission-free
                         gross_pl = exit_notional - entry_notional
-                        from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
-                        fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 10000.0
-                        total_fees = (entry_notional + exit_notional) * fee_pct / 2
+                        if is_equity_symbol(sym):
+                            total_fees = 0.0
+                        else:
+                            from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
+                            fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 10000.0
+                            total_fees = (entry_notional + exit_notional) * fee_pct / 2
                         net_pl = gross_pl - total_fees
                         strategy = state.get("strategy", "unknown")
                         regime = state.get("regime", "unknown")

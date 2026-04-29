@@ -13,7 +13,7 @@ Alpaca paper trading base URL is used automatically.
 
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("alpaca_client")
 
@@ -62,6 +62,26 @@ EQUITY_SYMBOLS = {"SPY", "VOO"}
 
 def is_equity_symbol(symbol):
     return bool(symbol) and str(symbol).upper().replace(" ", "") in EQUITY_SYMBOLS
+
+
+def is_us_market_open():
+    """Return True if the US equity market is currently open.
+
+    Regular session: 9:30 AM – 4:00 PM Eastern, Mon–Fri.
+    Does NOT account for market holidays — Alpaca will reject the order
+    anyway on holidays, so the worst case is a harmless skip.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo  # Python 3.8
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    # Weekend check (Mon=0 … Sun=6)
+    if now_et.weekday() >= 5:
+        return False
+    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    return market_open <= now_et <= market_close
 
 
 def normalize_crypto_symbol(symbol):
