@@ -14,7 +14,7 @@ import logging
 import datetime
 
 import config
-from alpaca_client import AlpacaPaperClient, normalize_crypto_symbol
+from alpaca_client import AlpacaPaperClient, is_equity_symbol, normalize_crypto_symbol
 from risk_manager import RiskManager
 from intraday_engine import IntradaySignalEngine
 from trade_journal import PositionRiskBook, TradeJournal
@@ -44,15 +44,19 @@ ALPACA_SUPPORTED_CRYPTO = {
     "USDC/USD", "DAI/USD",
 }
 
+ALPACA_SUPPORTED_EQUITIES = {"SPY", "VOO"}
+
 
 def _normalize_alpaca_symbol(pair):
-    """Convert bot pair format to Alpaca crypto symbol format.
+    """Convert bot pair format to an Alpaca tradable symbol.
 
-    Alpaca uses 'BTC/USD' style for crypto. Our bots use 'BTCUSDT' or 'BTC/USDT'.
+    Alpaca uses 'BTC/USD' style for crypto and plain tickers for ETFs.
     """
     if not pair:
         return None
     p = pair.upper().replace(" ", "")
+    if p in ALPACA_SUPPORTED_EQUITIES:
+        return p
     # Handle BTC/USDT → BTC/USD (check slash version FIRST)
     if p.endswith("/USDT"):
         base = p[:-5]
@@ -69,6 +73,10 @@ def _normalize_alpaca_symbol(pair):
     if "/" in p and p.endswith("/USD"):
         return p
     return None
+
+
+def _is_supported_alpaca_symbol(symbol):
+    return symbol in ALPACA_SUPPORTED_CRYPTO or symbol in ALPACA_SUPPORTED_EQUITIES
 
 
 class AlpacaTrader:
@@ -238,7 +246,7 @@ class AlpacaTrader:
         for alloc in allocations:
             pair = alloc.get("pair", "")
             sym = _normalize_alpaca_symbol(pair)
-            if sym and sym in ALPACA_SUPPORTED_CRYPTO:
+            if sym and _is_supported_alpaca_symbol(sym):
                 supported_allocs.append((alloc, sym))
             else:
                 bot_name = alloc.get("bot_name", "?")
@@ -492,6 +500,10 @@ class AlpacaTrader:
         for sym in list(target_by_symbol.keys()):
             target = target_by_symbol[sym]
             existing = positions.get(sym)
+
+            if is_equity_symbol(sym):
+                target["intraday_reason"] = "Equity ETF: crypto intraday gate skipped"
+                continue
 
             # PHASE 3: Post-exit cooldown for new entries
             if not existing:

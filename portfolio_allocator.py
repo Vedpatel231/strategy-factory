@@ -4,7 +4,11 @@ Takes a starting capital (e.g. $1,000) and intelligently distributes it
 across active strategies based on quantum scores, risk metrics, and diversification.
 """
 
-ACTIVE_COINS = {"BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "DOGE", "ADA", "DOT", "UNI", "AAVE", "LTC"}
+ACTIVE_ASSETS = {"BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "DOGE", "ADA", "DOT", "UNI", "AAVE", "LTC", "SPY", "VOO"}
+ACTIVE_COINS = ACTIVE_ASSETS  # Backward-compatible name used by older dashboard/report code.
+ETF_ASSETS = {"SPY", "VOO"}
+ETF_ACTIVE_STRATEGIES = {"momentum", "trend_following", "mean_reversion", "breakout", "swing"}
+ETF_MAX_ALLOCATION_PCT = 20.0
 ACTIVE_STRATEGIES = {
     "grid", "mean_reversion", "momentum", "trend_following", "breakout",
     "pullback_continuation", "volatility_breakout", "range_trading",
@@ -65,13 +69,16 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
         sharpe = m.get("sharpe_ratio", 0)
         dd = abs(m.get("max_drawdown", 0))
 
-        coin = ev.get("pair", "").split("/")[0].upper()
+        asset = ev.get("pair", "").split("/")[0].upper()
         stype = ev.get("strategy_type", "").lower()
-        if coin not in ACTIVE_COINS:
-            excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Coin {coin} not in active set"})
+        if asset not in ACTIVE_ASSETS:
+            excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Asset {asset} not in active set"})
             continue
         if stype not in ACTIVE_STRATEGIES:
             excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Strategy type {stype} not in active set"})
+            continue
+        if asset in ETF_ASSETS and stype not in ETF_ACTIVE_STRATEGIES:
+            excluded.append({"bot_name": ev.get("bot_name"), "reason": f"ETF strategy type {stype} not allowed for {asset}"})
             continue
 
         if pf <= 0 or win_rate <= 0:
@@ -117,11 +124,11 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
 
     coin_counts = {}
     for e in eligible:
-        coin = e["pair"].split("/")[0].upper()
-        seen = coin_counts.get(coin, 0)
+        asset = e["pair"].split("/")[0].upper()
+        seen = coin_counts.get(asset, 0)
         if seen > 0:
             e["score"] *= max(0.55, 1.0 - (0.18 * seen))
-        coin_counts[coin] = seen + 1
+        coin_counts[asset] = seen + 1
 
     if not eligible:
         return {
@@ -152,6 +159,14 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
         for e in eligible:
             e["final_pct"] = (e["final_pct"] / capped_total) * 100.0
             e["allocation_usd"] = round(capital * e["final_pct"] / 100, 2)
+
+    etf_total_pct = sum(e["final_pct"] for e in eligible if e["pair"].split("/")[0].upper() in ETF_ASSETS)
+    if etf_total_pct > ETF_MAX_ALLOCATION_PCT:
+        scale = ETF_MAX_ALLOCATION_PCT / etf_total_pct
+        for e in eligible:
+            if e["pair"].split("/")[0].upper() in ETF_ASSETS:
+                e["final_pct"] *= scale
+                e["allocation_usd"] = round(capital * e["final_pct"] / 100, 2)
 
     # Sort by score (highest first) for display ranking
     eligible.sort(key=lambda x: x["score"], reverse=True)
@@ -226,6 +241,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
         "expected_monthly_return_usd": round(total_expected, 2),
         "expected_monthly_return_pct": round(total_expected / capital * 100, 2) if capital > 0 else 0,
         "strategy_type_distribution": type_dist,
+        "etf_max_allocation_pct": ETF_MAX_ALLOCATION_PCT,
     }
 
     return {

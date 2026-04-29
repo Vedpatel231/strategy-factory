@@ -283,12 +283,14 @@ class PositionStopLoss:
 
 class ExposureLimits:
     """
-    Cap single-symbol exposure at 12 % of total equity and total
-    exposure at 90 % of equity (10 % cash reserve).
+    Cap single-symbol exposure at 12 % of total equity, combined SPY/VOO
+    exposure at 20 %, and total exposure at 90 % of equity.
     """
 
     MAX_SINGLE_PCT = 12.0
+    MAX_EQUITY_INDEX_ETF_PCT = 20.0
     MAX_TOTAL_PCT = 90.0
+    EQUITY_INDEX_ETFS = {"SPY", "VOO"}
 
     def _get_target_usd(self, value):
         if isinstance(value, dict):
@@ -322,6 +324,24 @@ class ExposureLimits:
                     sym, target_usd, max_single, self.MAX_SINGLE_PCT,
                 )
                 self._set_target_usd(target_by_symbol, sym, max_single)
+
+        # SPY and VOO are highly overlapping S&P 500 exposure. Treat them as
+        # one sleeve so they cannot bypass the per-symbol cap by splitting.
+        max_etf_group = total_equity * self.MAX_EQUITY_INDEX_ETF_PCT / 100.0
+        etf_symbols = [sym for sym in target_by_symbol if sym in self.EQUITY_INDEX_ETFS]
+        etf_total = sum(self._get_target_usd(target_by_symbol[sym]) for sym in etf_symbols)
+        if etf_total > max_etf_group and etf_total > 0:
+            scale = max_etf_group / etf_total
+            logger.info(
+                "ExposureLimits: scaling SPY/VOO sleeve from $%.2f to $%.2f (%.0f%% cap)",
+                etf_total, max_etf_group, self.MAX_EQUITY_INDEX_ETF_PCT,
+            )
+            for sym in etf_symbols:
+                self._set_target_usd(
+                    target_by_symbol,
+                    sym,
+                    self._get_target_usd(target_by_symbol[sym]) * scale,
+                )
 
         # Cap total exposure
         total = sum(self._get_target_usd(v) for v in target_by_symbol.values())

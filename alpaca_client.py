@@ -48,11 +48,29 @@ def _get_data_client():
     )
 
 
+def _get_stock_data_client():
+    """Lazy import + create StockHistoricalDataClient from alpaca-py."""
+    from alpaca.data.historical.stock import StockHistoricalDataClient
+    return StockHistoricalDataClient(
+        api_key=_ALPACA_KEY,
+        secret_key=_ALPACA_SECRET,
+    )
+
+
+EQUITY_SYMBOLS = {"SPY", "VOO"}
+
+
+def is_equity_symbol(symbol):
+    return bool(symbol) and str(symbol).upper().replace(" ", "") in EQUITY_SYMBOLS
+
+
 def normalize_crypto_symbol(symbol):
-    """Return the dashboard's canonical Alpaca crypto pair format."""
+    """Return the dashboard's canonical Alpaca symbol format."""
     if not symbol:
         return symbol
     s = str(symbol).upper().replace(" ", "")
+    if s in EQUITY_SYMBOLS:
+        return s
     if s.endswith("/USDT"):
         return f"{s[:-5]}/USD"
     if s.endswith("USDT") and "/" not in s:
@@ -219,12 +237,14 @@ class AlpacaPaperClient:
         from alpaca.trading.enums import OrderSide, TimeInForce
 
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+        canonical = normalize_crypto_symbol(symbol)
+        tif = TimeInForce.DAY if is_equity_symbol(canonical) else TimeInForce.GTC
 
         req = MarketOrderRequest(
-            symbol=symbol,
+            symbol=canonical,
             notional=round(notional_usd, 2),
             side=order_side,
-            time_in_force=TimeInForce.GTC,
+            time_in_force=tif,
         )
         order = self._trading.submit_order(req)
         return self._format_order(order)
@@ -340,24 +360,47 @@ class AlpacaPaperClient:
 
     # ── LATEST PRICE ────────────────────────────────────────────────────
     def get_latest_price(self, symbol):
-        """Get latest crypto price from Alpaca data API."""
+        """Get latest price from Alpaca data API."""
         prices = self.get_latest_prices([symbol])
         return prices.get(normalize_crypto_symbol(symbol))
 
     def get_latest_prices(self, symbols):
-        """Get latest crypto quote prices keyed by canonical symbol."""
+        """Get latest quote prices keyed by canonical symbol."""
         out = {}
         if not symbols:
             return out
         canonical_symbols = []
         compact_symbols = []
+        equity_symbols = []
         for symbol in symbols:
             canonical = normalize_crypto_symbol(symbol)
             compact = compact_crypto_symbol(symbol)
+            if is_equity_symbol(canonical):
+                if canonical not in equity_symbols:
+                    equity_symbols.append(canonical)
+                continue
             if canonical and canonical not in canonical_symbols:
                 canonical_symbols.append(canonical)
             if compact and compact not in compact_symbols:
                 compact_symbols.append(compact)
+
+        if equity_symbols:
+            try:
+                from alpaca.data.requests import StockLatestQuoteRequest
+                stock_client = _get_stock_data_client()
+                req = StockLatestQuoteRequest(symbol_or_symbols=equity_symbols)
+                quotes = stock_client.get_stock_latest_quote(req)
+                for symbol in equity_symbols:
+                    quote = quotes.get(symbol) if hasattr(quotes, "get") else None
+                    if not quote:
+                        continue
+                    bid = float(getattr(quote, "bid_price", 0) or 0)
+                    ask = float(getattr(quote, "ask_price", 0) or 0)
+                    price = (bid + ask) / 2 if bid > 0 and ask > 0 else ask or bid
+                    if price > 0:
+                        out[symbol] = price
+            except Exception as e:
+                logger.warning(f"Could not get latest equity prices: {e}")
 
         try:
             from alpaca.data.requests import CryptoLatestQuoteRequest

@@ -30,6 +30,8 @@ COINS = [
     "BNB", "FTM", "APE", "MATIC",
 ]
 
+ETFS = ["SPY", "VOO"]
+
 STRATEGY_TYPES = [
     ("scalping",        "1m"),
     ("momentum",        "15m"),
@@ -38,6 +40,14 @@ STRATEGY_TYPES = [
     ("breakout",         "30m"),
     ("grid",             "5m"),
     ("swing",            "4h"),
+]
+
+ETF_STRATEGY_TYPES = [
+    ("momentum",         "1h"),
+    ("trend_following",  "1d"),
+    ("mean_reversion",   "1h"),
+    ("breakout",         "1h"),
+    ("swing",            "1d"),
 ]
 
 # Strategy name templates — maps type to a name suffix
@@ -63,7 +73,7 @@ _EXTRA_VARIANTS = [
 
 
 def _build_strategies():
-    """Generate ~200 strategies from all coin × strategy type combinations + extras."""
+    """Generate strategies from all crypto pairs and selected ETFs."""
     strategies = []
     for coin in COINS:
         for stype, tf in STRATEGY_TYPES:
@@ -74,6 +84,15 @@ def _build_strategies():
             strategies.append({
                 "name": name, "type": stype, "timeframe": tf,
                 "pair": pair, "desc": desc,
+            })
+    for symbol in ETFS:
+        for stype, tf in ETF_STRATEGY_TYPES:
+            suffix = _NAME_SUFFIXES[stype]
+            name = f"{symbol} {suffix} {tf}"
+            desc = f"{symbol} ETF {stype.replace('_', ' ')} strategy on {tf} timeframe"
+            strategies.append({
+                "name": name, "type": stype, "timeframe": tf,
+                "pair": symbol, "desc": desc,
             })
     # Add extra timeframe variants
     strategies.extend(_EXTRA_VARIANTS)
