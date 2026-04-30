@@ -1079,10 +1079,12 @@ def daily_analysis_status():
     })
 
 
-# ── AUTO-RESET: detect stale DB from old multi-strategy era ──────────
+# ── AUTO-RESET: detect stale or incomplete DB ────────────────────────
+EXPECTED_STRATEGY_TYPES = {"adaptive_breakout", "rsi_mean_reversion", "macd_crossover", "vwap_bounce", "ema_crossover"}
+
 def _auto_reset_if_needed():
-    """If the DB still has old strategy types, run the
-    strategy reset automatically on first boot after deploy."""
+    """Reset + reseed the DB if it has old strategy types or is missing
+    the expected intraday strategies. Runs once on first boot after deploy."""
     try:
         import sqlite3
         if not os.path.exists(config.DB_PATH):
@@ -1091,7 +1093,8 @@ def _auto_reset_if_needed():
         rows = conn.execute("SELECT DISTINCT type FROM strategies").fetchall()
         types = {r[0] for r in rows}
         conn.close()
-        old_types = types - {"adaptive_breakout", "rsi_mean_reversion", "macd_crossover", "vwap_bounce", "ema_crossover"}
+        old_types = types - EXPECTED_STRATEGY_TYPES
+        missing_types = EXPECTED_STRATEGY_TYPES - types
         if old_types:
             logger.info(f"Detected old strategy types {old_types} — running reset...")
             import subprocess
@@ -1101,6 +1104,15 @@ def _auto_reset_if_needed():
                 timeout=120,
             )
             logger.info("Strategy reset complete.")
+        elif missing_types:
+            logger.info(f"Missing strategy types {missing_types} — reseeding DB...")
+            import subprocess
+            subprocess.run(
+                [sys.executable, "reset_for_ema_crossover.py"],
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                timeout=120,
+            )
+            logger.info("DB reseed complete — new intraday strategies added.")
     except Exception as e:
         logger.warning(f"Auto-reset check failed (non-fatal): {e}")
 
