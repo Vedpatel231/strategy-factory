@@ -167,7 +167,11 @@ class AlpacaTrader:
         """Open Alpaca positions matching the portfolio allocations."""
         allocations = portfolio.get("allocations", [])
         if not allocations:
-            return {"status": "no_allocations", "orders": []}
+            return {"status": "no_allocations", "orders": [],
+                    "summary": {"buys": 0, "sells": 0, "closes": 0,
+                                "total_orders": 0, "skipped": 0,
+                                "total_capital_deployed_usd": 0,
+                                "num_target_positions": 0}}
 
         acct = self.client.get_account()
         positions_list = self.client.get_positions()
