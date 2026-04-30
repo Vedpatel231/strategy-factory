@@ -705,6 +705,34 @@ def intraday_state():
         return jsonify({"error": str(e), "symbols": {}})
 
 
+@app.route("/api/debug/candles/<symbol>")
+@require_auth
+def debug_candles(symbol):
+    """Diagnostic: test candle fetching for a symbol across all providers."""
+    symbol = symbol.replace("-", "/")  # BTC-USD → BTC/USD
+    try:
+        from intraday_engine import MarketDataProvider
+        provider = MarketDataProvider()
+        results = {}
+        for tf in ("15m", "4h", "1D"):
+            # Try each provider individually
+            alpaca_sdk = provider._get_alpaca_candles(symbol, tf, 160)
+            alpaca_rest = provider._get_alpaca_rest_candles(symbol, tf, 160)
+            binance = provider._get_binance_candles(symbol, tf, 160)
+            combined = provider.get_candles(symbol, tf)
+            results[tf] = {
+                "alpaca_sdk": len(alpaca_sdk),
+                "alpaca_rest": len(alpaca_rest),
+                "binance": len(binance),
+                "combined_clean": len(combined),
+                "sample": combined[:2] if combined else [],
+            }
+        return jsonify({"symbol": symbol, "results": results})
+    except Exception as e:
+        import traceback
+        return jsonify({"symbol": symbol, "error": str(e), "trace": traceback.format_exc()})
+
+
 @app.route("/api/trade-journal")
 @require_auth
 def trade_journal():
