@@ -1,0 +1,77 @@
+// ═══════════════════════════════════════════════════════════════════
+// EMA Crossover Scanner — Test different EMA + risk combos
+// Change inputs in Settings to match the backtest results
+// ═══════════════════════════════════════════════════════════════════
+//@version=5
+strategy("EMA Crossover Scanner", overlay=true,
+     calc_on_every_tick=true,
+     default_qty_type=strategy.cash, default_qty_value=10000,
+     initial_capital=10000, commission_type=strategy.commission.percent,
+     commission_value=0.075, slippage=2)
+
+// ── Date Range ──────────────────────────────────────────────────
+startDate = input.time(timestamp("2025-01-01"), "Start Date")
+endDate   = input.time(timestamp("2026-12-31"), "End Date")
+inDate    = time >= startDate and time <= endDate
+
+// ── EMA Periods (change these to test variants) ─────────────────
+fastLen   = input.int(12,   "Fast EMA", minval=2, tooltip="Try: 5, 8, 9, 12, 20")
+slowLen   = input.int(26,   "Slow EMA", minval=2, tooltip="Try: 13, 21, 26, 50")
+
+// ── Risk (change to match backtest winner) ──────────────────────
+atrSL     = input.float(1.0, "SL × ATR", step=0.5, tooltip="Try: 1.0, 1.5, 2.0")
+atrTP     = input.float(2.0, "TP × ATR", step=0.5, tooltip="Try: 2.0, 3.0, 4.0")
+
+// ── Filters ─────────────────────────────────────────────────────
+useRSI    = input.bool(true, "RSI Filter (skip OB/OS)")
+useTrend  = input.bool(false, "Trend Filter (EMA20>EMA50 for longs)")
+longOnly  = input.bool(true,  "Long Only")
+
+// ── Indicators ──────────────────────────────────────────────────
+emaF  = ta.ema(close, fastLen)
+emaS  = ta.ema(close, slowLen)
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+atr14 = ta.atr(14)
+rsi14 = ta.rsi(close, 14)
+atrPct = (atr14 / close) * 100
+
+// ── Crossover ───────────────────────────────────────────────────
+bullCross = emaF[1] <= emaS[1] and emaF > emaS
+bearCross = emaF[1] >= emaS[1] and emaF < emaS
+
+// ── Filters applied ─────────────────────────────────────────────
+atrOK    = atrPct >= 0.3
+rsiBuyOK = not useRSI or rsi14 <= 75
+rsiSellOK= not useRSI or rsi14 >= 25
+trendBuyOK  = not useTrend or ema20 > ema50
+trendSellOK = not useTrend or ema20 < ema50
+
+longEntry  = bullCross and atrOK and rsiBuyOK and trendBuyOK and inDate
+shortEntry = bearCross and atrOK and rsiSellOK and trendSellOK and inDate and not longOnly
+
+// ── Execution ───────────────────────────────────────────────────
+sl_long  = close - atr14 * atrSL
+tp_long  = close + atr14 * atrTP
+sl_short = close + atr14 * atrSL
+tp_short = close - atr14 * atrTP
+
+tradeQty = math.max(0.0001, strategy.equity / close)
+
+if longEntry
+    strategy.entry("Long", strategy.long, qty=tradeQty)
+    strategy.exit("XL", "Long", stop=sl_long, limit=tp_long)
+
+if shortEntry
+    strategy.entry("Short", strategy.short, qty=tradeQty)
+    strategy.exit("XS", "Short", stop=sl_short, limit=tp_short)
+
+if not inDate
+    strategy.close_all()
+
+// ── Plots ───────────────────────────────────────────────────────
+plot(emaF, "Fast EMA", color.new(#2962FF, 0), linewidth=2)
+plot(emaS, "Slow EMA", color.new(#FF6D00, 0), linewidth=2)
+
+plotshape(longEntry,  "Buy",  shape.triangleup,   location.belowbar, color.new(#26A69A, 0), size=size.small)
+plotshape(shortEntry, "Sell", shape.triangledown,  location.abovebar, color.new(#EF5350, 0), size=size.small)

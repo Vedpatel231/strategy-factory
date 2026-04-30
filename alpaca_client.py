@@ -57,7 +57,7 @@ def _get_stock_data_client():
     )
 
 
-EQUITY_SYMBOLS = set()  # No equities — crypto only
+EQUITY_SYMBOLS = {"TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"}
 
 
 def is_equity_symbol(symbol):

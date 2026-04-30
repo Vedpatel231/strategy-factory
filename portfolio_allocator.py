@@ -4,16 +4,14 @@ Takes a starting capital (e.g. $1,000) and intelligently distributes it
 across active strategies based on quantum scores, risk metrics, and diversification.
 """
 
-ACTIVE_ASSETS = {"BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "ADA", "UNI", "AAVE", "LTC"}
-ACTIVE_COINS = ACTIVE_ASSETS  # Backward-compatible name used by older dashboard/report code.
-ETF_ASSETS = {"SPY", "VOO"}
-ETF_ACTIVE_STRATEGIES = {"momentum", "trend_following", "mean_reversion", "breakout", "swing"}
-ETF_MAX_ALLOCATION_PCT = 20.0
+import config
+
+ACTIVE_ASSETS = set(config.CRYPTO_ASSETS) | set(config.STOCK_ASSETS)
+ACTIVE_COINS = set(config.CRYPTO_ASSETS)  # Backward-compatible name for dashboard/report code.
+STOCK_ASSETS = set(config.STOCK_ASSETS)
+STOCK_MAX_ALLOCATION_PCT = 40.0  # Max 40% of portfolio in stocks combined
 ACTIVE_STRATEGIES = {
-    "ema_crossover",
-    "grid", "mean_reversion", "momentum", "trend_following", "breakout",
-    "pullback_continuation", "volatility_breakout", "range_trading",
-    "swing_trading", "reversal_market_structure", "grid_range",
+    "adaptive_breakout",
 }
 
 
@@ -78,9 +76,6 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
             continue
         if stype not in ACTIVE_STRATEGIES:
             excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Strategy type {stype} not in active set"})
-            continue
-        if asset in ETF_ASSETS and stype not in ETF_ACTIVE_STRATEGIES:
-            excluded.append({"bot_name": ev.get("bot_name"), "reason": f"ETF strategy type {stype} not allowed for {asset}"})
             continue
 
         # Bootstrap bots skip quality thresholds — they need to trade to
@@ -180,11 +175,11 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
             e["final_pct"] = (e["final_pct"] / capped_total) * 100.0
             e["allocation_usd"] = round(capital * e["final_pct"] / 100, 2)
 
-    etf_total_pct = sum(e["final_pct"] for e in eligible if e["pair"].split("/")[0].upper() in ETF_ASSETS)
-    if etf_total_pct > ETF_MAX_ALLOCATION_PCT:
-        scale = ETF_MAX_ALLOCATION_PCT / etf_total_pct
+    stock_total_pct = sum(e["final_pct"] for e in eligible if e["pair"].split("/")[0].upper() in STOCK_ASSETS)
+    if stock_total_pct > STOCK_MAX_ALLOCATION_PCT:
+        scale = STOCK_MAX_ALLOCATION_PCT / stock_total_pct
         for e in eligible:
-            if e["pair"].split("/")[0].upper() in ETF_ASSETS:
+            if e["pair"].split("/")[0].upper() in STOCK_ASSETS:
                 e["final_pct"] *= scale
                 e["allocation_usd"] = round(capital * e["final_pct"] / 100, 2)
 
@@ -261,7 +256,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
         "expected_monthly_return_usd": round(total_expected, 2),
         "expected_monthly_return_pct": round(total_expected / capital * 100, 2) if capital > 0 else 0,
         "strategy_type_distribution": type_dist,
-        "etf_max_allocation_pct": ETF_MAX_ALLOCATION_PCT,
+        "stock_max_allocation_pct": STOCK_MAX_ALLOCATION_PCT,
     }
 
     return {

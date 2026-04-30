@@ -1,0 +1,186 @@
+// ═══════════════════════════════════════════════════════════════════
+// Strategy Factory — EMA(12/26) Crossover with Full Filter Stack
+// Replicates intraday_engine.py: regime detection, RSI filter,
+// ATR gates, EMA20/50 trend alignment, Bollinger regime, volume ratio
+// ═══════════════════════════════════════════════════════════════════
+//@version=5
+strategy("SF EMA Crossover — Full System", overlay=true,
+     calc_on_every_tick=true,
+     default_qty_type=strategy.cash, default_qty_value=1000,
+     initial_capital=10000, commission_type=strategy.commission.percent,
+     commission_value=0.075, slippage=2)
+
+// ── Date Range ──────────────────────────────────────────────────
+startDate = input.time(timestamp("2025-01-01"), "Start Date")
+endDate   = input.time(timestamp("2026-12-31"), "End Date")
+inDate    = time >= startDate and time <= endDate
+
+// ── Core Strategy Inputs ────────────────────────────────────────
+fastLen   = input.int(12,    "Fast EMA",   minval=2)
+slowLen   = input.int(26,    "Slow EMA",   minval=2)
+atrLen    = input.int(14,    "ATR Length",  minval=1)
+rsiLen    = input.int(14,    "RSI Length",  minval=2)
+atrSLMult = input.float(1.0, "SL × ATR",   step=0.1)
+atrTPMult = input.float(2.0, "TP × ATR",   step=0.1)
+
+// ── Filter Inputs (match intraday_engine.py defaults) ───────────
+minATRPct       = input.float(0.3,  "Min ATR % (dead market filter)",   step=0.1)
+extremeATRPct   = input.float(12.0, "Extreme ATR % (hard block)",      step=0.5)
+minVolRatio     = input.float(0.12, "Min Volume Ratio",                step=0.05)
+rsiOB           = input.float(75.0, "RSI Overbought (skip buy)",       step=1)
+rsiOS           = input.float(25.0, "RSI Oversold (skip sell)",        step=1)
+minConfidence   = input.float(0.38, "Min Signal Confidence",           step=0.01)
+longOnly        = input.bool(true,  "Long Only (matches Alpaca crypto)")
+
+// ── Indicators ──────────────────────────────────────────────────
+ema12  = ta.ema(close, fastLen)
+ema26  = ta.ema(close, slowLen)
+ema20  = ta.ema(close, 20)
+ema50  = ta.ema(close, 50)
+atr14  = ta.atr(atrLen)
+rsi14  = ta.rsi(close, rsiLen)
+
+// Bollinger Bands (20, 2.0) — used for regime detection
+bbBasis = ta.sma(close, 20)
+bbDev   = 2.0 * ta.stdev(close, 20)
+bbUpper = bbBasis + bbDev
+bbLower = bbBasis - bbDev
+bbWidth = (bbUpper - bbLower) / close * 100.0
+
+// ATR as percentage of price
+atrPct = (atr14 / close) * 100.0
+
+// Volume ratio: recent 5 bars vs base 35 bars before that
+recentVol = ta.sma(volume, 5)
+baseVol   = ta.sma(volume, 40)
+volRatio  = baseVol > 0 ? recentVol / baseVol : 1.0
+
+// EMA20 slope over 8 bars (matches Python: ema20[-1] vs ema20[-8])
+ema20Slope = ema20[8] != 0 ? (ema20 - ema20[8]) / ema20[8] * 100.0 : 0.0
+
+// ══════════════════════════════════════════════════════════════════
+// REGIME DETECTION (replicates RegimeDetector.classify)
+// ══════════════════════════════════════════════════════════════════
+// Trend bias
+trendUp   = close > ema20 and ema20 > ema50 and ema20Slope > 0.12
+trendDown = close < ema20 and ema20 < ema50 and ema20Slope < -0.12
+
+// Regime labels (priority order matches Python)
+isExtremeVol  = atrPct >= extremeATRPct
+isBreakout    = volRatio > 1.35 and close > bbUpper and trendUp
+isBreakdown   = volRatio > 1.35 and close < bbLower and trendDown
+isTrendingUp  = not isExtremeVol and not isBreakout and trendUp
+isTrendingDown= not isExtremeVol and not isBreakdown and trendDown
+isHighVol     = not isExtremeVol and not isBreakout and not isBreakdown and not isTrendingUp and not isTrendingDown and (atrPct > 4.0 or bbWidth > 10.0)
+isLowVol      = not isExtremeVol and not isBreakout and not isBreakdown and not isTrendingUp and not isTrendingDown and not isHighVol and (atrPct < 1.0 and bbWidth < 3.0)
+isRangeBound  = not isExtremeVol and not isBreakout and not isBreakdown and not isTrendingUp and not isTrendingDown and not isHighVol and not isLowVol and (rsi14 >= 42 and rsi14 <= 58 and math.abs(ema20Slope) < 0.08)
+isChoppy      = not isExtremeVol and not isBreakout and not isBreakdown and not isTrendingUp and not isTrendingDown and not isHighVol and not isLowVol and not isRangeBound
+
+// EMA crossover good regimes: trending_up, trending_down, breakout, breakdown, high_volatility
+// EMA crossover bad regimes: low_volatility
+goodRegime = isTrendingUp or isTrendingDown or isBreakout or isBreakdown or isHighVol
+badRegime  = isLowVol
+
+// ══════════════════════════════════════════════════════════════════
+// SIGNAL + CONFIDENCE (replicates EMACrossoverStrategy + gate stack)
+// ══════════════════════════════════════════════════════════════════
+// Raw crossover
+bullCross = ema12[1] <= ema26[1] and ema12 > ema26
+bearCross = ema12[1] >= ema26[1] and ema12 < ema26
+
+// Base confidence (matches Python formula)
+bullSep  = (ema12 - ema26) / ema26 * 100.0
+bearSep  = (ema26 - ema12) / ema26 * 100.0
+volBoost = volRatio > 1.0 ? math.min(0.08, (volRatio - 1.0) * 0.06) : 0.0
+
+bullConf = math.min(0.82, 0.62 + bullSep * 0.5 + volBoost)
+bearConf = math.min(0.78, 0.60 + bearSep * 0.5)
+
+// RSI penalty
+bullConf := rsi14 > rsiOB ? bullConf * 0.6 : bullConf
+bearConf := rsi14 < rsiOS ? bearConf * 0.6 : bearConf
+
+// Regime fit multiplier
+regimeFit = goodRegime ? 1.15 : badRegime ? 0.7 : 1.0
+
+// Weighted confidence = confidence × regime_fit
+bullWeighted = bullConf * regimeFit
+bearWeighted = bearConf * regimeFit
+
+// ── Gate 1: Hard blocks ─────────────────────────────────────────
+hardBlocked = isExtremeVol or isLowVol
+
+// ── Gate 2: Volume ratio ────────────────────────────────────────
+volOK = volRatio >= minVolRatio
+
+// ── Gate 3: Min ATR filter ──────────────────────────────────────
+atrOK = atrPct >= minATRPct
+
+// ── Gate 4: 1h trend alignment (using EMA20 slope as proxy) ─────
+// In Python this checks 1h EMA20 slope < -0.05 → penalty 0.85 for buys
+// On 15m chart, we approximate 1h with 4-bar lookback slope
+ema20Slope4 = ema20[4] != 0 ? (ema20 - ema20[4]) / ema20[4] * 100.0 : 0.0
+hourlyPenalty = ema20Slope4 < -0.05 ? 0.85 : 1.0
+
+// ── Gate 5: Choppy/range_bound/high_vol 4h regime penalty ───────
+// Approximate 4h regime using longer lookback
+choppyPenalty = isChoppy or isRangeBound or isHighVol ? 0.85 : 1.0
+
+// ── Gate 6: 1D trending_down penalty ────────────────────────────
+// Approximate with 50-bar EMA slope on 15m ≈ ~12.5 hours of trend
+ema50Slope = ema50[20] != 0 ? (ema50 - ema50[20]) / ema50[20] * 100.0 : 0.0
+dailyPenalty = ema50Slope < -0.15 ? 0.80 : 1.0
+
+// ── Gate 7: Alignment penalty ───────────────────────────────────
+// If buying into a downtrend (EMA20 < EMA50), apply alignment penalty
+alignPenalty = 0.0
+alignPenalty := close < ema20 and ema20 < ema50 ? alignPenalty + 0.08 : alignPenalty  // 4h-equivalent
+alignPenalty := ema20Slope < -0.10 ? alignPenalty + 0.06 : alignPenalty  // 1D-equivalent
+
+// ── Final confidence after all gates ────────────────────────────
+finalBullConf = math.max(0.0, (bullWeighted * hourlyPenalty * choppyPenalty * dailyPenalty) - alignPenalty)
+finalBearConf = bearWeighted  // sells have fewer penalties in the Python code
+
+// ── Entry conditions ────────────────────────────────────────────
+longSignal  = bullCross and atrOK and volOK and not hardBlocked and not badRegime and finalBullConf >= minConfidence and inDate
+shortSignal = bearCross and atrOK and volOK and not hardBlocked and not badRegime and finalBearConf >= minConfidence and inDate and not longOnly
+
+// ── Execution ───────────────────────────────────────────────────
+tradeQty = math.max(0.0001, strategy.equity / close)
+
+longSL  = close - (atr14 * atrSLMult)
+longTP  = close + (atr14 * atrTPMult)
+shortSL = close + (atr14 * atrSLMult)
+shortTP = close - (atr14 * atrTPMult)
+
+if longSignal
+    strategy.entry("Long", strategy.long, qty=tradeQty)
+    strategy.exit("Long Exit", "Long", stop=longSL, limit=longTP)
+
+if shortSignal
+    strategy.entry("Short", strategy.short, qty=tradeQty)
+    strategy.exit("Short Exit", "Short", stop=shortSL, limit=shortTP)
+
+// Close outside date range
+if not inDate
+    strategy.close_all()
+
+// ── Plots ───────────────────────────────────────────────────────
+plot(ema12, "EMA 12", color=color.new(#2962FF, 0), linewidth=2)
+plot(ema26, "EMA 26", color=color.new(#FF6D00, 0), linewidth=2)
+plot(ema20, "EMA 20", color=color.new(color.gray, 60), linewidth=1)
+plot(ema50, "EMA 50", color=color.new(color.gray, 60), linewidth=1, style=plot.style_circles)
+
+// Signal markers
+plotshape(longSignal,  "Buy",  shape.triangleup,   location.belowbar, color.new(#26A69A, 0), size=size.small)
+plotshape(shortSignal, "Sell", shape.triangledown,  location.abovebar, color.new(#EF5350, 0), size=size.small)
+
+// Regime background color (subtle)
+regimeColor = isExtremeVol ? color.new(color.red, 90) : isLowVol ? color.new(color.gray, 92) : isTrendingUp or isBreakout ? color.new(color.green, 94) : isTrendingDown or isBreakdown ? color.new(color.red, 94) : na
+bgcolor(regimeColor, title="Regime")
+
+// ── Alerts ──────────────────────────────────────────────────────
+if longSignal
+    alert("EMA bullish crossover PASSED all gates — conf=" + str.tostring(finalBullConf, "#.##"), alert.freq_once_per_bar)
+if shortSignal
+    alert("EMA bearish crossover PASSED all gates — conf=" + str.tostring(finalBearConf, "#.##"), alert.freq_once_per_bar)

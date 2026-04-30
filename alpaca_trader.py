@@ -1,11 +1,16 @@
 """
-Strategy Factory — Alpaca Portfolio Trader
+Strategy Factory — Alpaca Portfolio Trader (Adaptive Breakout)
 
-Takes portfolio allocations produced by daily_runner.py and executes them as
-real orders on Alpaca paper trading. Same rebalancing logic as paper_trader.py
-but hits the live Alpaca API instead of the local simulator.
+Executes Adaptive Breakout strategy signals on Alpaca paper/live trading.
+Single strategy: Donchian breakout + ADX filter on 4h timeframe.
 
-Uses account equity for position sizing so profits get reinvested automatically.
+Exit logic:
+  - Trailing stop: 3x ATR(14) from peak price
+  - Hard stop: 8% loss from entry
+  - ADX exit: close when ADX drops below 15
+
+Concurrency: max 3 crypto + max 3 stock positions at any time.
+Long only. Cooldown: 2 bars (8h) after a losing trade.
 """
 
 import os
@@ -15,27 +20,16 @@ import datetime
 
 import config
 from alpaca_client import AlpacaPaperClient, is_equity_symbol, is_us_market_open, normalize_crypto_symbol
-from risk_manager import RiskManager
-from intraday_engine import IntradaySignalEngine
+from intraday_engine import IntradaySignalEngine, FeatureSet, MarketDataProvider, atr
 from trade_journal import PositionRiskBook, TradeJournal
 
 logger = logging.getLogger("alpaca_trader")
 
 ALPACA_TRADE_HISTORY = os.path.join(config.DATA_DIR, "alpaca_trade_runs.json")
-REBALANCE_THRESHOLD_PCT = 20.0  # only trade if position drifts >20% from target
+REBALANCE_THRESHOLD_PCT = 20.0
 INTRADAY_GATE_ENABLED = os.environ.get("INTRADAY_GATE_ENABLED", "true").lower() != "false"
-MAX_HOLD_HOURS = float(os.environ.get("INTRADAY_MAX_HOLD_HOURS", "18"))
-MAX_HOLD_HOURS_EQUITY = float(os.environ.get("EQUITY_MAX_HOLD_HOURS", "168"))  # 7 days for ETFs
-BASE_STOP_LOSS_PCT = float(os.environ.get("INTRADAY_BASE_STOP_LOSS_PCT", "3.5"))
-BASE_TAKE_PROFIT_PCT = float(os.environ.get("INTRADAY_BASE_TAKE_PROFIT_PCT", "6.0"))
-BASE_TRAILING_STOP_PCT = float(os.environ.get("INTRADAY_BASE_TRAILING_STOP_PCT", "2.5"))
-EXISTING_POSITION_DECAY_PCT = float(os.environ.get("INTRADAY_EXISTING_DECAY_PCT", "0.35"))
-# PHASE 3: Post-exit cooldown — don't re-enter a symbol for N hours after closing at a loss
-POST_EXIT_COOLDOWN_HOURS = float(os.environ.get("POST_EXIT_COOLDOWN_HOURS", "3.0"))
-MAX_TRADES_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_TRADES_PER_SYMBOL_DAY", "3"))
 
-# Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
-# If a portfolio symbol isn't in this set, its allocation gets redistributed.
+# Alpaca-supported crypto pairs
 ALPACA_SUPPORTED_CRYPTO = {
     "BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD",
     "SHIB/USD", "UNI/USD", "LINK/USD", "LTC/USD",
@@ -45,32 +39,25 @@ ALPACA_SUPPORTED_CRYPTO = {
     "USDC/USD", "DAI/USD",
 }
 
-ALPACA_SUPPORTED_EQUITIES = set()  # No equities — crypto only
+ALPACA_SUPPORTED_EQUITIES = {"TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"}
 
 
 def _normalize_alpaca_symbol(pair):
-    """Convert bot pair format to an Alpaca tradable symbol.
-
-    Alpaca uses 'BTC/USD' style for crypto and plain tickers for ETFs.
-    """
+    """Convert bot pair format to an Alpaca tradable symbol."""
     if not pair:
         return None
     p = pair.upper().replace(" ", "")
     if p in ALPACA_SUPPORTED_EQUITIES:
         return p
-    # Handle BTC/USDT → BTC/USD (check slash version FIRST)
     if p.endswith("/USDT"):
         base = p[:-5]
         return f"{base}/USD"
-    # Handle BTCUSDT → BTC/USD (no slash)
     if p.endswith("USDT") and "/" not in p:
         base = p[:-4]
         return f"{base}/USD"
-    # Handle BTCUSD → BTC/USD
     if p.endswith("USD") and "/" not in p:
         base = p[:-3]
         return f"{base}/USD"
-    # Already in BTC/USD format
     if "/" in p and p.endswith("/USD"):
         return p
     return None
@@ -81,7 +68,7 @@ def _is_supported_alpaca_symbol(symbol):
 
 
 class AlpacaTrader:
-    """Executes portfolio allocations via the Alpaca paper trading API."""
+    """Executes Adaptive Breakout trades via Alpaca."""
 
     def __init__(self):
         self.client = AlpacaPaperClient()
@@ -89,11 +76,12 @@ class AlpacaTrader:
         self.journal = TradeJournal()
         self.risk_book = PositionRiskBook()
         self.signal_engine = IntradaySignalEngine()
-        # PHASE 6: Connect learning engine for real trade outcome tracking
+        self._data_provider = MarketDataProvider()
+        # Learning engine for real trade outcome tracking
         try:
             from learning_engine import LearningEngine
             self.learner = LearningEngine()
-            self.learner.ingest_trade_ledger()  # catch up on any un-imported trades
+            self.learner.ingest_trade_ledger()
         except Exception:
             self.learner = None
 
@@ -106,62 +94,86 @@ class AlpacaTrader:
                 pass
         return []
 
-    def _backfill_risk_book(self, positions):
-        """Auto-populate risk book entries for open positions missing from the book.
+    def _save_runs(self):
+        os.makedirs(os.path.dirname(ALPACA_TRADE_HISTORY), exist_ok=True)
+        with open(ALPACA_TRADE_HISTORY, "w") as f:
+            json.dump(self.runs[-60:], f, indent=2, default=str)
 
-        After a Railway redeploy the in-memory risk book is empty, which causes
-        _enforce_intraday_exits() to skip ALL exit logic (TP/SL/trail/timeout)
-        for every open position.  This method creates conservative fallback
-        entries using each position's avg_entry_price and cost_basis so that
-        exit protection is always active.
-        """
+    def _count_open_positions(self, positions):
+        """Count current crypto vs stock positions for concurrency limits."""
+        crypto_count = 0
+        stock_count = 0
+        for sym in positions:
+            if is_equity_symbol(sym):
+                stock_count += 1
+            else:
+                crypto_count += 1
+        return crypto_count, stock_count
+
+    def _backfill_risk_book(self, positions):
+        """Auto-populate risk book for positions missing after redeploy."""
         if not positions:
             return
         backfilled = []
         for sym, pos in positions.items():
             if self.risk_book.get(sym):
-                continue  # already tracked
+                continue
 
             entry_price = float(pos.get("avg_entry_price", 0) or 0)
             cost_basis = float(pos.get("cost_basis", 0) or 0)
             if entry_price <= 0:
                 continue
 
-            # Build a minimal synthetic signal so _risk_params can compute stops.
-            # We don't know the original ATR or confidence, so use conservative
-            # defaults that map to the BASE_* constants.
-            synthetic_signal = {
-                "confidence": 0.5,       # middle-of-road — won't widen TP too much
-                "features": {},          # no ATR → falls back to BASE_STOP_LOSS_PCT
-            }
-            stop, take, trail = self._risk_params(synthetic_signal, symbol=sym)
-            max_hold = MAX_HOLD_HOURS_EQUITY if is_equity_symbol(sym) else MAX_HOLD_HOURS
-
+            # Conservative defaults for backfilled positions
             self.risk_book.register_entry(
                 symbol=sym,
-                strategy="backfill_recovery",
+                strategy="adaptive_breakout",
                 regime="unknown",
                 confidence=0.5,
                 entry_price=entry_price,
                 notional=cost_basis or entry_price,
-                stop_loss_pct=stop,
-                take_profit_pct=take,
-                trailing_stop_pct=trail,
-                max_hold_hours=max_hold,
+                stop_loss_pct=config.HARD_STOP_PCT,
+                take_profit_pct=99.0,  # No fixed TP — we use trailing + ADX exit
+                trailing_stop_pct=0.0,  # ATR trailing handled separately
+                max_hold_hours=999,  # No timeout — ADX exit handles this
                 reason="Auto-backfilled after risk book loss (redeploy recovery)",
                 bot_names=[],
             )
             backfilled.append(sym)
-            logger.warning(f"Risk book backfill: {sym} @ ${entry_price:.4f} "
-                           f"(SL={stop}%, TP={take}%, trail={trail}%)")
+            logger.warning(f"Risk book backfill: {sym} @ ${entry_price:.4f}")
 
         if backfilled:
             logger.info(f"Risk book backfilled {len(backfilled)} positions: {backfilled}")
 
-    def _save_runs(self):
-        os.makedirs(os.path.dirname(ALPACA_TRADE_HISTORY), exist_ok=True)
-        with open(ALPACA_TRADE_HISTORY, "w") as f:
-            json.dump(self.runs[-60:], f, indent=2, default=str)
+    def _check_post_loss_cooldown(self, symbol):
+        """Check if symbol is in cooldown after a losing trade.
+        Cooldown = 2 bars = 8 hours."""
+        try:
+            from trade_journal import JOURNAL_FILE, _read_json
+            events = list(reversed(_read_json(JOURNAL_FILE, [])))
+            now = datetime.datetime.now(datetime.timezone.utc)
+            cooldown_hours = config.POST_LOSS_COOLDOWN_BARS * 4  # 2 bars * 4h = 8h
+
+            for ev in events:
+                if ev.get("symbol") != symbol:
+                    continue
+                if ev.get("event") == "position_closed":
+                    pl_pct = float(ev.get("unrealized_pl_pct", 0) or 0)
+                    if pl_pct < 0:
+                        ts = ev.get("timestamp", ev.get("closed_at", ""))
+                        if not ts:
+                            continue
+                        try:
+                            closed_at = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                            hours_since = (now - closed_at).total_seconds() / 3600
+                            if hours_since < cooldown_hours:
+                                return True, f"Post-loss cooldown: closed at {pl_pct:.1f}% loss {hours_since:.1f}h ago (need {cooldown_hours}h)"
+                        except Exception:
+                            pass
+                    break  # only check most recent close
+        except Exception as e:
+            logger.debug(f"Cooldown check failed for {symbol}: {e}")
+        return False, ""
 
     def execute_portfolio(self, portfolio, dry_run=False, capital_override=None):
         """Open Alpaca positions matching the portfolio allocations."""
@@ -179,29 +191,24 @@ class AlpacaTrader:
 
         # Apply risk controls
         try:
+            from risk_manager import RiskManager
             rm = RiskManager()
             ok, reasons = rm.pre_trade_check(float(acct.get("equity", 0)))
             if not ok:
                 return {"status": "risk_blocked", "reasons": reasons, "orders": []}
-
-            # Get exposure multiplier (cooldown)
             cooldown_mult = rm.get_exposure_multiplier()
-            if cooldown_mult < 1.0:
-                logger.info(f"Cooldown active: exposure multiplier {cooldown_mult}")
         except ImportError:
             cooldown_mult = 1.0
+            rm = None
         except Exception as e:
             logger.warning(f"Risk manager unavailable: {e}")
             cooldown_mult = 1.0
+            rm = None
 
-        # Scale by CURRENT EQUITY so profits get reinvested
         dashboard_capital = portfolio.get("summary", {}).get("total_capital", 1000)
         effective_capital = capital_override or acct.get("equity", acct.get("cash", 1000))
         scale = effective_capital / dashboard_capital if dashboard_capital > 0 else 1.0
-
         remaining_cash = float(acct.get("buying_power", acct.get("cash", 0)))
-        logger.info(f"Alpaca equity: ${acct.get('equity', 0):.2f}, "
-                    f"buying power: ${remaining_cash:.2f}, scale factor: {scale:.3f}x")
 
         results = {
             "timestamp": datetime.datetime.utcnow().isoformat(),
@@ -217,36 +224,36 @@ class AlpacaTrader:
             "summary": {},
         }
 
-        # Backfill risk book for any open positions missing entries (e.g. after redeploy)
+        # Backfill risk book after redeploy
         try:
             self._backfill_risk_book(positions)
         except Exception as e:
             logger.warning(f"Risk book backfill failed: {e}")
 
-        # Soft exits (TP/SL/trailing/timeout) before new entries or rebalances.
+        # ── EXIT CHECK: ATR trailing + hard stop + ADX exit ──
         if not dry_run:
             try:
-                exit_orders = self._enforce_intraday_exits(positions)
+                exit_orders = self._enforce_adaptive_exits(positions)
                 if exit_orders:
                     results["orders"].extend(exit_orders)
                     positions_list = self.client.get_positions()
                     positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
             except Exception as e:
-                logger.warning(f"Intraday exit check failed: {e}")
+                logger.warning(f"Adaptive exit check failed: {e}")
 
-        # Position stop losses
-        try:
-            closed_stops = rm.enforce_position_stops(self.client)
-            if closed_stops:
-                for cs in closed_stops:
-                    results["orders"].append({"symbol": cs["symbol"], "side": "close", "status": "stop_loss", "loss_pct": cs["loss_pct"]})
-                # Re-fetch positions after stop-loss closures
-                positions_list = self.client.get_positions()
-                positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
-        except Exception:
-            pass
+        # Position stop losses from risk manager
+        if rm:
+            try:
+                closed_stops = rm.enforce_position_stops(self.client)
+                if closed_stops:
+                    for cs in closed_stops:
+                        results["orders"].append({"symbol": cs["symbol"], "side": "close", "status": "stop_loss", "loss_pct": cs["loss_pct"]})
+                    positions_list = self.client.get_positions()
+                    positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
+            except Exception:
+                pass
 
-        # --- Pre-filter: identify supported vs unsupported allocations ---
+        # Pre-filter: supported vs unsupported
         supported_allocs = []
         unsupported_allocs = []
         for alloc in allocations:
@@ -255,25 +262,21 @@ class AlpacaTrader:
             if sym and _is_supported_alpaca_symbol(sym):
                 supported_allocs.append((alloc, sym))
             else:
-                bot_name = alloc.get("bot_name", "?")
-                reason = f"Symbol {pair} → {sym or '?'} not supported on Alpaca"
                 results["skipped"].append({
-                    "bot": bot_name, "pair": pair, "reason": reason,
+                    "bot": alloc.get("bot_name", "?"), "pair": pair,
+                    "reason": f"Symbol {pair} → {sym or '?'} not supported on Alpaca",
                 })
                 unsupported_allocs.append(alloc)
 
-        # Redistribute unsupported capital proportionally to supported allocations
+        # Redistribute unsupported capital
         unsupported_total = sum(a.get("allocation_usd", 0) for a in unsupported_allocs)
         supported_total = sum(a.get("allocation_usd", 0) for a, _ in supported_allocs)
         redistribution_factor = 1.0
         if unsupported_total > 0 and supported_total > 0:
             redistribution_factor = (supported_total + unsupported_total) / supported_total
-            logger.info(f"Redistributing ${unsupported_total:.2f} from {len(unsupported_allocs)} "
-                        f"unsupported symbols (factor {redistribution_factor:.3f}x)")
 
-        # --- Aggregate allocations: multiple bots can target the same symbol ---
+        # Aggregate allocations by symbol
         target_by_symbol = {}
-
         for alloc, sym in supported_allocs:
             bot_name = alloc.get("bot_name", "?")
             dollar_alloc = alloc.get("allocation_usd", 0) * redistribution_factor * scale
@@ -286,7 +289,6 @@ class AlpacaTrader:
                 continue
 
             if sym in target_by_symbol:
-                # Accumulate: add this bot's allocation to existing target
                 target_by_symbol[sym]["target_usd"] += round(dollar_alloc, 2)
                 target_by_symbol[sym]["allocation_pct"] += alloc.get("allocation_pct", 0)
                 target_by_symbol[sym]["bot_names"].append(bot_name)
@@ -297,26 +299,23 @@ class AlpacaTrader:
                     "allocation_pct": alloc.get("allocation_pct", 0),
                 }
 
-        logger.info(f"Aggregated {len(supported_allocs)} bot allocations into "
-                    f"{len(target_by_symbol)} unique symbols")
-
-        # Intraday quality gate: keep the allocator, but require a live setup for
-        # new long exposure. Existing positions can be held if there is no strong
-        # opposite signal, which avoids solving risk by simply never trading.
+        # ── INTRADAY GATE: Adaptive Breakout signal required for new entries ──
         if INTRADAY_GATE_ENABLED:
             self._apply_intraday_gate(target_by_symbol, positions, results)
 
         # Apply exposure limits
-        try:
-            rm.apply_exposure_limits(target_by_symbol, float(acct.get("equity", effective_capital)))
-            # Apply cooldown multiplier
-            if cooldown_mult < 1.0:
-                for sym in target_by_symbol:
-                    target_by_symbol[sym]["target_usd"] *= cooldown_mult
-        except Exception:
-            pass
+        if rm:
+            try:
+                rm.apply_exposure_limits(target_by_symbol, float(acct.get("equity", effective_capital)))
+                if cooldown_mult < 1.0:
+                    for sym in target_by_symbol:
+                        target_by_symbol[sym]["target_usd"] *= cooldown_mult
+            except Exception:
+                pass
 
-        # --- Execute trades per symbol (not per bot) ---
+        # ── CONCURRENCY CHECK: max 3 crypto + max 3 stocks ──
+        crypto_count, stock_count = self._count_open_positions(positions)
+
         for sym, target in target_by_symbol.items():
             dollar_alloc = target["target_usd"]
             if dollar_alloc <= 0:
@@ -331,28 +330,45 @@ class AlpacaTrader:
             if existing and pct_diff < REBALANCE_THRESHOLD_PCT:
                 results["skipped"].append({
                     "bot": label, "pair": sym,
-                    "reason": f"Already allocated (${current_value:.2f} vs target ${dollar_alloc:.2f}, "
-                              f"{pct_diff:.1f}% drift — below threshold)"
+                    "reason": f"Already allocated (${current_value:.2f} vs target ${dollar_alloc:.2f})"
                 })
                 continue
 
-            # Check trade frequency limit
-            try:
-                if not rm.can_place_order(sym):
-                    results["skipped"].append({"bot": label, "pair": sym, "reason": "Trade frequency limit reached"})
-                    continue
-            except Exception:
-                pass
+            # Trade frequency limit
+            if rm:
+                try:
+                    if not rm.can_place_order(sym):
+                        results["skipped"].append({"bot": label, "pair": sym, "reason": "Trade frequency limit"})
+                        continue
+                except Exception:
+                    pass
 
             side = "buy" if diff > 0 else "sell"
             order_usd = abs(diff)
 
-            try:
-                if not rm.can_submit_order(sym, side):
-                    results["skipped"].append({"bot": label, "pair": sym, "reason": f"Duplicate {side} order blocked"})
+            if rm:
+                try:
+                    if not rm.can_submit_order(sym, side):
+                        results["skipped"].append({"bot": label, "pair": sym, "reason": f"Duplicate {side} order blocked"})
+                        continue
+                except Exception:
+                    pass
+
+            # ── CONCURRENCY LIMIT for new buys ──
+            if side == "buy" and not existing:
+                is_stock = is_equity_symbol(sym)
+                if is_stock and stock_count >= config.MAX_CONCURRENT_STOCKS:
+                    results["skipped"].append({
+                        "bot": label, "pair": sym,
+                        "reason": f"Max {config.MAX_CONCURRENT_STOCKS} stock positions reached"
+                    })
                     continue
-            except Exception:
-                pass
+                if not is_stock and crypto_count >= config.MAX_CONCURRENT_CRYPTO:
+                    results["skipped"].append({
+                        "bot": label, "pair": sym,
+                        "reason": f"Max {config.MAX_CONCURRENT_CRYPTO} crypto positions reached"
+                    })
+                    continue
 
             if side == "buy":
                 order_usd = min(order_usd, remaining_cash)
@@ -363,11 +379,11 @@ class AlpacaTrader:
                     })
                     continue
 
-            # ── Market hours guard: equities can only trade during RTH ──
+            # Market hours guard for stocks
             if is_equity_symbol(sym) and not is_us_market_open():
                 results["skipped"].append({
                     "bot": label, "pair": sym,
-                    "reason": "US equity market closed — skipping ETF order",
+                    "reason": "US equity market closed — skipping stock order",
                 })
                 continue
 
@@ -388,14 +404,20 @@ class AlpacaTrader:
                     order_result["target_usd"] = dollar_alloc
                     order_result["current_usd"] = current_value
                     results["orders"].append(order_result)
-                    self._record_trade_event(order_result, target, side, order_usd, results)
+                    self._record_trade_event(order_result, target, side, order_usd)
                     if side == "buy":
                         remaining_cash -= order_usd
-                    try:
-                        rm.record_order(sym)
-                        rm.record_submitted_order(sym, side)
-                    except Exception:
-                        pass
+                        # Update concurrency count
+                        if is_equity_symbol(sym):
+                            stock_count += 1
+                        else:
+                            crypto_count += 1
+                    if rm:
+                        try:
+                            rm.record_order(sym)
+                            rm.record_submitted_order(sym, side)
+                        except Exception:
+                            pass
                 except Exception as e:
                     results["orders"].append({
                         "bot": label, "symbol": sym, "side": side,
@@ -430,23 +452,11 @@ class AlpacaTrader:
                         close_result["reason"] = "No longer in target portfolio"
                         close_result["side"] = "close"
                         results["orders"].append(close_result)
-                        self.risk_book.remove(sym)
-                        self.journal.append({
-                            "event": "position_closed",
-                            "symbol": sym,
-                            "side": "close",
-                            "reason": "No longer in target portfolio",
-                            "entry_state": entry_state,
-                            "exit_price": current_price,
-                            "exit_notional": pos.get("market_value"),
-                            "unrealized_pl_pct": round(pl_pct, 2),
-                            "order": close_result,
-                        })
+                        self._record_close(sym, pos, entry_state, current_price, pl_pct, "No longer in target portfolio")
                     except Exception as e:
                         results["orders"].append({
                             "symbol": sym, "side": "close",
-                            "status": "error",
-                            "error": str(e),
+                            "status": "error", "error": str(e),
                             "reason": "No longer in target portfolio",
                         })
 
@@ -458,9 +468,7 @@ class AlpacaTrader:
 
         results["summary"] = {
             "total_orders": len(results["orders"]),
-            "buys": buys,
-            "sells": sells,
-            "closes": closes,
+            "buys": buys, "sells": sells, "closes": closes,
             "skipped": len(results["skipped"]),
             "total_capital_deployed_usd": round(total_deployed, 2),
             "num_target_positions": len(target_by_symbol),
@@ -476,58 +484,15 @@ class AlpacaTrader:
 
         return results
 
-    def _check_post_exit_cooldown(self, symbol):
-        """PHASE 3: Check if symbol was recently closed at a loss.
-        Returns (blocked, reason) tuple."""
-        try:
-            from trade_journal import JOURNAL_FILE, _read_json
-            events = list(reversed(_read_json(JOURNAL_FILE, [])))
-            now = datetime.datetime.now(datetime.timezone.utc)
-            today_str = now.strftime("%Y-%m-%d")
-            symbol_trades_today = 0
-            for ev in events:
-                if ev.get("symbol") != symbol:
-                    continue
-                ts = ev.get("timestamp", ev.get("closed_at", ""))
-                if not ts:
-                    continue
-                # Count trades per symbol per day
-                if (
-                    ev.get("event") == "order_submitted"
-                    and ev.get("side") == "buy"
-                    and ts[:10] == today_str
-                ):
-                    symbol_trades_today += 1
-                # Check cooldown after losing close
-                if ev.get("event") == "position_closed":
-                    pl_pct = float(ev.get("unrealized_pl_pct", 0) or 0)
-                    if pl_pct < 0:
-                        try:
-                            closed_at = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                            hours_since = (now - closed_at).total_seconds() / 3600
-                            if hours_since < POST_EXIT_COOLDOWN_HOURS:
-                                return True, f"Post-exit cooldown: closed at {pl_pct:.1f}% loss {hours_since:.1f}h ago"
-                        except Exception:
-                            pass
-                    break  # only check most recent close for this symbol
-            if symbol_trades_today >= MAX_TRADES_PER_SYMBOL_PER_DAY:
-                return True, f"Max {MAX_TRADES_PER_SYMBOL_PER_DAY} trades/day reached for {symbol}"
-        except Exception as e:
-            logger.debug(f"Cooldown check failed for {symbol}: {e}")
-        return False, ""
-
     def _apply_intraday_gate(self, target_by_symbol, positions, results):
+        """Gate new entries through the Adaptive Breakout signal engine."""
         for sym in list(target_by_symbol.keys()):
             target = target_by_symbol[sym]
             existing = positions.get(sym)
 
-            if is_equity_symbol(sym):
-                target["intraday_reason"] = "Equity ETF: crypto intraday gate skipped"
-                continue
-
-            # PHASE 3: Post-exit cooldown for new entries
+            # Post-loss cooldown for new entries
             if not existing:
-                blocked, cooldown_reason = self._check_post_exit_cooldown(sym)
+                blocked, cooldown_reason = self._check_post_loss_cooldown(sym)
                 if blocked:
                     results["skipped"].append({
                         "bot": f"{sym} ({len(target.get('bot_names', []))} bots)",
@@ -541,161 +506,75 @@ class AlpacaTrader:
             results["signals"][sym] = signal
             target["signal"] = signal
 
+            # ADX exit signal — close existing position
+            if signal.get("adx_exit") and existing:
+                target["target_usd"] = 0.0
+                target["intraday_reason"] = signal.get("adx_exit_reason", "ADX exit")
+                self.journal.append({
+                    "event": "target_downweighted",
+                    "symbol": sym,
+                    "reason": signal.get("adx_exit_reason"),
+                    "signal": signal,
+                })
+                continue
+
+            # Strong sell signal — close existing
             if signal.get("action") == "sell" and signal.get("confidence", 0) >= 0.56:
                 if existing:
                     target["target_usd"] = 0.0
-                    target["intraday_reason"] = "Strong opposite intraday signal"
-                    self.journal.append({
-                        "event": "target_downweighted",
-                        "symbol": sym,
-                        "reason": "Strong opposite intraday signal",
-                        "signal": signal,
-                    })
+                    target["intraday_reason"] = "Strong opposite signal"
+                    continue
                 else:
                     del target_by_symbol[sym]
-                continue
+                    continue
 
+            # Entry signal accepted
             if signal.get("accepted") and signal.get("action") == "buy":
                 confidence = float(signal.get("confidence", 0.0))
-                # PHASE 5 FIX: Scale position size by confidence AND volatility.
-                # High confidence + low ATR = full size.
-                # Low confidence or high ATR = reduced size.
-                atr_pct = float((signal.get("features", {}) or {}).get("atr_pct_15m", 0) or 0)
-                vol_penalty = 1.0
-                if atr_pct > 3.0:
-                    vol_penalty = 0.6   # high vol = smaller size
-                elif atr_pct > 2.0:
-                    vol_penalty = 0.75
-                elif atr_pct > 1.5:
-                    vol_penalty = 0.85
-                multiplier = max(0.4, min(1.15, 0.5 + confidence * 0.7)) * vol_penalty
+                adx_val = float((signal.get("features", {}) or {}).get("adx_14", 0) or 0)
+
+                # Scale position by ADX strength
+                # ADX 35+ = full size, ADX 25-35 = 85%, ADX 20-25 = 70%
+                if adx_val >= 35:
+                    adx_multiplier = 1.0
+                elif adx_val >= 25:
+                    adx_multiplier = 0.85
+                else:
+                    adx_multiplier = 0.70
+
+                multiplier = max(0.5, min(1.15, 0.5 + confidence * 0.7)) * adx_multiplier
                 target["target_usd"] = round(target["target_usd"] * multiplier, 2)
                 target["intraday_reason"] = signal.get("reason", "")
                 continue
 
+            # No entry signal — handle existing positions
             if existing:
                 current_value = float(existing.get("market_value", target["target_usd"]) or target["target_usd"])
-                allocator_target = float(target.get("target_usd", current_value) or current_value)
-                if allocator_target < current_value:
-                    excess = current_value - allocator_target
-                    decayed_target = current_value - (excess * EXISTING_POSITION_DECAY_PCT)
-                    target["target_usd"] = round(max(allocator_target, decayed_target), 2)
-                    target["intraday_reason"] = (
-                        f"No fresh long setup: decaying exposure toward allocator target. "
-                        f"{signal.get('reason')}"
-                    )
-                else:
-                    # Do not add without a fresh intraday confirmation, but do
-                    # allow the existing winner/holder to stay on the books.
-                    target["target_usd"] = current_value
-                    target["intraday_reason"] = f"Held existing position: {signal.get('reason')}"
+                target["target_usd"] = current_value  # hold current position
+                target["intraday_reason"] = f"Held existing position: {signal.get('reason')}"
             else:
                 results["skipped"].append({
                     "bot": f"{sym} ({len(target.get('bot_names', []))} bots)",
                     "pair": sym,
-                    "reason": f"Intraday gate rejected new entry: {signal.get('reason')}",
+                    "reason": f"No breakout signal: {signal.get('reason')}",
                 })
                 self.journal.append({
                     "event": "entry_rejected",
                     "symbol": sym,
                     "reason": signal.get("reason"),
                     "signal": signal,
-                    "bot_names": target.get("bot_names", []),
                 })
                 del target_by_symbol[sym]
 
-    def _risk_params(self, signal, symbol=None):
-        """Compute per-position risk levels, fee-aware.
-
-        Take-profit is padded by the estimated round-trip fee so that
-        a TP exit always locks in real profit after costs.
-        Equities use tighter stops and zero fee padding (commission-free).
+    def _enforce_adaptive_exits(self, positions):
+        """Adaptive Breakout exit logic:
+        1. Hard stop: 8% loss from entry
+        2. ATR trailing stop: 3x ATR(14) from peak price
+        3. ADX exit: ADX drops below 15 (trend dying)
         """
-        equity = symbol and is_equity_symbol(symbol)
-
-        if equity:
-            # ETFs: tighter risk bands, no fee drag, longer holds
-            round_trip_fee_pct = 0.0  # Alpaca equities are commission-free
-            stop = 2.5   # SPY rarely drops >2.5% intraday
-            take = 4.0   # take profit at 4%
-            trail = 1.5  # tight trail — ETFs trend smoothly
-        else:
-            from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
-            round_trip_fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 100.0  # ~0.50%
-            features = signal.get("features", {}) if isinstance(signal, dict) else {}
-            atr_pct = float(features.get("atr_pct_15m", 0.0) or 0.0)
-            confidence = float(signal.get("confidence", 0.0) or 0.0) if isinstance(signal, dict) else 0.0
-            stop = max(BASE_STOP_LOSS_PCT, min(7.0, atr_pct * 1.6 if atr_pct else BASE_STOP_LOSS_PCT))
-            take_raw = max(BASE_TAKE_PROFIT_PCT, stop * (1.6 + confidence * 0.7))
-            take = take_raw + round_trip_fee_pct
-            trail = max(BASE_TRAILING_STOP_PCT, min(5.0, stop * 0.7))
-
-        return round(stop, 2), round(take, 2), round(trail, 2)
-
-    def _record_trade_event(self, order_result, target, side, order_usd, results):
-        sym = order_result.get("symbol")
-        signal = target.get("signal", {})
-        event = {
-            "event": "order_submitted",
-            "symbol": sym,
-            "side": side,
-            "notional": round(order_usd, 2),
-            "status": order_result.get("status"),
-            "bot_names": target.get("bot_names", []),
-            "strategy": self._top_strategy(signal),
-            "regime": signal.get("setup_regime", {}).get("label"),
-            "confidence": signal.get("confidence"),
-            "entry_reason": target.get("intraday_reason") or signal.get("reason"),
-            "order": order_result,
-        }
-        self.journal.append(event)
-
-        if side == "buy" and not order_result.get("error"):
-            entry_price = order_result.get("filled_avg_price") or self.client.get_latest_price(sym)
-            entry_notional = order_usd
-            # Prefer Alpaca's aggregated position basis after the fill. This keeps
-            # the risk book aligned with the full live position instead of only
-            # the latest buy notional when a symbol is scaled in over time.
-            try:
-                position = self.client.get_position(sym)
-                if position:
-                    entry_price = position.get("avg_entry_price") or entry_price
-                    entry_notional = position.get("cost_basis") or entry_notional
-            except Exception:
-                pass
-            stop, take, trail = self._risk_params(signal, symbol=sym)
-            max_hold = MAX_HOLD_HOURS_EQUITY if is_equity_symbol(sym) else MAX_HOLD_HOURS
-            self.risk_book.register_entry(
-                symbol=sym,
-                strategy=event["strategy"],
-                regime=event["regime"],
-                confidence=event["confidence"],
-                entry_price=entry_price,
-                notional=entry_notional,
-                stop_loss_pct=stop,
-                take_profit_pct=take,
-                trailing_stop_pct=trail,
-                max_hold_hours=max_hold,
-                reason=event["entry_reason"],
-                bot_names=target.get("bot_names", []),
-            )
-        elif side in ("sell", "close") and not order_result.get("error"):
-            self.risk_book.remove(sym)
-
-    def _top_strategy(self, signal):
-        strategies = signal.get("strategy_signals", []) if isinstance(signal, dict) else []
-        if not strategies:
-            return "portfolio_rebalance"
-        best = sorted(
-            strategies,
-            key=lambda s: float(s.get("confidence", 0) or 0) * float(s.get("regime_fit", 1) or 1),
-            reverse=True,
-        )[0]
-        return best.get("strategy", "unknown")
-
-    def _enforce_intraday_exits(self, positions):
         orders = []
         now = datetime.datetime.now(datetime.timezone.utc)
+
         for sym, pos in positions.items():
             state = self.risk_book.get(sym)
             if not state:
@@ -710,135 +589,141 @@ class AlpacaTrader:
             state = self.risk_book.get(sym) or state
             high_water = float(state.get("high_water_price", current_price) or current_price)
             pl_pct = (current_price - entry_price) / entry_price * 100.0
-            trail_dd = (high_water - current_price) / high_water * 100.0 if high_water > 0 else 0.0
 
             reason = None
-            base_sl = float(state.get("stop_loss_pct", BASE_STOP_LOSS_PCT))
-            base_tp = float(state.get("take_profit_pct", BASE_TAKE_PROFIT_PCT))
-            base_trail = float(state.get("trailing_stop_pct", BASE_TRAILING_STOP_PCT))
 
-            # ── STAGED EXIT LOGIC (priority-ordered) ─────────────────
-            #
-            # Philosophy: protect capital first, then protect profits.
-            # A winner should NEVER become a loser.
+            # ── EXIT 1: Hard stop loss (8%) — non-negotiable ──
+            if pl_pct <= -config.HARD_STOP_PCT:
+                reason = f"Hard stop hit ({pl_pct:.2f}% loss, limit={config.HARD_STOP_PCT}%)"
 
-            # 1. Hard stop loss — non-negotiable
-            if pl_pct <= -base_sl:
-                reason = f"Stop loss hit ({pl_pct:.2f}%)"
+            # ── EXIT 2: ATR trailing stop (3x ATR from peak) ──
+            if not reason:
+                try:
+                    candles = self._data_provider.get_candles(sym, config.STRATEGY_TIMEFRAME, limit=20)
+                    if candles and len(candles) >= 14:
+                        atr_vals = atr(candles, 14)
+                        if atr_vals and atr_vals[-1] > 0:
+                            atr_trail_distance = atr_vals[-1] * config.ATR_TRAIL_MULTIPLIER
+                            trail_stop_price = high_water - atr_trail_distance
+                            if current_price <= trail_stop_price:
+                                trail_pct = (high_water - current_price) / high_water * 100
+                                reason = (
+                                    f"ATR trailing stop: price {current_price:.2f} below "
+                                    f"trail {trail_stop_price:.2f} (peak {high_water:.2f} - "
+                                    f"{config.ATR_TRAIL_MULTIPLIER}x ATR {atr_vals[-1]:.2f}), "
+                                    f"P/L={pl_pct:+.2f}%"
+                                )
+                except Exception as e:
+                    logger.debug(f"ATR trailing check failed for {sym}: {e}")
 
-            # 2. Take profit — book the gain
-            elif pl_pct >= base_tp:
-                reason = f"Take profit hit ({pl_pct:.2f}%)"
-
-            # 3. BREAKEVEN STOP — once up 1.5%+, never let it go red.
-            #    This single rule saves more money than any indicator.
-            elif pl_pct >= 1.5 and current_price <= entry_price * 1.002:
-                reason = f"Breakeven stop: was +{high_water/entry_price*100-100:.1f}%, now back to entry"
-
-            # 4. STAGED TRAILING STOP — tighten as profit grows.
-            #    Small profit = wide trail. Big profit = tight trail.
-            #    This locks in gains progressively instead of giving back
-            #    large chunks on a single reversal candle.
-            elif pl_pct > 0:
-                if pl_pct >= 4.0:
-                    effective_trail = min(base_trail, 1.0)   # tight: protect big wins
-                elif pl_pct >= 2.0:
-                    effective_trail = min(base_trail, 1.5)   # medium
-                else:
-                    effective_trail = base_trail              # standard
-
-                if trail_dd >= effective_trail:
-                    reason = (f"Staged trailing stop ({trail_dd:.2f}% from high, "
-                              f"trail={effective_trail:.1f}% at +{pl_pct:.1f}% profit)")
-
-            # 5. Early exit if losing AND regime turned against us
-            elif pl_pct < -1.0:
+            # ── EXIT 3: ADX exit (trend dying) ──
+            if not reason:
                 try:
                     signal = self.signal_engine.evaluate_symbol(sym)
-                    regime_4h = (signal.get("confirm_regimes", {}).get("4h", {}) or {}).get("label", "")
-                    regime_1d = (signal.get("confirm_regimes", {}).get("1D", {}) or {}).get("label", "")
-                    sell_conf = signal.get("confidence", 0) if signal.get("action") == "sell" else 0
-                    # Exit if: losing >1% AND (strong sell signal OR hostile regime)
-                    if sell_conf >= 0.55:
-                        reason = f"Regime exit: losing {pl_pct:.2f}% with strong sell signal (conf={sell_conf:.2f})"
-                    elif regime_1d in ("extreme_volatility", "trending_down", "breakdown"):
-                        reason = f"Regime exit: losing {pl_pct:.2f}% in hostile 1D regime '{regime_1d}'"
+                    if signal.get("adx_exit"):
+                        reason = signal.get("adx_exit_reason", "ADX dropped below exit threshold")
                 except Exception as e:
-                    logger.debug(f"Regime exit check failed for {sym}: {e}")
-
-            # 5. PHASE 2 FIX: Tighter timeout — exit at 12h if losing >0.5%
-            #    The old 18h timeout let losers bleed too long.
-            if not reason:
-                opened_at = state.get("opened_at", "")
-                try:
-                    opened = datetime.datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
-                    age_hours = (now - opened).total_seconds() / 3600
-                    if age_hours >= float(state.get("max_hold_hours", MAX_HOLD_HOURS)) and pl_pct <= 0:
-                        reason = f"Timeout exit after {age_hours:.1f}h without profit"
-                    # NEW: Early timeout — if losing after 12h, don't wait till 18h
-                    elif age_hours >= 12.0 and pl_pct <= -0.5:
-                        reason = f"Early timeout: losing {pl_pct:.2f}% after {age_hours:.1f}h"
-                    # Breakeven timeout — only exit flat positions after 12h AND
-                    # when ATR has compressed (no catalyst expected).  8h was too
-                    # aggressive — crypto 1h setups commonly need 8-16h to resolve.
-                    elif age_hours >= 12.0 and abs(pl_pct) < 0.3:
-                        try:
-                            stale_signal = self.signal_engine.evaluate_symbol(sym)
-                            atr_pct = float((stale_signal.get("features", {}) or {}).get("atr_pct_15m", 0) or 0)
-                            if atr_pct < 1.5:  # low vol = no catalyst coming
-                                reason = f"Stale position: flat ({pl_pct:+.2f}%) after {age_hours:.1f}h, low ATR ({atr_pct:.1f}%)"
-                        except Exception:
-                            # Fallback: exit if flat after 14h regardless
-                            if age_hours >= 14.0:
-                                reason = f"Stale position: flat ({pl_pct:+.2f}%) after {age_hours:.1f}h"
-                except Exception:
-                    pass
+                    logger.debug(f"ADX exit check failed for {sym}: {e}")
 
             if reason:
-                # Don't close equity positions outside market hours
+                # Don't close stocks outside market hours
                 if is_equity_symbol(sym) and not is_us_market_open():
                     logger.info(f"Exit deferred for {sym}: {reason} (market closed)")
                     continue
+
                 close_result = self.client.close_position(sym)
                 close_result["reason"] = reason
                 close_result["side"] = "close"
                 orders.append(close_result)
-                close_entry_state = dict(state)
-                close_entry_state["entry_notional"] = float(
-                    pos.get("cost_basis", 0) or state.get("entry_notional", 0) or 0
-                )
-                close_entry_state["entry_price"] = float(
-                    pos.get("avg_entry_price", 0) or state.get("entry_price", 0) or 0
-                )
-                # PHASE 6: Record real trade outcome in learning engine
-                if self.learner:
-                    try:
-                        entry_notional = float(close_entry_state.get("entry_notional", 0) or 0)
-                        exit_notional = float(pos.get("market_value", 0) or 0)
-                        # Estimate net P&L — equities are commission-free
-                        gross_pl = exit_notional - entry_notional
-                        if is_equity_symbol(sym):
-                            total_fees = 0.0
-                        else:
-                            from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
-                            fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 10000.0
-                            total_fees = (entry_notional + exit_notional) * fee_pct / 2
-                        net_pl = gross_pl - total_fees
-                        strategy = state.get("strategy", "unknown")
-                        regime = state.get("regime", "unknown")
-                        self.learner.record_real_trade(strategy, regime, net_pl, sym)
-                    except Exception as e:
-                        logger.debug(f"Learning engine record failed: {e}")
-                self.risk_book.remove(sym)
-                self.journal.append({
-                    "event": "position_closed",
-                    "symbol": sym,
-                    "side": "close",
-                    "reason": reason,
-                    "entry_state": close_entry_state,
-                    "exit_price": current_price,
-                    "exit_notional": pos.get("market_value"),
-                    "unrealized_pl_pct": round(pl_pct, 2),
-                    "order": close_result,
-                })
+
+                self._record_close(sym, pos, state, current_price, pl_pct, reason)
+
         return orders
+
+    def _record_trade_event(self, order_result, target, side, order_usd):
+        """Record a new entry in the trade journal and risk book."""
+        sym = order_result.get("symbol")
+        signal = target.get("signal", {})
+        event = {
+            "event": "order_submitted",
+            "symbol": sym,
+            "side": side,
+            "notional": round(order_usd, 2),
+            "status": order_result.get("status"),
+            "bot_names": target.get("bot_names", []),
+            "strategy": "adaptive_breakout",
+            "regime": (signal.get("trade_regime") or {}).get("label"),
+            "confidence": signal.get("confidence"),
+            "entry_reason": target.get("intraday_reason") or signal.get("reason"),
+            "order": order_result,
+        }
+        self.journal.append(event)
+
+        if side == "buy" and not order_result.get("error"):
+            entry_price = order_result.get("filled_avg_price") or self.client.get_latest_price(sym)
+            entry_notional = order_usd
+            try:
+                position = self.client.get_position(sym)
+                if position:
+                    entry_price = position.get("avg_entry_price") or entry_price
+                    entry_notional = position.get("cost_basis") or entry_notional
+            except Exception:
+                pass
+
+            self.risk_book.register_entry(
+                symbol=sym,
+                strategy="adaptive_breakout",
+                regime=event["regime"],
+                confidence=event["confidence"],
+                entry_price=entry_price,
+                notional=entry_notional,
+                stop_loss_pct=config.HARD_STOP_PCT,
+                take_profit_pct=99.0,  # No fixed TP
+                trailing_stop_pct=0.0,  # ATR trailing handled in _enforce_adaptive_exits
+                max_hold_hours=999,  # No timeout — ADX exit handles this
+                reason=event["entry_reason"],
+                bot_names=target.get("bot_names", []),
+            )
+        elif side in ("sell", "close") and not order_result.get("error"):
+            self.risk_book.remove(sym)
+
+    def _record_close(self, sym, pos, entry_state, current_price, pl_pct, reason):
+        """Record a position close in journal, learning engine, and risk book."""
+        close_entry_state = dict(entry_state) if entry_state else {}
+        close_entry_state["entry_notional"] = float(
+            pos.get("cost_basis", 0) or (entry_state or {}).get("entry_notional", 0) or 0
+        )
+        close_entry_state["entry_price"] = float(
+            pos.get("avg_entry_price", 0) or (entry_state or {}).get("entry_price", 0) or 0
+        )
+
+        # Record real trade outcome in learning engine
+        if self.learner:
+            try:
+                entry_notional = float(close_entry_state.get("entry_notional", 0) or 0)
+                exit_notional = float(pos.get("market_value", 0) or 0)
+                gross_pl = exit_notional - entry_notional
+                if is_equity_symbol(sym):
+                    total_fees = 0.0
+                else:
+                    from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
+                    fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 10000.0
+                    total_fees = (entry_notional + exit_notional) * fee_pct / 2
+                net_pl = gross_pl - total_fees
+                strategy = (entry_state or {}).get("strategy", "adaptive_breakout")
+                regime = (entry_state or {}).get("regime", "unknown")
+                self.learner.record_real_trade(strategy, regime, net_pl, sym)
+            except Exception as e:
+                logger.debug(f"Learning engine record failed: {e}")
+
+        self.risk_book.remove(sym)
+        self.journal.append({
+            "event": "position_closed",
+            "symbol": sym,
+            "side": "close",
+            "reason": reason,
+            "entry_state": close_entry_state,
+            "exit_price": current_price,
+            "exit_notional": pos.get("market_value"),
+            "unrealized_pl_pct": round(pl_pct, 2),
+        })

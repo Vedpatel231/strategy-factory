@@ -1,10 +1,14 @@
 """
-Strategy Factory — Alpaca Auto-Trader Background Worker
+Strategy Factory — Alpaca Auto-Trader Background Worker (Adaptive Breakout)
 
-Separate from the simulator auto-trader. Runs on its own toggle, flag file,
-and log. Every N minutes (default 30):
+Dual-schedule worker:
+  - Crypto: runs every 4 hours, 24/7
+  - Stocks: runs every 4 hours, only during US market hours (9:30-4 ET, Mon-Fri)
+
+Each cycle:
   1. Invoke daily_runner.py to refresh portfolio analysis
   2. Execute rebalancing trades on Alpaca paper trading
+  3. Check exits (ATR trailing, hard stop, ADX exit) more frequently
 
 Controlled via data/alpaca_auto_trade.enabled flag file.
 """
@@ -27,11 +31,14 @@ DATA_DIR = config.DATA_DIR
 REPORT_DIR = config.REPORT_DIR
 FLAG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.enabled")
 LOG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.log.json")
+# Main cycle runs every 4 hours (matching 4h candle timeframe)
+# Exit checks run every 15 minutes for faster stop-loss response
 DEFAULT_INTERVAL_MIN = int(
     os.environ.get("ALPACA_AUTO_TRADE_INTERVAL_MIN")
     or os.environ.get("AUTO_TRADE_INTERVAL_MIN")
-    or "15"
+    or "240"  # 4 hours = 240 minutes
 )
+EXIT_CHECK_INTERVAL_MIN = int(os.environ.get("EXIT_CHECK_INTERVAL_MIN", "15"))
 
 
 def utc_now():
@@ -115,21 +122,36 @@ class AlpacaAutoTrader:
         self._stop.set()
 
     def _loop(self):
-        logger.info("AlpacaAutoTrader loop entered")
+        logger.info("AlpacaAutoTrader loop entered (4h main cycle, 15m exit checks)")
+        exit_check_sec = EXIT_CHECK_INTERVAL_MIN * 60
+        last_main_run = 0
+
         while not self._stop.is_set():
             if self.is_enabled():
-                try:
-                    self._run_once()
-                except Exception as e:
-                    self._last_error = str(e)
-                    logger.error(f"Alpaca auto run failed: {e}", exc_info=True)
-                    self._append_log({
-                        "timestamp": datetime.datetime.utcnow().isoformat(),
-                        "status": "error",
-                        "error": str(e),
-                    })
-            # Sleep in 10-second slices so stop() is responsive
-            for _ in range(self.interval_sec // 10):
+                now = time.time()
+                # Main cycle: run every 4 hours (entry checks + full analysis)
+                if now - last_main_run >= self.interval_sec:
+                    try:
+                        self._run_once()
+                        last_main_run = now
+                    except Exception as e:
+                        self._last_error = str(e)
+                        logger.error(f"Alpaca auto run failed: {e}", exc_info=True)
+                        self._append_log({
+                            "timestamp": datetime.datetime.utcnow().isoformat(),
+                            "status": "error",
+                            "error": str(e),
+                        })
+                        last_main_run = now  # don't retry immediately
+                else:
+                    # Between main cycles: just check exits (faster stop-loss response)
+                    try:
+                        self._check_exits_only()
+                    except Exception as e:
+                        logger.warning(f"Exit check failed: {e}")
+
+            # Sleep in 10-second slices for exit_check_interval
+            for _ in range(exit_check_sec // 10):
                 if self._stop.is_set():
                     return
                 time.sleep(10)
@@ -227,6 +249,31 @@ class AlpacaAutoTrader:
         self._append_log(entry)
         self._refresh_live_monitor()
         logger.info(f"🦙 Alpaca auto-trade cycle complete ({entry['status']})")
+
+    def _check_exits_only(self):
+        """Quick exit check between main cycles — ATR trailing, hard stop, ADX exit."""
+        try:
+            from alpaca_client import AlpacaPaperClient
+            from alpaca_client import normalize_crypto_symbol
+            from alpaca_trader import AlpacaTrader
+
+            client = AlpacaPaperClient()
+            positions_list = client.get_positions()
+            if not positions_list:
+                return  # no open positions, nothing to check
+
+            positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
+            trader = AlpacaTrader()
+
+            # Backfill risk book if needed
+            trader._backfill_risk_book(positions)
+
+            exit_orders = trader._enforce_adaptive_exits(positions)
+            if exit_orders:
+                logger.info(f"Exit check closed {len(exit_orders)} positions")
+                self._refresh_live_monitor()
+        except Exception as e:
+            logger.debug(f"Exit-only check error: {e}")
 
     # ── STATUS ───────────────────────────────────────────────────────────
     def status(self):

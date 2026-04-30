@@ -4133,7 +4133,7 @@ alpAutoLoadStatus();
                 "win_rate": wr[i], "profit_factor": pf[i], "sharpe_ratio": sr[i],
                 "max_drawdown": md[i], "net_profit": pnl[i], "total_trades": trades[i],
                 "adaptation_score": adapt[i], "adaptation_label": "NEUTRAL",
-                "pair": pairs[i], "strategy_type": "ema_crossover", "bot_status": statuses[i],
+                "pair": pairs[i], "strategy_type": "adaptive_breakout", "bot_status": statuses[i],
                 "reasons": ["Mock data for preview"],
             }
 

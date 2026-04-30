@@ -1,9 +1,11 @@
 """
-Intraday signal engine for Alpaca paper crypto trading.
+Adaptive Breakout signal engine for Alpaca trading.
 
-This module is deliberately transparent: classic indicators, modular strategy
-classes, confidence scores, and plain-English reasons. It is used as a quality
-gate around the existing portfolio allocator rather than replacing the app.
+Single strategy: Donchian channel breakout + ADX regime filter on 4h timeframe.
+Proven profitable on TradingView with real data:
+  BTC +99%, ETH +142%, SOL +121%, TSLA +113%, AAPL +3.3%
+
+This module replaces the old multi-strategy EMA crossover engine.
 """
 
 import json
@@ -19,12 +21,8 @@ logger = logging.getLogger("intraday_engine")
 
 STATE_FILE = os.path.join(config.DATA_DIR, "intraday_state.json")
 
-TRADE_TIMEFRAMES = ("15m", "30m", "1h")
-SETUP_TIMEFRAME = "1h"
-CONFIRM_TIMEFRAMES = ("4h", "1D")
-MIN_SIGNAL_CONFIDENCE = float(os.environ.get("INTRADAY_MIN_SIGNAL_CONFIDENCE", "0.38"))
-EXTREME_ATR_PCT = float(os.environ.get("INTRADAY_EXTREME_ATR_PCT", "12.0"))
-MIN_VOLUME_RATIO = float(os.environ.get("INTRADAY_MIN_VOLUME_RATIO", "0.12"))
+# Strategy runs on 4h only — no multi-timeframe cross-confirmation needed
+STRATEGY_TIMEFRAME = config.STRATEGY_TIMEFRAME  # "4h"
 
 
 @dataclass
@@ -34,20 +32,21 @@ class Signal:
     confidence: float
     reason: str
     timeframe: str
-    regime_fit: float = 1.0
+    adx: float = 0.0
+    atr_pct: float = 0.0
 
     def weighted_confidence(self):
-        return max(0.0, min(1.0, self.confidence * self.regime_fit))
+        return max(0.0, min(1.0, self.confidence))
 
 
 @dataclass
 class Regime:
     label: str
-    confidence: float
-    reason: str
-    trend_bias: str
+    adx: float
+    plus_di: float
+    minus_di: float
     atr_pct: float
-    volume_ratio: float
+    reason: str
 
 
 def _safe_float(value, default=0.0):
@@ -111,6 +110,7 @@ def rsi(values, period=14):
 
 
 def atr(candles, period=14):
+    """Average True Range using Wilder's smoothing (matches TradingView)."""
     if not candles:
         return []
     trs = []
@@ -121,19 +121,126 @@ def atr(candles, period=14):
         close = _safe_float(c["close"])
         trs.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
         prev_close = close
-    return sma(trs, period)
+
+    if len(trs) < period:
+        return sma(trs, period)
+
+    # Wilder's smoothing: first ATR = SMA of first `period` TRs
+    atr_vals = [0.0] * (period - 1)
+    first_atr = sum(trs[:period]) / period
+    atr_vals.append(first_atr)
+    for i in range(period, len(trs)):
+        atr_vals.append((atr_vals[-1] * (period - 1) + trs[i]) / period)
+    return atr_vals
 
 
-def bollinger(values, period=20, mult=2.0):
-    mids = sma(values, period)
-    upper = []
-    lower = []
-    for idx in range(len(values)):
-        window = values[max(0, idx - period + 1):idx + 1]
-        width = _std(window) * mult
-        upper.append(mids[idx] + width)
-        lower.append(mids[idx] - width)
-    return lower, mids, upper
+def donchian_high(highs, period=20):
+    """Donchian channel upper band: highest high over past `period` bars.
+    Uses [1] offset — looks at bars BEFORE the current one (matches Pine: highest(high, 20)[1])."""
+    out = []
+    for i in range(len(highs)):
+        # [1] offset: look at bars from i-period to i-1 (excluding current bar)
+        start = max(0, i - period)
+        end = i  # exclusive — does NOT include current bar
+        if end <= start:
+            out.append(highs[i])  # not enough history, use current
+        else:
+            out.append(max(highs[start:end]))
+    return out
+
+
+def donchian_low(lows, period=20):
+    """Donchian channel lower band: lowest low over past `period` bars.
+    Uses [1] offset (matches Pine: lowest(low, 20)[1])."""
+    out = []
+    for i in range(len(lows)):
+        start = max(0, i - period)
+        end = i
+        if end <= start:
+            out.append(lows[i])
+        else:
+            out.append(min(lows[start:end]))
+    return out
+
+
+def _wilder_smooth(values, period):
+    """Wilder's smoothing method — critical for matching TradingView ADX values."""
+    if len(values) < period:
+        return sma(values, period)
+    out = [0.0] * (period - 1)
+    first = sum(values[:period]) / period
+    out.append(first)
+    for i in range(period, len(values)):
+        out.append((out[-1] * (period - 1) + values[i]) / period)
+    return out
+
+
+def adx_system(candles, period=14):
+    """Compute ADX, +DI, -DI using Wilder's smoothing (matches TradingView exactly).
+
+    Returns: (adx_values, plus_di_values, minus_di_values) — all same length as candles.
+    """
+    if len(candles) < period + 1:
+        n = len(candles)
+        return [0.0] * n, [0.0] * n, [0.0] * n
+
+    # Step 1: True Range and Directional Movement
+    trs = [0.0]
+    plus_dm = [0.0]
+    minus_dm = [0.0]
+    for i in range(1, len(candles)):
+        high = _safe_float(candles[i]["high"])
+        low = _safe_float(candles[i]["low"])
+        prev_high = _safe_float(candles[i - 1]["high"])
+        prev_low = _safe_float(candles[i - 1]["low"])
+        prev_close = _safe_float(candles[i - 1]["close"])
+
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        trs.append(tr)
+
+        up_move = high - prev_high
+        down_move = prev_low - low
+
+        if up_move > down_move and up_move > 0:
+            plus_dm.append(up_move)
+        else:
+            plus_dm.append(0.0)
+
+        if down_move > up_move and down_move > 0:
+            minus_dm.append(down_move)
+        else:
+            minus_dm.append(0.0)
+
+    # Step 2: Wilder's smoothing of TR, +DM, -DM
+    smoothed_tr = _wilder_smooth(trs, period)
+    smoothed_plus_dm = _wilder_smooth(plus_dm, period)
+    smoothed_minus_dm = _wilder_smooth(minus_dm, period)
+
+    # Step 3: +DI and -DI
+    plus_di_vals = []
+    minus_di_vals = []
+    for i in range(len(smoothed_tr)):
+        tr_val = smoothed_tr[i]
+        if tr_val > 0:
+            plus_di_vals.append(smoothed_plus_dm[i] / tr_val * 100.0)
+            minus_di_vals.append(smoothed_minus_dm[i] / tr_val * 100.0)
+        else:
+            plus_di_vals.append(0.0)
+            minus_di_vals.append(0.0)
+
+    # Step 4: DX and ADX
+    dx_vals = []
+    for i in range(len(plus_di_vals)):
+        di_sum = plus_di_vals[i] + minus_di_vals[i]
+        if di_sum > 0:
+            dx_vals.append(abs(plus_di_vals[i] - minus_di_vals[i]) / di_sum * 100.0)
+        else:
+            dx_vals.append(0.0)
+
+    # Step 5: Smooth DX to get ADX (another round of Wilder's smoothing)
+    adx_vals = _wilder_smooth(dx_vals, period)
+
+    return adx_vals, plus_di_vals, minus_di_vals
 
 
 def _normalize_symbol_for_binance(symbol):
@@ -141,11 +248,11 @@ def _normalize_symbol_for_binance(symbol):
 
 
 def _timeframe_to_binance(tf):
-    return {"15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "1D": "1d"}.get(tf, "15m")
+    return {"15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "1D": "1d"}.get(tf, "4h")
 
 
 def _timeframe_to_alpaca_rest(tf):
-    return {"15m": "15Min", "30m": "30Min", "1h": "1Hour", "4h": "4Hour", "1D": "1Day"}.get(tf, "15Min")
+    return {"15m": "15Min", "30m": "30Min", "1h": "1Hour", "4h": "4Hour", "1D": "1Day"}.get(tf, "4Hour")
 
 
 class MarketDataProvider:
@@ -153,6 +260,18 @@ class MarketDataProvider:
         self.client = client
 
     def get_candles(self, symbol, timeframe, limit=160):
+        """Get candles — routes to crypto or stock provider based on symbol."""
+        from alpaca_client import is_equity_symbol
+        if is_equity_symbol(symbol):
+            candles = self._get_stock_candles(symbol, timeframe, limit)
+            if candles:
+                cleaned = self._clean(candles, limit)
+                logger.info("Loaded %d %s candles for %s from stock_sdk", len(cleaned), timeframe, symbol)
+                return cleaned
+            logger.warning("No stock candles loaded for %s %s", symbol, timeframe)
+            return []
+
+        # Crypto: try Alpaca SDK → Alpaca REST → Binance
         candles = self._get_alpaca_candles(symbol, timeframe, limit)
         if candles:
             cleaned = self._clean(candles, limit)
@@ -171,6 +290,48 @@ class MarketDataProvider:
             logger.warning("No candles loaded for %s %s from any provider", symbol, timeframe)
         return cleaned
 
+    def _get_stock_candles(self, symbol, timeframe, limit):
+        """Fetch stock bars from Alpaca StockHistoricalDataClient."""
+        try:
+            from alpaca.data.historical.stock import StockHistoricalDataClient
+            from alpaca.data.requests import StockBarsRequest
+            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+            from alpaca_client import _ALPACA_KEY, _ALPACA_SECRET
+
+            amount, unit = {
+                "15m": (15, TimeFrameUnit.Minute),
+                "30m": (30, TimeFrameUnit.Minute),
+                "1h": (1, TimeFrameUnit.Hour),
+                "4h": (4, TimeFrameUnit.Hour),
+                "1D": (1, TimeFrameUnit.Day),
+            }.get(timeframe, (4, TimeFrameUnit.Hour))
+
+            data_client = StockHistoricalDataClient(
+                api_key=_ALPACA_KEY,
+                secret_key=_ALPACA_SECRET,
+            )
+            end = datetime.now(timezone.utc)
+            lookback = {
+                "15m": timedelta(days=4),
+                "30m": timedelta(days=8),
+                "1h": timedelta(days=14),
+                "4h": timedelta(days=90),
+                "1D": timedelta(days=365),
+            }.get(timeframe, timedelta(days=90))
+
+            req = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=TimeFrame(amount, unit),
+                start=end - lookback,
+                end=end,
+                limit=limit,
+            )
+            bars = data_client.get_stock_bars(req)
+            return self._parse_alpaca_bars(bars, symbol, limit)
+        except Exception as exc:
+            logger.warning("Stock candles unavailable for %s %s: %s", symbol, timeframe, exc)
+            return []
+
     def _get_alpaca_candles(self, symbol, timeframe, limit):
         try:
             from alpaca.data.historical.crypto import CryptoHistoricalDataClient
@@ -184,21 +345,19 @@ class MarketDataProvider:
                 "1h": (1, TimeFrameUnit.Hour),
                 "4h": (4, TimeFrameUnit.Hour),
                 "1D": (1, TimeFrameUnit.Day),
-            }.get(timeframe, (15, TimeFrameUnit.Minute))
+            }.get(timeframe, (4, TimeFrameUnit.Hour))
             data_client = CryptoHistoricalDataClient(
                 api_key=_ALPACA_KEY,
                 secret_key=_ALPACA_SECRET,
             )
-            # Alpaca's historical endpoint is more reliable when bounded by a
-            # start/end window instead of relying on limit alone.
             end = datetime.now(timezone.utc)
             lookback = {
                 "15m": timedelta(days=4),
                 "30m": timedelta(days=8),
                 "1h": timedelta(days=14),
-                "4h": timedelta(days=45),
-                "1D": timedelta(days=220),
-            }.get(timeframe, timedelta(days=4))
+                "4h": timedelta(days=90),
+                "1D": timedelta(days=365),
+            }.get(timeframe, timedelta(days=90))
             req = CryptoBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame(amount, unit),
@@ -207,57 +366,61 @@ class MarketDataProvider:
                 limit=limit,
             )
             bars = data_client.get_crypto_bars(req)
-            raw = []
-            if hasattr(bars, "data"):
-                raw = bars.data.get(symbol, []) or bars.data.get(symbol.replace("/", ""), [])
-            elif isinstance(bars, dict):
-                raw = bars.get(symbol, []) or bars.get(symbol.replace("/", ""), [])
-            elif hasattr(bars, "df"):
-                try:
-                    df = bars.df
-                    if getattr(df, "empty", True):
-                        raw = []
-                    else:
-                        if hasattr(df.index, "names") and "symbol" in df.index.names:
-                            df = df.xs(symbol, level="symbol")
-                        raw = [
-                            {
-                                "timestamp": idx.isoformat() if hasattr(idx, "isoformat") else str(idx),
-                                "open": row["open"],
-                                "high": row["high"],
-                                "low": row["low"],
-                                "close": row["close"],
-                                "volume": row.get("volume", 0.0),
-                            }
-                            for idx, row in df.tail(limit).iterrows()
-                        ]
-                except Exception:
-                    raw = []
-            out = []
-            for b in raw:
-                if isinstance(b, dict):
-                    out.append({
-                        "timestamp": b.get("timestamp", ""),
-                        "open": float(b.get("open")),
-                        "high": float(b.get("high")),
-                        "low": float(b.get("low")),
-                        "close": float(b.get("close")),
-                        "volume": float(b.get("volume", 0.0) or 0.0),
-                    })
-                else:
-                    out.append({
-                        "timestamp": getattr(b, "timestamp", None).isoformat()
-                        if getattr(b, "timestamp", None) else "",
-                        "open": float(getattr(b, "open")),
-                        "high": float(getattr(b, "high")),
-                        "low": float(getattr(b, "low")),
-                        "close": float(getattr(b, "close")),
-                        "volume": float(getattr(b, "volume", 0.0) or 0.0),
-                    })
-            return out
+            return self._parse_alpaca_bars(bars, symbol, limit)
         except Exception as exc:
             logger.warning("Alpaca SDK candles unavailable for %s %s: %s", symbol, timeframe, exc)
             return []
+
+    def _parse_alpaca_bars(self, bars, symbol, limit):
+        """Parse Alpaca bar response into our standard candle format."""
+        raw = []
+        if hasattr(bars, "data"):
+            raw = bars.data.get(symbol, []) or bars.data.get(symbol.replace("/", ""), [])
+        elif isinstance(bars, dict):
+            raw = bars.get(symbol, []) or bars.get(symbol.replace("/", ""), [])
+        elif hasattr(bars, "df"):
+            try:
+                df = bars.df
+                if getattr(df, "empty", True):
+                    raw = []
+                else:
+                    if hasattr(df.index, "names") and "symbol" in df.index.names:
+                        df = df.xs(symbol, level="symbol")
+                    raw = [
+                        {
+                            "timestamp": idx.isoformat() if hasattr(idx, "isoformat") else str(idx),
+                            "open": row["open"],
+                            "high": row["high"],
+                            "low": row["low"],
+                            "close": row["close"],
+                            "volume": row.get("volume", 0.0),
+                        }
+                        for idx, row in df.tail(limit).iterrows()
+                    ]
+            except Exception:
+                raw = []
+        out = []
+        for b in raw:
+            if isinstance(b, dict):
+                out.append({
+                    "timestamp": b.get("timestamp", ""),
+                    "open": float(b.get("open")),
+                    "high": float(b.get("high")),
+                    "low": float(b.get("low")),
+                    "close": float(b.get("close")),
+                    "volume": float(b.get("volume", 0.0) or 0.0),
+                })
+            else:
+                out.append({
+                    "timestamp": getattr(b, "timestamp", None).isoformat()
+                    if getattr(b, "timestamp", None) else "",
+                    "open": float(getattr(b, "open")),
+                    "high": float(getattr(b, "high")),
+                    "low": float(getattr(b, "low")),
+                    "close": float(getattr(b, "close")),
+                    "volume": float(getattr(b, "volume", 0.0) or 0.0),
+                })
+        return out
 
     def _get_alpaca_rest_candles(self, symbol, timeframe, limit):
         try:
@@ -269,9 +432,9 @@ class MarketDataProvider:
                 "15m": timedelta(days=4),
                 "30m": timedelta(days=8),
                 "1h": timedelta(days=14),
-                "4h": timedelta(days=45),
-                "1D": timedelta(days=220),
-            }.get(timeframe, timedelta(days=4))
+                "4h": timedelta(days=90),
+                "1D": timedelta(days=365),
+            }.get(timeframe, timedelta(days=90))
             params = {
                 "symbols": symbol,
                 "timeframe": _timeframe_to_alpaca_rest(timeframe),
@@ -344,6 +507,8 @@ class MarketDataProvider:
 
 
 class FeatureSet:
+    """Pre-computed indicators for the Adaptive Breakout strategy."""
+
     def __init__(self, candles):
         self.candles = candles
         self.closes = [c["close"] for c in candles]
@@ -351,12 +516,21 @@ class FeatureSet:
         self.lows = [c["low"] for c in candles]
         self.volumes = [c["volume"] for c in candles]
         self.close = self.closes[-1] if self.closes else 0.0
-        self.ema9 = ema(self.closes, 9)
+
+        # Core indicators
+        self.atr14 = atr(candles, 14)
+        self.rsi14 = rsi(self.closes, 14)
+
+        # Donchian channels (20-period, [1] offset)
+        self.donchian_high_20 = donchian_high(self.highs, config.DONCHIAN_PERIOD)
+        self.donchian_low_20 = donchian_low(self.lows, config.DONCHIAN_PERIOD)
+
+        # ADX system with Wilder's smoothing
+        self.adx_14, self.plus_di_14, self.minus_di_14 = adx_system(candles, config.ADX_PERIOD)
+
+        # EMAs for trend context
         self.ema20 = ema(self.closes, 20)
         self.ema50 = ema(self.closes, 50)
-        self.rsi14 = rsi(self.closes, 14)
-        self.atr14 = atr(candles, 14)
-        self.bb_low, self.bb_mid, self.bb_high = bollinger(self.closes, 20, 2.0)
 
     @property
     def atr_pct(self):
@@ -374,491 +548,183 @@ class FeatureSet:
             return 0.0
         return (self.ema20[-1] - self.ema20[-8]) / self.ema20[-8] * 100.0
 
-    @property
-    def bb_width_pct(self):
-        if not self.close or not self.bb_high:
-            return 0.0
-        return (self.bb_high[-1] - self.bb_low[-1]) / self.close * 100.0
 
+class AdaptiveBreakoutStrategy:
+    """Donchian channel breakout + ADX regime filter.
 
-class RegimeDetector:
-    def classify(self, features):
-        if len(features.closes) < 60:
-            return Regime("unknown", 0.0, "Insufficient candles", "neutral",
-                          features.atr_pct, features.volume_ratio)
+    Entry: close > donchian_high(20)[1] AND ADX(14) > 20 AND +DI > -DI
+    Exit: trailing stop (3x ATR) OR hard stop (8%) OR ADX < 15
+    Long only — shorts proven unprofitable on all tested assets.
 
-        close = features.close
-        ema20 = features.ema20[-1]
-        ema50 = features.ema50[-1]
-        slope = features.ema20_slope_pct
-        atr_pct = features.atr_pct
-        vol_ratio = features.volume_ratio
-        bb_width = features.bb_width_pct
-
-        trend_bias = "neutral"
-        if close > ema20 > ema50 and slope > 0.12:
-            trend_bias = "up"
-        elif close < ema20 < ema50 and slope < -0.12:
-            trend_bias = "down"
-
-        if atr_pct >= EXTREME_ATR_PCT:
-            return Regime("extreme_volatility", 0.9, f"ATR {atr_pct:.1f}% exceeds no-trade limit", trend_bias, atr_pct, vol_ratio)
-        if vol_ratio > 1.35 and close > features.bb_high[-1] and trend_bias == "up":
-            return Regime("breakout", 0.78, "Close above upper band with elevated volume", trend_bias, atr_pct, vol_ratio)
-        if vol_ratio > 1.35 and close < features.bb_low[-1] and trend_bias == "down":
-            return Regime("breakdown", 0.78, "Close below lower band with elevated volume", trend_bias, atr_pct, vol_ratio)
-        if trend_bias == "up":
-            return Regime("trending_up", min(0.85, 0.55 + abs(slope) / 2), "Price above rising 20/50 EMA stack", trend_bias, atr_pct, vol_ratio)
-        if trend_bias == "down":
-            return Regime("trending_down", min(0.85, 0.55 + abs(slope) / 2), "Price below falling 20/50 EMA stack", trend_bias, atr_pct, vol_ratio)
-        if atr_pct > 4.0 or bb_width > 10.0:
-            return Regime("high_volatility", 0.7, "Wide range without clean trend", trend_bias, atr_pct, vol_ratio)
-        if atr_pct < 1.0 and bb_width < 3.0:
-            return Regime("low_volatility", 0.68, "Compressed range and low ATR", trend_bias, atr_pct, vol_ratio)
-        if 42 <= features.rsi14[-1] <= 58 and abs(slope) < 0.08:
-            return Regime("range_bound", 0.66, "Flat EMA and mid-range RSI", trend_bias, atr_pct, vol_ratio)
-        return Regime("choppy", 0.58, "Mixed trend, volatility, and momentum signals", trend_bias, atr_pct, vol_ratio)
-
-
-class BaseStrategy:
-    name = "base"
-    good_regimes = set()
-    bad_regimes = set()
-
-    def regime_fit(self, regime):
-        if regime.label in self.good_regimes:
-            return 1.15
-        if regime.label in self.bad_regimes:
-            return 0.55
-        return 0.9
-
-    def evaluate(self, features, regime, timeframe):
-        return Signal(self.name, "hold", 0.0, "No setup", timeframe, self.regime_fit(regime))
-
-
-class TrendFollowingStrategy(BaseStrategy):
-    name = "trend_following"
-    good_regimes = {"trending_up", "breakout"}
-    bad_regimes = {"range_bound", "choppy"}
-
-    def evaluate(self, f, regime, timeframe):
-        if f.close > f.ema20[-1] > f.ema50[-1] and f.ema20_slope_pct > 0.12 and f.rsi14[-1] < 75:
-            return Signal(self.name, "buy", 0.64, "Rising EMA stack with RSI below exhaustion", timeframe, self.regime_fit(regime))
-        if f.close < f.ema20[-1] < f.ema50[-1] and f.ema20_slope_pct < -0.12:
-            return Signal(self.name, "sell", 0.62, "Falling EMA stack", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class MomentumStrategy(BaseStrategy):
-    name = "momentum"
-    good_regimes = {"trending_up", "breakout"}
-    bad_regimes = {"low_volatility", "range_bound"}
-
-    def evaluate(self, f, regime, timeframe):
-        if f.rsi14[-1] > 56 and f.close > f.ema20[-1] and f.volume_ratio > 0.8:
-            return Signal(self.name, "buy", min(0.75, 0.52 + (f.rsi14[-1] - 56) / 100), "Positive RSI momentum above EMA20", timeframe, self.regime_fit(regime))
-        if f.rsi14[-1] < 42 and f.close < f.ema20[-1]:
-            return Signal(self.name, "sell", 0.6, "Negative RSI momentum below EMA20", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class BreakoutStrategy(BaseStrategy):
-    name = "breakout"
-    good_regimes = {"breakout", "low_volatility"}
-    bad_regimes = {"choppy", "high_volatility"}
-
-    def evaluate(self, f, regime, timeframe):
-        if f.close > f.bb_high[-1] and f.volume_ratio >= 1.2:
-            return Signal(self.name, "buy", min(0.82, 0.58 + (f.volume_ratio - 1.0) / 3), "Upper-band breakout with volume expansion", timeframe, self.regime_fit(regime))
-        if f.close < f.bb_low[-1] and f.volume_ratio >= 1.2:
-            return Signal(self.name, "sell", 0.66, "Lower-band breakdown with volume expansion", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class MeanReversionStrategy(BaseStrategy):
-    name = "mean_reversion"
-    good_regimes = {"range_bound", "choppy"}
-    bad_regimes = {"trending_down", "breakdown", "breakout"}
-
-    def evaluate(self, f, regime, timeframe):
-        if f.close < f.bb_low[-1] and f.rsi14[-1] < 34 and regime.trend_bias != "down":
-            return Signal(self.name, "buy", 0.62, "Oversold below lower band without downtrend bias", timeframe, self.regime_fit(regime))
-        if f.close > f.bb_high[-1] and f.rsi14[-1] > 70:
-            return Signal(self.name, "sell", 0.6, "Overbought above upper band", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class PullbackContinuationStrategy(BaseStrategy):
-    name = "pullback_continuation"
-    good_regimes = {"trending_up"}
-    bad_regimes = {"range_bound", "breakdown"}
-    # ── HARD BLOCK: 0 wins in 15 live trades, -$1,608 net loss.
-    # Disabled until backtesting proves edge exists. See trade analysis 2026-04-26.
-    _blocked = True
-
-    def evaluate(self, f, regime, timeframe):
-        if self._blocked:
-            return super().evaluate(f, regime, timeframe)  # always returns hold
-        near_ema = abs(f.close - f.ema20[-1]) / f.close * 100 <= max(0.8, f.atr_pct * 0.45)
-        if regime.trend_bias == "up" and near_ema and 42 <= f.rsi14[-1] <= 62:
-            return Signal(self.name, "buy", 0.65, "Pullback to rising EMA20 in uptrend", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class VolatilityBreakoutStrategy(BaseStrategy):
-    name = "volatility_breakout"
-    good_regimes = {"low_volatility", "breakout"}
-    bad_regimes = {"extreme_volatility", "choppy"}
-
-    def evaluate(self, f, regime, timeframe):
-        recent_range = max(f.highs[-8:]) - min(f.lows[-8:])
-        if f.atr14[-1] and recent_range / f.close * 100 < max(1.2, f.atr_pct * 1.6):
-            if f.close >= max(f.highs[-8:-1]) and f.volume_ratio > 1.1:
-                return Signal(self.name, "buy", 0.63, "Compression resolving upward with volume", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class RangeTradingStrategy(BaseStrategy):
-    name = "range_trading"
-    good_regimes = {"range_bound", "low_volatility"}
-    bad_regimes = {"trending_up", "trending_down", "breakout", "breakdown"}
-
-    def evaluate(self, f, regime, timeframe):
-        if regime.label in self.good_regimes and f.rsi14[-1] < 38 and f.close <= f.bb_mid[-1]:
-            return Signal(self.name, "buy", 0.58, "Range buy near lower half with weak RSI", timeframe, self.regime_fit(regime))
-        if regime.label in self.good_regimes and f.rsi14[-1] > 66:
-            return Signal(self.name, "sell", 0.58, "Range fade near upper half", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class SwingTradingStrategy(BaseStrategy):
-    name = "swing_trading"
-    good_regimes = {"trending_up", "range_bound"}
-    bad_regimes = {"extreme_volatility"}
-
-    def evaluate(self, f, regime, timeframe):
-        higher_low = len(f.lows) >= 6 and f.lows[-1] > min(f.lows[-5:-1])
-        if higher_low and f.close > f.ema20[-1] and 48 <= f.rsi14[-1] <= 68:
-            return Signal(self.name, "buy", 0.57, "Higher-low structure reclaimed EMA20", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class ReversalStructureStrategy(BaseStrategy):
-    name = "reversal_market_structure"
-    good_regimes = {"range_bound", "high_volatility"}
-    bad_regimes = {"trending_down"}
-
-    def evaluate(self, f, regime, timeframe):
-        if len(f.closes) >= 5:
-            made_low = f.lows[-2] <= min(f.lows[-8:-2])
-            reclaimed = f.close > f.highs[-2] and f.rsi14[-1] > 42
-            if made_low and reclaimed and regime.trend_bias != "down":
-                return Signal(self.name, "buy", 0.6, "Failed breakdown and reclaim of prior candle high", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class GridRangeStrategy(BaseStrategy):
-    name = "grid_range"
-    good_regimes = {"range_bound", "low_volatility"}
-    bad_regimes = {"trending_down", "breakout", "breakdown", "extreme_volatility"}
-
-    def evaluate(self, f, regime, timeframe):
-        if regime.label in self.good_regimes and f.bb_width_pct < 5.0:
-            if f.close < f.bb_mid[-1] and f.rsi14[-1] < 48:
-                return Signal(self.name, "buy", 0.55, "Low-volatility grid entry below range midpoint", timeframe, self.regime_fit(regime))
-        return super().evaluate(f, regime, timeframe)
-
-
-class EMACrossoverStrategy(BaseStrategy):
-    """EMA(12)/EMA(26) crossover with ATR-based risk management.
-
-    Backtested across 12 cryptos — best results on ADA (+46%), BTC (+38%),
-    ETH (+38%), LTC (+38%). Uses 1 ATR stop loss, 2 ATR take profit.
-    Profit factor 1.5-1.8 with ~47% win rate on trending regimes.
+    Proven on TradingView (real data, 4h timeframe):
+      BTC: +99.2%, 76 trades, 38.2% WR, 1.316 PF
+      ETH: +141.8%, 62 trades, 40.3% WR, 1.418 PF
+      SOL: +120.8%, 83 trades, 41.0% WR, 1.152 PF
+      TSLA: +113.1%, 19 trades, 42.1% WR, 2.251 PF
     """
-    name = "ema_crossover"
-    good_regimes = {"trending_up", "trending_down", "breakout", "breakdown", "high_volatility"}
-    bad_regimes = {"low_volatility"}
+    name = "adaptive_breakout"
 
-    def evaluate(self, f, regime, timeframe):
-        if len(f.closes) < 30:
-            return super().evaluate(f, regime, timeframe)
+    def evaluate(self, features, is_stock=False):
+        """Evaluate for entry signal. Returns Signal or None."""
+        f = features
+        n = len(f.closes)
+        if n < 40:
+            return Signal(self.name, "hold", 0.0, "Insufficient candles", STRATEGY_TIMEFRAME)
 
-        # Compute EMA(12) and EMA(26)
-        ema12 = ema(f.closes, 12)
-        ema26 = ema(f.closes, 26)
-
-        if len(ema12) < 2 or len(ema26) < 2:
-            return super().evaluate(f, regime, timeframe)
-
-        prev_fast = ema12[-2]
-        prev_slow = ema26[-2]
-        cur_fast = ema12[-1]
-        cur_slow = ema26[-1]
-        atr_val = f.atr14[-1] if f.atr14 else 0
+        close = f.close
+        adx_val = f.adx_14[-1] if f.adx_14 else 0
+        plus_di = f.plus_di_14[-1] if f.plus_di_14 else 0
+        minus_di = f.minus_di_14[-1] if f.minus_di_14 else 0
         atr_pct = f.atr_pct
+        donch_high = f.donchian_high_20[-1] if f.donchian_high_20 else 0
 
-        # Skip if ATR is too small (no edge in dead markets)
-        if atr_pct < 0.3:
-            return super().evaluate(f, regime, timeframe)
+        # Min volatility filter
+        min_atr = config.STOCK_MIN_ATR_PCT if is_stock else config.CRYPTO_MIN_ATR_PCT
+        if atr_pct < min_atr:
+            return Signal(self.name, "hold", 0.0,
+                          f"ATR% {atr_pct:.2f} below min {min_atr}", STRATEGY_TIMEFRAME)
 
-        # Bullish crossover: EMA12 crosses above EMA26
-        if prev_fast <= prev_slow and cur_fast > cur_slow:
-            # Confidence scales with separation speed and volume
-            separation = (cur_fast - cur_slow) / cur_slow * 100
-            vol_boost = min(0.08, (f.volume_ratio - 1.0) * 0.06) if f.volume_ratio > 1.0 else 0
-            conf = min(0.82, 0.62 + separation * 0.5 + vol_boost)
+        # ADX regime check — only trade in trending markets
+        if adx_val < config.ADX_ENTRY_THRESHOLD:
+            return Signal(self.name, "hold", 0.0,
+                          f"ADX {adx_val:.1f} below entry threshold {config.ADX_ENTRY_THRESHOLD}",
+                          STRATEGY_TIMEFRAME, adx=adx_val, atr_pct=atr_pct)
 
-            # RSI filter: don't buy into overbought
-            if f.rsi14[-1] > 75:
-                conf *= 0.6
+        # Directional check — +DI must lead -DI for longs
+        if plus_di <= minus_di:
+            return Signal(self.name, "hold", 0.0,
+                          f"+DI ({plus_di:.1f}) not above -DI ({minus_di:.1f})",
+                          STRATEGY_TIMEFRAME, adx=adx_val, atr_pct=atr_pct)
 
-            return Signal(
-                self.name, "buy", conf,
-                f"EMA(12/26) bullish crossover, ATR={atr_pct:.1f}%, "
-                f"separation={separation:.3f}%",
-                timeframe, self.regime_fit(regime)
-            )
+        # Donchian breakout: close > previous highest high
+        if close <= donch_high:
+            return Signal(self.name, "hold", 0.0,
+                          f"No breakout: close {close:.2f} <= Donchian high {donch_high:.2f}",
+                          STRATEGY_TIMEFRAME, adx=adx_val, atr_pct=atr_pct)
 
-        # Bearish crossover: EMA12 crosses below EMA26
-        if prev_fast >= prev_slow and cur_fast < cur_slow:
-            separation = (cur_slow - cur_fast) / cur_slow * 100
-            conf = min(0.78, 0.60 + separation * 0.5)
+        # ── ALL CONDITIONS MET — ENTRY SIGNAL ──
+        # Confidence based on ADX strength (stronger trend = higher confidence)
+        # ADX 20-25: base confidence, 25-35: good, 35+: strong
+        if adx_val >= 35:
+            conf = 0.82
+        elif adx_val >= 30:
+            conf = 0.74
+        elif adx_val >= 25:
+            conf = 0.66
+        else:
+            conf = 0.58
 
-            # RSI filter: don't sell into oversold
-            if f.rsi14[-1] < 25:
-                conf *= 0.6
+        # DI separation boost — wider gap = stronger directional move
+        di_gap = plus_di - minus_di
+        if di_gap > 15:
+            conf = min(0.88, conf + 0.06)
+        elif di_gap > 10:
+            conf = min(0.85, conf + 0.03)
 
-            return Signal(
-                self.name, "sell", conf,
-                f"EMA(12/26) bearish crossover, ATR={atr_pct:.1f}%",
-                timeframe, self.regime_fit(regime)
-            )
+        reason = (
+            f"Donchian breakout: close {close:.2f} > channel high {donch_high:.2f}, "
+            f"ADX={adx_val:.1f}, +DI={plus_di:.1f}, -DI={minus_di:.1f}, "
+            f"ATR%={atr_pct:.2f}"
+        )
 
-        return super().evaluate(f, regime, timeframe)
+        return Signal(
+            self.name, "buy", conf, reason, STRATEGY_TIMEFRAME,
+            adx=adx_val, atr_pct=atr_pct
+        )
+
+    def check_exit(self, features):
+        """Check if ADX has dropped below exit threshold (trend dying).
+        Returns (should_exit, reason) tuple."""
+        if not features.adx_14:
+            return False, ""
+        adx_val = features.adx_14[-1]
+        if adx_val < config.ADX_EXIT_THRESHOLD:
+            return True, f"ADX dropped to {adx_val:.1f} (below exit threshold {config.ADX_EXIT_THRESHOLD})"
+        return False, ""
 
 
-STRATEGIES = [
-    EMACrossoverStrategy(),
-    TrendFollowingStrategy(),
-    MomentumStrategy(),
-    BreakoutStrategy(),
-    MeanReversionStrategy(),
-    PullbackContinuationStrategy(),
-    VolatilityBreakoutStrategy(),
-    RangeTradingStrategy(),
-    SwingTradingStrategy(),
-    ReversalStructureStrategy(),
-    GridRangeStrategy(),
-]
+# Single strategy instance
+STRATEGY = AdaptiveBreakoutStrategy()
+
+# Keep backward-compatible list for any code that iterates STRATEGIES
+STRATEGIES = [STRATEGY]
 
 
 class IntradaySignalEngine:
     def __init__(self, data_provider=None):
         self.data = data_provider or MarketDataProvider()
-        self.regime_detector = RegimeDetector()
-        # PHASE 6/7: Load learning engine for real-performance feedback
-        self._learner = None
-        try:
-            from learning_engine import LearningEngine
-            self._learner = LearningEngine()
-        except Exception:
-            pass
+        self.strategy = STRATEGY
 
     def evaluate_symbol(self, symbol):
-        frame_data = {}
-        ordered_frames = []
-        for tf in (*TRADE_TIMEFRAMES, *CONFIRM_TIMEFRAMES):
-            if tf not in ordered_frames:
-                ordered_frames.append(tf)
-        for tf in ordered_frames:
-            candles = self.data.get_candles(symbol, tf)
-            if len(candles) < 60:
-                return self._reject(symbol, f"Insufficient {tf} candles ({len(candles)})")
-            frame_data[tf] = FeatureSet(candles)
+        """Evaluate a single symbol for entry/exit on the 4h timeframe."""
+        from alpaca_client import is_equity_symbol
+        is_stock = is_equity_symbol(symbol)
 
-        setup_regime = self.regime_detector.classify(frame_data[SETUP_TIMEFRAME])
-        trade_regime = self.regime_detector.classify(frame_data[TRADE_TIMEFRAMES[0]])
-        confirm_regimes = {
-            tf: self.regime_detector.classify(frame_data[tf])
-            for tf in CONFIRM_TIMEFRAMES
-        }
-        primary_confirm = confirm_regimes[CONFIRM_TIMEFRAMES[0]]
+        candles = self.data.get_candles(symbol, STRATEGY_TIMEFRAME)
+        if len(candles) < 40:
+            return self._reject(symbol, f"Insufficient {STRATEGY_TIMEFRAME} candles ({len(candles)})")
 
-        # ── Hard-reject regimes with proven negative edge ──────────────
-        # extreme_volatility: always hard-blocked on either timeframe.
-        # low_volatility: hard-blocked only when BOTH timeframes agree.
-        #   When just one TF is low_vol and the other is trending, we
-        #   apply a confidence penalty instead — the old OR-gate was
-        #   rejecting 80 trending_up entries per day for no good reason.
-        _always_block = ("extreme_volatility",)
-        if trade_regime.label in _always_block or setup_regime.label in _always_block:
-            return self._reject(symbol,
-                f"Regime '{trade_regime.label}'/'{setup_regime.label}' hard-blocked (extreme vol)",
-                trade_regime, setup_regime, primary_confirm, confirm_regimes)
+        features = FeatureSet(candles)
 
-        _both_low_vol = (trade_regime.label == "low_volatility"
-                         and setup_regime.label == "low_volatility")
-        if _both_low_vol:
-            return self._reject(symbol,
-                f"Both regimes low_volatility — no price movement to cover fees",
-                trade_regime, setup_regime, primary_confirm, confirm_regimes)
+        # Check for exit signal (ADX drop)
+        should_exit, exit_reason = self.strategy.check_exit(features)
 
-        # Single-TF low_vol penalty (applied later after confidence is computed)
-        _low_vol_penalty = 1.0
-        if trade_regime.label == "low_volatility" or setup_regime.label == "low_volatility":
-            _low_vol_penalty = 0.55  # steep haircut but not a hard block
-        if frame_data[TRADE_TIMEFRAMES[0]].volume_ratio < MIN_VOLUME_RATIO:
-            return self._reject(symbol, "Liquidity/volume ratio below minimum",
-                                trade_regime, setup_regime, primary_confirm, confirm_regimes)
+        # Check for entry signal
+        signal = self.strategy.evaluate(features, is_stock=is_stock)
 
-        # ── PHASE 1 FIX: Higher-timeframe regime gate ──────────────────
-        # Hard-reject extreme_volatility and low_volatility on daily frame too.
-        # trending_down / breakdown get a heavy confidence penalty instead
-        # of a hard block — they can still produce valid short-term entries.
-        daily_regime = confirm_regimes.get("1D")
-        _1d_hard_block = ("extreme_volatility",)
-        if daily_regime and daily_regime.label in _1d_hard_block:
-            return self._reject(symbol,
-                f"1D regime '{daily_regime.label}' blocks new entries",
-                trade_regime, setup_regime, primary_confirm, confirm_regimes)
-        # 1D low_vol: penalty, not hard block
-        if daily_regime and daily_regime.label == "low_volatility":
-            _low_vol_penalty = min(_low_vol_penalty, 0.55)
-        _1d_penalty_regimes = ("trending_down", "breakdown")
-        _1d_confidence_penalty = 1.0
-        if daily_regime and daily_regime.label in _1d_penalty_regimes:
-            _1d_confidence_penalty = 0.80  # light penalty — 15m trades don't need daily alignment
+        adx_val = features.adx_14[-1] if features.adx_14 else 0
+        plus_di = features.plus_di_14[-1] if features.plus_di_14 else 0
+        minus_di = features.minus_di_14[-1] if features.minus_di_14 else 0
 
-        # ── Collect signals per timeframe ─────────────────────────────
-        signals = []
-        signals_by_tf = {}  # tf -> list of signals
-        for tf in TRADE_TIMEFRAMES:
-            f = frame_data[tf]
-            regime = self.regime_detector.classify(f)
-            tf_signals = []
-            for strategy in STRATEGIES:
-                # PHASE 4 FIX: Skip strategies in their bad regimes entirely.
-                if regime.label in strategy.bad_regimes:
-                    continue
-                # PHASE 6/7: Skip strategies proven to lose in this regime
-                if self._learner:
-                    blocked, _ = self._learner.should_block_strategy(strategy.name, regime.label)
-                    if blocked:
-                        continue
-                sig = strategy.evaluate(f, regime, tf)
-                if sig.action != "hold" and sig.weighted_confidence() >= 0.35:
-                    # PHASE 1 FIX: Drop very weak individual signals (noise)
-                    tf_signals.append(sig)
-                    signals.append(sig)
-            signals_by_tf[tf] = tf_signals
+        regime = Regime(
+            label="trending" if adx_val >= config.ADX_ENTRY_THRESHOLD else "ranging",
+            adx=round(adx_val, 2),
+            plus_di=round(plus_di, 2),
+            minus_di=round(minus_di, 2),
+            atr_pct=round(features.atr_pct, 3),
+            reason=signal.reason,
+        )
 
-        # ── PHASE 1 FIX: Multi-timeframe confirmation ────────────────
-        # Count how many timeframes agree on buy vs sell direction.
-        tf_buy = 0
-        tf_sell = 0
-        for tf, sigs in signals_by_tf.items():
-            tf_buy_score = sum(s.weighted_confidence() for s in sigs if s.action == "buy")
-            tf_sell_score = sum(s.weighted_confidence() for s in sigs if s.action == "sell")
-            if tf_buy_score > tf_sell_score and tf_buy_score > 0:
-                tf_buy += 1
-            elif tf_sell_score > tf_buy_score and tf_sell_score > 0:
-                tf_sell += 1
-
-        buy_score = sum(s.weighted_confidence() for s in signals if s.action == "buy")
-        sell_score = sum(s.weighted_confidence() for s in signals if s.action == "sell")
-        total_score = buy_score + sell_score
-        direction = "hold"
-        confidence = 0.0
-        if total_score > 0:
-            if buy_score > sell_score:
-                direction = "buy"
-                confidence = buy_score / total_score
-            else:
-                direction = "sell"
-                confidence = sell_score / total_score
-
-        # Require at least 1 of 3 timeframes for EMA crossover.
-        # Crossovers are leading indicators — they fire on one TF first.
-        agreeing_tfs = tf_buy if direction == "buy" else tf_sell
-        if direction == "buy" and agreeing_tfs < 1:
-            confidence *= 0.4  # no timeframe agrees at all
-
-        # ── Higher-TF alignment penalty (strengthened) ────────────────
-        alignment_penalty = 0.0
-        for tf, confirm_regime in confirm_regimes.items():
-            if direction == "buy" and confirm_regime.trend_bias == "down":
-                alignment_penalty += 0.08 if tf == "4h" else 0.06
-            if direction == "sell" and confirm_regime.trend_bias == "up":
-                alignment_penalty += 0.06 if tf == "4h" else 0.04
-        confidence = max(0.0, confidence - alignment_penalty)
-
-        # PHASE 1 FIX: Require 1h trend alignment for buy entries.
-        # If 1h EMA20 slope is negative, buying into a falling setup is
-        # the #1 cause of timeout exits.
-        hourly_slope = frame_data["1h"].ema20_slope_pct
-        if direction == "buy" and hourly_slope < -0.05:
-            confidence *= 0.85  # light penalty — crossovers lead trend changes
-
-        # PHASE 1 FIX: Choppy/range_bound 4h regime penalty for buys.
-        # Choppy lost -$233 on 2 trades; range_bound is structurally similar.
-        if direction == "buy" and primary_confirm.label in ("choppy", "range_bound", "high_volatility"):
-            confidence *= 0.85  # light penalty — ATR stop loss handles the risk
-
-        # Apply deferred 1D regime penalty (trending_down / breakdown).
-        # trending_down lost -$440 on 2 trades (both stop losses).
-        if direction == "buy":
-            confidence *= _1d_confidence_penalty
-            # Apply single-TF low_volatility penalty (see regime gate above).
-            confidence *= _low_vol_penalty
-
-        reasons = sorted(signals, key=lambda s: s.weighted_confidence(), reverse=True)[:5]
-        accepted = direction in ("buy", "sell") and confidence >= MIN_SIGNAL_CONFIDENCE
-
-        # ── Confidence model recalibration (2026-04-26) ──────────────
-        # Live data showed confidence=1.0 trades lost the MOST (-$767/6 trades).
-        # Root cause: grid_range and other non-trend strategies got inflated
-        # confidence in regimes where they have no edge.
-        # Fix: Cap confidence for strategies that aren't trend_following or
-        # swing_trading (the only 2 that produced wins) and penalize further
-        # when the trade regime isn't trending_up.
-        if accepted and direction == "buy":
-            winning_strats = {"trend_following", "swing_trading", "ema_crossover"}
-            dominant_strat = reasons[0].strategy if reasons else ""
-            if dominant_strat not in winning_strats:
-                confidence = min(confidence, 0.72)  # cap non-winning strategies
-            if trade_regime.label != "trending_up" and dominant_strat not in winning_strats:
-                confidence *= 0.6  # heavy penalty: wrong strategy + wrong regime
-            # Re-evaluate acceptance after recalibration
-            accepted = confidence >= MIN_SIGNAL_CONFIDENCE
-        if direction == "sell" and accepted:
-            # Alpaca crypto path is long-only here; sell means close/downweight,
-            # not open a new short.
+        accepted = signal.action == "buy" and signal.confidence >= 0.38
+        # If ADX exit is triggered, override action to sell
+        if should_exit:
+            signal = Signal(
+                self.strategy.name, "sell", 0.7, exit_reason,
+                STRATEGY_TIMEFRAME, adx=adx_val, atr_pct=features.atr_pct
+            )
             accepted = True
 
         result = {
             "symbol": symbol,
             "accepted": accepted,
-            "action": direction,
-            "confidence": round(confidence, 3),
-            "reason": "; ".join(s.reason for s in reasons) if reasons else "No strong intraday setup",
-            "strategy_signals": [asdict(s) for s in signals],
-            "trade_regime": asdict(trade_regime),
-            "setup_regime": asdict(setup_regime),
-            "confirm_regime": asdict(primary_confirm),
-            "confirm_regimes": {tf: asdict(regime) for tf, regime in confirm_regimes.items()},
+            "action": signal.action,
+            "confidence": round(signal.confidence, 3),
+            "reason": signal.reason,
+            "strategy_signals": [asdict(signal)],
+            "trade_regime": asdict(regime),
+            "setup_regime": asdict(regime),
+            "confirm_regime": asdict(regime),
+            "confirm_regimes": {"4h": asdict(regime)},
             "features": {
-                "atr_pct_15m": round(frame_data["15m"].atr_pct, 3),
-                "volume_ratio_15m": round(frame_data["15m"].volume_ratio, 3),
-                "volume_ratio_30m": round(frame_data["30m"].volume_ratio, 3),
-                "ema20_slope_1h": round(frame_data["1h"].ema20_slope_pct, 3),
+                "atr_pct_4h": round(features.atr_pct, 3),
+                "adx_14": round(adx_val, 2),
+                "plus_di_14": round(plus_di, 2),
+                "minus_di_14": round(minus_di, 2),
+                "volume_ratio_4h": round(features.volume_ratio, 3),
+                "donchian_high_20": round(features.donchian_high_20[-1], 4) if features.donchian_high_20 else 0,
+                "donchian_low_20": round(features.donchian_low_20[-1], 4) if features.donchian_low_20 else 0,
+                "rsi_14": round(features.rsi14[-1], 2) if features.rsi14 else 50,
+                # Backward compat key for alpaca_trader
+                "atr_pct_15m": round(features.atr_pct, 3),
             },
+            "adx_exit": should_exit,
+            "adx_exit_reason": exit_reason,
             "evaluated_at": datetime.now(timezone.utc).isoformat(),
         }
         self._save_last(result)
         return result
 
-    def _reject(self, symbol, reason, trade_regime=None, setup_regime=None, confirm_regime=None, confirm_regimes=None):
+    def _reject(self, symbol, reason):
         result = {
             "symbol": symbol,
             "accepted": False,
@@ -866,11 +732,13 @@ class IntradaySignalEngine:
             "confidence": 0.0,
             "reason": reason,
             "strategy_signals": [],
-            "trade_regime": asdict(trade_regime) if trade_regime else {},
-            "setup_regime": asdict(setup_regime) if setup_regime else {},
-            "confirm_regime": asdict(confirm_regime) if confirm_regime else {},
-            "confirm_regimes": {tf: asdict(regime) for tf, regime in (confirm_regimes or {}).items()},
+            "trade_regime": {},
+            "setup_regime": {},
+            "confirm_regime": {},
+            "confirm_regimes": {},
             "features": {},
+            "adx_exit": False,
+            "adx_exit_reason": "",
             "evaluated_at": datetime.now(timezone.utc).isoformat(),
         }
         self._save_last(result)
