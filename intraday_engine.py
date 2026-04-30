@@ -22,9 +22,9 @@ STATE_FILE = os.path.join(config.DATA_DIR, "intraday_state.json")
 TRADE_TIMEFRAMES = ("15m", "30m", "1h")
 SETUP_TIMEFRAME = "1h"
 CONFIRM_TIMEFRAMES = ("4h", "1D")
-MIN_SIGNAL_CONFIDENCE = float(os.environ.get("INTRADAY_MIN_SIGNAL_CONFIDENCE", "0.56"))
-EXTREME_ATR_PCT = float(os.environ.get("INTRADAY_EXTREME_ATR_PCT", "8.0"))
-MIN_VOLUME_RATIO = float(os.environ.get("INTRADAY_MIN_VOLUME_RATIO", "0.35"))
+MIN_SIGNAL_CONFIDENCE = float(os.environ.get("INTRADAY_MIN_SIGNAL_CONFIDENCE", "0.38"))
+EXTREME_ATR_PCT = float(os.environ.get("INTRADAY_EXTREME_ATR_PCT", "12.0"))
+MIN_VOLUME_RATIO = float(os.environ.get("INTRADAY_MIN_VOLUME_RATIO", "0.12"))
 
 
 @dataclass
@@ -577,8 +577,8 @@ class EMACrossoverStrategy(BaseStrategy):
     Profit factor 1.5-1.8 with ~47% win rate on trending regimes.
     """
     name = "ema_crossover"
-    good_regimes = {"trending_up", "trending_down", "breakout", "breakdown"}
-    bad_regimes = {"range_bound", "choppy", "low_volatility"}
+    good_regimes = {"trending_up", "trending_down", "breakout", "breakdown", "high_volatility"}
+    bad_regimes = {"low_volatility"}
 
     def evaluate(self, f, regime, timeframe):
         if len(f.closes) < 30:
@@ -728,7 +728,7 @@ class IntradaySignalEngine:
         _1d_penalty_regimes = ("trending_down", "breakdown")
         _1d_confidence_penalty = 1.0
         if daily_regime and daily_regime.label in _1d_penalty_regimes:
-            _1d_confidence_penalty = 0.35  # applied after direction is resolved
+            _1d_confidence_penalty = 0.80  # light penalty — 15m trades don't need daily alignment
 
         # ── Collect signals per timeframe ─────────────────────────────
         signals = []
@@ -778,19 +778,19 @@ class IntradaySignalEngine:
                 direction = "sell"
                 confidence = sell_score / total_score
 
-        # PHASE 1 FIX: Require at least 2 of 3 timeframes to agree on
-        # direction for buy entries.  Single-TF signals are too noisy.
+        # Require at least 1 of 3 timeframes for EMA crossover.
+        # Crossovers are leading indicators — they fire on one TF first.
         agreeing_tfs = tf_buy if direction == "buy" else tf_sell
-        if direction == "buy" and agreeing_tfs < 2:
-            confidence *= 0.4  # heavy penalty — likely won't pass threshold
+        if direction == "buy" and agreeing_tfs < 1:
+            confidence *= 0.4  # no timeframe agrees at all
 
         # ── Higher-TF alignment penalty (strengthened) ────────────────
         alignment_penalty = 0.0
         for tf, confirm_regime in confirm_regimes.items():
             if direction == "buy" and confirm_regime.trend_bias == "down":
-                alignment_penalty += 0.18 if tf == "4h" else 0.15  # was 0.12/0.10
+                alignment_penalty += 0.08 if tf == "4h" else 0.06
             if direction == "sell" and confirm_regime.trend_bias == "up":
-                alignment_penalty += 0.10 if tf == "4h" else 0.08  # was 0.08/0.06
+                alignment_penalty += 0.06 if tf == "4h" else 0.04
         confidence = max(0.0, confidence - alignment_penalty)
 
         # PHASE 1 FIX: Require 1h trend alignment for buy entries.
@@ -798,12 +798,12 @@ class IntradaySignalEngine:
         # the #1 cause of timeout exits.
         hourly_slope = frame_data["1h"].ema20_slope_pct
         if direction == "buy" and hourly_slope < -0.05:
-            confidence *= 0.5  # strong penalty for buying against 1h trend
+            confidence *= 0.85  # light penalty — crossovers lead trend changes
 
         # PHASE 1 FIX: Choppy/range_bound 4h regime penalty for buys.
         # Choppy lost -$233 on 2 trades; range_bound is structurally similar.
         if direction == "buy" and primary_confirm.label in ("choppy", "range_bound", "high_volatility"):
-            confidence *= 0.5  # was 0.7 — strengthened after live trade analysis
+            confidence *= 0.85  # light penalty — ATR stop loss handles the risk
 
         # Apply deferred 1D regime penalty (trending_down / breakdown).
         # trending_down lost -$440 on 2 trades (both stop losses).
@@ -823,7 +823,7 @@ class IntradaySignalEngine:
         # swing_trading (the only 2 that produced wins) and penalize further
         # when the trade regime isn't trending_up.
         if accepted and direction == "buy":
-            winning_strats = {"trend_following", "swing_trading"}
+            winning_strats = {"trend_following", "swing_trading", "ema_crossover"}
             dominant_strat = reasons[0].strategy if reasons else ""
             if dominant_strat not in winning_strats:
                 confidence = min(confidence, 0.72)  # cap non-winning strategies
