@@ -20,7 +20,7 @@ import datetime
 
 import config
 from alpaca_client import AlpacaPaperClient, is_equity_symbol, is_us_market_open, normalize_crypto_symbol
-from intraday_engine import IntradaySignalEngine, FeatureSet, MarketDataProvider, atr
+from intraday_engine import IntradaySignalEngine, FeatureSet, IntradayFeatureSet, MarketDataProvider, atr, INTRADAY_STRATEGY_INSTANCES
 from trade_journal import PositionRiskBook, TradeJournal
 
 logger = logging.getLogger("alpaca_trader")
@@ -280,6 +280,7 @@ class AlpacaTrader:
         for alloc, sym in supported_allocs:
             bot_name = alloc.get("bot_name", "?")
             dollar_alloc = alloc.get("allocation_usd", 0) * redistribution_factor * scale
+            strategy_type = alloc.get("strategy_type", "adaptive_breakout")
 
             if dollar_alloc < 1.0:
                 results["skipped"].append({
@@ -292,11 +293,13 @@ class AlpacaTrader:
                 target_by_symbol[sym]["target_usd"] += round(dollar_alloc, 2)
                 target_by_symbol[sym]["allocation_pct"] += alloc.get("allocation_pct", 0)
                 target_by_symbol[sym]["bot_names"].append(bot_name)
+                target_by_symbol[sym]["strategy_types"].add(strategy_type)
             else:
                 target_by_symbol[sym] = {
                     "bot_names": [bot_name],
                     "target_usd": round(dollar_alloc, 2),
                     "allocation_pct": alloc.get("allocation_pct", 0),
+                    "strategy_types": {strategy_type},
                 }
 
         # ── INTRADAY GATE: Adaptive Breakout signal required for new entries ──
@@ -485,10 +488,11 @@ class AlpacaTrader:
         return results
 
     def _apply_intraday_gate(self, target_by_symbol, positions, results):
-        """Gate new entries through the Adaptive Breakout signal engine."""
+        """Gate new entries through signal engines (Adaptive Breakout + intraday strategies)."""
         for sym in list(target_by_symbol.keys()):
             target = target_by_symbol[sym]
             existing = positions.get(sym)
+            strategy_types = target.get("strategy_types", {"adaptive_breakout"})
 
             # Post-loss cooldown for new entries
             if not existing:
@@ -502,11 +506,59 @@ class AlpacaTrader:
                     del target_by_symbol[sym]
                     continue
 
-            signal = self.signal_engine.evaluate_symbol(sym)
-            results["signals"][sym] = signal
-            target["signal"] = signal
+            # Check if any intraday stock strategy has a signal
+            has_intraday_signal = False
+            best_intraday_signal = None
+            best_intraday_strategy = None
+            if is_equity_symbol(sym):
+                for stype in strategy_types:
+                    if stype in INTRADAY_STRATEGY_INSTANCES:
+                        for tf in config.INTRADAY_TIMEFRAMES:
+                            try:
+                                sig = self.signal_engine.evaluate_symbol_intraday(sym, stype, tf)
+                                if sig.get("accepted") and sig.get("action") == "buy":
+                                    conf = float(sig.get("confidence", 0))
+                                    if not best_intraday_signal or conf > float(best_intraday_signal.get("confidence", 0)):
+                                        best_intraday_signal = sig
+                                        best_intraday_strategy = stype
+                                        has_intraday_signal = True
+                            except Exception as e:
+                                logger.debug(f"Intraday eval failed {sym}/{stype}/{tf}: {e}")
 
-            # ADX exit signal — close existing position
+            # Adaptive Breakout signal (4h) — only if this symbol has that strategy
+            signal = None
+            if "adaptive_breakout" in strategy_types:
+                signal = self.signal_engine.evaluate_symbol(sym)
+                results["signals"][sym] = signal
+                target["signal"] = signal
+
+            # Use whichever signal is strongest
+            if has_intraday_signal and best_intraday_signal:
+                # Prefer intraday signal if confidence is higher
+                ab_conf = float((signal or {}).get("confidence", 0))
+                intra_conf = float(best_intraday_signal.get("confidence", 0))
+                if intra_conf > ab_conf or not signal or not signal.get("accepted"):
+                    signal = best_intraday_signal
+                    target["signal"] = signal
+                    target["active_strategy"] = best_intraday_strategy
+                    results["signals"][f"{sym}:{best_intraday_strategy}"] = signal
+
+            if not signal:
+                # No strategy produced a signal
+                if existing:
+                    current_value = float(existing.get("market_value", target["target_usd"]) or target["target_usd"])
+                    target["target_usd"] = current_value
+                    target["intraday_reason"] = "Held existing position (no signal engine result)"
+                else:
+                    results["skipped"].append({
+                        "bot": f"{sym} ({len(target.get('bot_names', []))} bots)",
+                        "pair": sym,
+                        "reason": "No signal from any strategy",
+                    })
+                    del target_by_symbol[sym]
+                continue
+
+            # ADX exit signal — close existing position (Adaptive Breakout only)
             if signal.get("adx_exit") and existing:
                 target["target_usd"] = 0.0
                 target["intraday_reason"] = signal.get("adx_exit_reason", "ADX exit")
@@ -533,14 +585,17 @@ class AlpacaTrader:
                 confidence = float(signal.get("confidence", 0.0))
                 adx_val = float((signal.get("features", {}) or {}).get("adx_14", 0) or 0)
 
-                # Scale position by ADX strength
-                # ADX 35+ = full size, ADX 25-35 = 85%, ADX 20-25 = 70%
-                if adx_val >= 35:
-                    adx_multiplier = 1.0
-                elif adx_val >= 25:
-                    adx_multiplier = 0.85
+                # Scale position by ADX strength (for Adaptive Breakout)
+                active_strat = target.get("active_strategy", "adaptive_breakout")
+                if active_strat == "adaptive_breakout":
+                    if adx_val >= 35:
+                        adx_multiplier = 1.0
+                    elif adx_val >= 25:
+                        adx_multiplier = 0.85
+                    else:
+                        adx_multiplier = 0.70
                 else:
-                    adx_multiplier = 0.70
+                    adx_multiplier = 1.0  # Intraday strategies don't scale by ADX
 
                 multiplier = max(0.5, min(1.15, 0.5 + confidence * 0.7)) * adx_multiplier
                 target["target_usd"] = round(target["target_usd"] * multiplier, 2)
@@ -556,7 +611,7 @@ class AlpacaTrader:
                 results["skipped"].append({
                     "bot": f"{sym} ({len(target.get('bot_names', []))} bots)",
                     "pair": sym,
-                    "reason": f"No breakout signal: {signal.get('reason')}",
+                    "reason": f"No entry signal: {signal.get('reason')}",
                 })
                 self.journal.append({
                     "event": "entry_rejected",
@@ -567,10 +622,9 @@ class AlpacaTrader:
                 del target_by_symbol[sym]
 
     def _enforce_adaptive_exits(self, positions):
-        """Adaptive Breakout exit logic:
-        1. Hard stop: 8% loss from entry
-        2. ATR trailing stop: 3x ATR(14) from peak price
-        3. ADX exit: ADX drops below 15 (trend dying)
+        """Exit logic for all strategies:
+        Adaptive Breakout: Hard stop (8%) + ATR trailing (3x ATR) + ADX exit (<15)
+        Intraday strategies: Hard stop + strategy-specific exit (RSI overbought, MACD cross, etc.)
         """
         orders = []
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -589,15 +643,23 @@ class AlpacaTrader:
             state = self.risk_book.get(sym) or state
             high_water = float(state.get("high_water_price", current_price) or current_price)
             pl_pct = (current_price - entry_price) / entry_price * 100.0
+            strategy_name = state.get("strategy", "adaptive_breakout")
+            stop_pct = float(state.get("stop_loss_pct", config.HARD_STOP_PCT) or config.HARD_STOP_PCT)
+            tp_pct = float(state.get("take_profit_pct", 99.0) or 99.0)
 
             reason = None
 
-            # ── EXIT 1: Hard stop loss (8%) — non-negotiable ──
-            if pl_pct <= -config.HARD_STOP_PCT:
-                reason = f"Hard stop hit ({pl_pct:.2f}% loss, limit={config.HARD_STOP_PCT}%)"
+            # ── EXIT 1: Hard stop loss — based on strategy's stop_loss_pct ──
+            if pl_pct <= -stop_pct:
+                reason = f"Hard stop hit ({pl_pct:.2f}% loss, limit={stop_pct}%)"
 
-            # ── EXIT 2: ATR trailing stop (3x ATR from peak) ──
-            if not reason:
+            # ── EXIT 2: Take profit — for intraday strategies with fixed TP ──
+            if not reason and tp_pct < 90.0 and pl_pct >= tp_pct:
+                reason = f"Take profit hit ({pl_pct:.2f}% gain, target={tp_pct}%)"
+
+            # ── EXIT 3: Strategy-specific exit ──
+            if not reason and strategy_name == "adaptive_breakout":
+                # ATR trailing stop (3x ATR from peak)
                 try:
                     candles = self._data_provider.get_candles(sym, config.STRATEGY_TIMEFRAME, limit=20)
                     if candles and len(candles) >= 14:
@@ -606,7 +668,6 @@ class AlpacaTrader:
                             atr_trail_distance = atr_vals[-1] * config.ATR_TRAIL_MULTIPLIER
                             trail_stop_price = high_water - atr_trail_distance
                             if current_price <= trail_stop_price:
-                                trail_pct = (high_water - current_price) / high_water * 100
                                 reason = (
                                     f"ATR trailing stop: price {current_price:.2f} below "
                                     f"trail {trail_stop_price:.2f} (peak {high_water:.2f} - "
@@ -616,14 +677,30 @@ class AlpacaTrader:
                 except Exception as e:
                     logger.debug(f"ATR trailing check failed for {sym}: {e}")
 
-            # ── EXIT 3: ADX exit (trend dying) ──
-            if not reason:
+                # ADX exit (trend dying)
+                if not reason:
+                    try:
+                        signal = self.signal_engine.evaluate_symbol(sym)
+                        if signal.get("adx_exit"):
+                            reason = signal.get("adx_exit_reason", "ADX dropped below exit threshold")
+                    except Exception as e:
+                        logger.debug(f"ADX exit check failed for {sym}: {e}")
+
+            elif not reason and strategy_name in INTRADAY_STRATEGY_INSTANCES:
+                # Intraday strategy exit: check the strategy's check_exit method
                 try:
-                    signal = self.signal_engine.evaluate_symbol(sym)
-                    if signal.get("adx_exit"):
-                        reason = signal.get("adx_exit_reason", "ADX dropped below exit threshold")
+                    strat = INTRADAY_STRATEGY_INSTANCES[strategy_name]
+                    # Try 15m first, then 30m
+                    for tf in config.INTRADAY_TIMEFRAMES:
+                        candles = self._data_provider.get_candles(sym, tf, limit=60)
+                        if candles and len(candles) >= 40:
+                            features = IntradayFeatureSet(candles)
+                            should_exit, exit_reason = strat.check_exit(features)
+                            if should_exit:
+                                reason = f"[{strategy_name}/{tf}] {exit_reason}"
+                                break
                 except Exception as e:
-                    logger.debug(f"ADX exit check failed for {sym}: {e}")
+                    logger.debug(f"Intraday exit check failed for {sym}/{strategy_name}: {e}")
 
             if reason:
                 # Don't close stocks outside market hours
@@ -644,6 +721,7 @@ class AlpacaTrader:
         """Record a new entry in the trade journal and risk book."""
         sym = order_result.get("symbol")
         signal = target.get("signal", {})
+        active_strategy = target.get("active_strategy", "adaptive_breakout")
         event = {
             "event": "order_submitted",
             "symbol": sym,
@@ -651,7 +729,7 @@ class AlpacaTrader:
             "notional": round(order_usd, 2),
             "status": order_result.get("status"),
             "bot_names": target.get("bot_names", []),
-            "strategy": "adaptive_breakout",
+            "strategy": active_strategy,
             "regime": (signal.get("trade_regime") or {}).get("label"),
             "confidence": signal.get("confidence"),
             "entry_reason": target.get("intraday_reason") or signal.get("reason"),
@@ -670,17 +748,33 @@ class AlpacaTrader:
             except Exception:
                 pass
 
+            # Determine stop/TP based on strategy
+            stop_pct = config.HARD_STOP_PCT
+            tp_pct = 99.0
+            if active_strategy == "rsi_mean_reversion":
+                stop_pct = config.RSI_MR_STOP_LOSS_PCT
+                tp_pct = config.RSI_MR_TAKE_PROFIT_PCT
+            elif active_strategy == "macd_crossover":
+                stop_pct = config.MACD_STOP_LOSS_PCT
+                tp_pct = config.MACD_TAKE_PROFIT_PCT
+            elif active_strategy == "vwap_bounce":
+                stop_pct = config.VWAP_BOUNCE_STOP_LOSS_PCT
+                tp_pct = config.VWAP_BOUNCE_TAKE_PROFIT_PCT
+            elif active_strategy == "ema_crossover":
+                stop_pct = config.EMA_CROSS_STOP_LOSS_PCT
+                tp_pct = config.EMA_CROSS_TAKE_PROFIT_PCT
+
             self.risk_book.register_entry(
                 symbol=sym,
-                strategy="adaptive_breakout",
+                strategy=active_strategy,
                 regime=event["regime"],
                 confidence=event["confidence"],
                 entry_price=entry_price,
                 notional=entry_notional,
-                stop_loss_pct=config.HARD_STOP_PCT,
-                take_profit_pct=99.0,  # No fixed TP
+                stop_loss_pct=stop_pct,
+                take_profit_pct=tp_pct,
                 trailing_stop_pct=0.0,  # ATR trailing handled in _enforce_adaptive_exits
-                max_hold_hours=999,  # No timeout — ADX exit handles this
+                max_hold_hours=999 if active_strategy == "adaptive_breakout" else 48,
                 reason=event["entry_reason"],
                 bot_names=target.get("bot_names", []),
             )

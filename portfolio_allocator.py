@@ -12,7 +12,13 @@ STOCK_ASSETS = set(config.STOCK_ASSETS)
 STOCK_MAX_ALLOCATION_PCT = 40.0  # Max 40% of portfolio in stocks combined
 ACTIVE_STRATEGIES = {
     "adaptive_breakout",
+    "rsi_mean_reversion",
+    "macd_crossover",
+    "vwap_bounce",
+    "ema_crossover",
 }
+INTRADAY_STOCK_STRATEGIES = {"rsi_mean_reversion", "macd_crossover", "vwap_bounce", "ema_crossover"}
+INTRADAY_STOCK_MAX_ALLOCATION_PCT = 25.0  # Max 25% in intraday stock strategies combined
 
 
 def _safe_float(value, default=0.0):
@@ -180,6 +186,15 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
         scale = STOCK_MAX_ALLOCATION_PCT / stock_total_pct
         for e in eligible:
             if e["pair"].split("/")[0].upper() in STOCK_ASSETS:
+                e["final_pct"] *= scale
+                e["allocation_usd"] = round(capital * e["final_pct"] / 100, 2)
+
+    # Cap intraday stock strategies separately
+    intraday_total_pct = sum(e["final_pct"] for e in eligible if e["strategy_type"] in INTRADAY_STOCK_STRATEGIES)
+    if intraday_total_pct > INTRADAY_STOCK_MAX_ALLOCATION_PCT:
+        scale = INTRADAY_STOCK_MAX_ALLOCATION_PCT / intraday_total_pct
+        for e in eligible:
+            if e["strategy_type"] in INTRADAY_STOCK_STRATEGIES:
                 e["final_pct"] *= scale
                 e["allocation_usd"] = round(capital * e["final_pct"] / 100, 2)
 

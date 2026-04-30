@@ -1091,7 +1091,7 @@ def _auto_reset_if_needed():
         rows = conn.execute("SELECT DISTINCT type FROM strategies").fetchall()
         types = {r[0] for r in rows}
         conn.close()
-        old_types = types - {"adaptive_breakout"}
+        old_types = types - {"adaptive_breakout", "rsi_mean_reversion", "macd_crossover", "vwap_bounce", "ema_crossover"}
         if old_types:
             logger.info(f"Detected old strategy types {old_types} — running reset...")
             import subprocess

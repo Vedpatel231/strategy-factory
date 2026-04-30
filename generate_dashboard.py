@@ -1169,6 +1169,14 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 </div>"""
 
     # ── PAGE: BOT STATUS ─────────────────────────────────────────────────
+    _STRATEGY_LABELS = {
+        "adaptive_breakout": ("Breakout", "#00d4ff"),
+        "rsi_mean_reversion": ("RSI-MR", "#a78bfa"),
+        "macd_crossover": ("MACD", "#f59e0b"),
+        "vwap_bounce": ("VWAP", "#10b981"),
+        "ema_crossover": ("EMA-X", "#f472b6"),
+    }
+
     def _page_bots(self, bots_data, evaluations):
         rows = ""
         for bot in bots_data:
@@ -1179,8 +1187,11 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
             status = ed.get("bot_status", status)
             verdict = ed.get("verdict", "HOLD")
             adapt = self._num(ed.get("adaptation_score", 50))
+            stype = ed.get("strategy_type", "adaptive_breakout")
+            slabel, scolor = self._STRATEGY_LABELS.get(stype, (stype, "#888"))
             rows += f"""<tr>
       <td><strong>{name}</strong><span class="muted-line">{pair}</span></td>
+      <td><span style="background:{scolor}22;color:{scolor};padding:2px 8px;border-radius:4px;font-size:0.8em;font-weight:700;">{slabel}</span></td>
       <td><span class="badge badge-{status}">{status}</span></td>
       <td><span class="badge badge-{verdict.lower()}">{verdict}</span></td>
       <td class="num">{adapt:.0f}/100</td>
@@ -1210,7 +1221,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   </div>
   <div class="section-card">
     <div class="section-header"><div><div class="section-title">Configured Bot Inventory</div><div class="section-sub">Seed/backtest bot list. This is configuration context, not proof of live trading skill.</div></div></div>
-    <div class="table-wrap"><table class="data-table compact"><thead><tr><th>Bot</th><th>Status</th><th>Seed Verdict</th><th class="num">Seed Fit</th><th>Note</th></tr></thead><tbody>{rows}</tbody></table></div>
+    <div class="table-wrap"><table class="data-table compact"><thead><tr><th>Bot</th><th>Strategy</th><th>Status</th><th>Seed Verdict</th><th class="num">Seed Fit</th><th>Note</th></tr></thead><tbody>{rows}</tbody></table></div>
   </div>
 </div>"""
 
@@ -4108,20 +4119,23 @@ alpAutoLoadStatus();
 
     # ── MOCK DATA ────────────────────────────────────────────────────────
     def _mock_data(self):
-        """Generate realistic mock data for preview — 10 EMA crossover bots."""
-        names = ["BTC EMA-Cross 15m","ETH EMA-Cross 15m","SOL EMA-Cross 15m","XRP EMA-Cross 15m",
-                 "LINK EMA-Cross 15m","AVAX EMA-Cross 15m","ADA EMA-Cross 15m","UNI EMA-Cross 15m",
-                 "AAVE EMA-Cross 15m","LTC EMA-Cross 15m"]
-        pairs = ["BTCUSD","ETHUSD","SOLUSD","XRPUSD","LINKUSD","AVAXUSD","ADAUSD","UNIUSD","AAVEUSD","LTCUSD"]
+        """Generate realistic mock data for preview — mixed strategy bots."""
+        names = ["BTC Breakout 4h","ETH Breakout 4h","TSLA Breakout 4h","TSLA RSI-MR 15m",
+                 "AAPL MACD 15m","NVDA VWAP 30m","MSFT EMA-X 15m","GOOGL RSI-MR 30m",
+                 "AMZN MACD 30m","META VWAP 15m"]
+        pairs = ["BTCUSD","ETHUSD","TSLA","TSLA","AAPL","NVDA","MSFT","GOOGL","AMZN","META"]
+        stypes = ["adaptive_breakout","adaptive_breakout","adaptive_breakout","rsi_mean_reversion",
+                  "macd_crossover","vwap_bounce","ema_crossover","rsi_mean_reversion",
+                  "macd_crossover","vwap_bounce"]
         statuses = ["active"] * 10
         verdicts = ["HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD"]
-        wr = [52,54,51,49,53,50,55,48,51,50]
-        pf = [1.45,1.52,1.38,1.25,1.48,1.32,1.58,1.22,1.42,1.35]
-        sr = [0.68,0.75,0.62,0.48,0.72,0.55,0.82,0.42,0.65,0.58]
-        md = [-8.5,-7.2,-9.8,-11.3,-7.8,-10.5,-6.2,-12.1,-8.8,-9.2]
-        pnl = [1200,1450,980,650,1380,820,1620,520,1050,780]
-        adapt = [72,78,68,55,75,62,81,48,70,65]
-        trades = [45,52,48,38,50,42,56,35,47,40]
+        wr = [52,54,51,55,53,58,50,54,51,56]
+        pf = [1.45,1.52,1.38,1.55,1.48,1.62,1.35,1.50,1.42,1.58]
+        sr = [0.68,0.75,0.62,0.85,0.72,0.92,0.55,0.78,0.65,0.88]
+        md = [-8.5,-7.2,-9.8,-5.3,-7.8,-4.5,-10.2,-6.1,-8.8,-5.2]
+        pnl = [1200,1450,980,650,1380,820,520,1050,780,920]
+        adapt = [72,78,68,75,75,82,62,74,70,80]
+        trades = [45,52,48,85,50,95,42,80,47,90]
         n = len(names)
 
         bots_data = [{"name": names[i], "pair": pairs[i], "status": statuses[i]} for i in range(n)]
@@ -4133,7 +4147,7 @@ alpAutoLoadStatus();
                 "win_rate": wr[i], "profit_factor": pf[i], "sharpe_ratio": sr[i],
                 "max_drawdown": md[i], "net_profit": pnl[i], "total_trades": trades[i],
                 "adaptation_score": adapt[i], "adaptation_label": "NEUTRAL",
-                "pair": pairs[i], "strategy_type": "adaptive_breakout", "bot_status": statuses[i],
+                "pair": pairs[i], "strategy_type": stypes[i], "bot_status": statuses[i],
                 "reasons": ["Mock data for preview"],
             }
 

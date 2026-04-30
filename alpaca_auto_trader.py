@@ -1,14 +1,19 @@
 """
-Strategy Factory — Alpaca Auto-Trader Background Worker (Adaptive Breakout)
+Strategy Factory — Alpaca Auto-Trader Background Worker
 
-Dual-schedule worker:
-  - Crypto: runs every 4 hours, 24/7
-  - Stocks: runs every 4 hours, only during US market hours (9:30-4 ET, Mon-Fri)
+Multi-schedule worker:
+  - 4h main cycle: Adaptive Breakout entries (crypto 24/7, stocks during market hours)
+  - 15m intraday cycle: RSI-MR, MACD, VWAP, EMA-X for stocks (market hours only)
+  - 30m intraday cycle: Same strategies, 30m timeframe (market hours only)
+  - 15m exit checks: ATR trailing, hard stop, ADX exit, TP for all positions
 
-Each cycle:
+Each main cycle:
   1. Invoke daily_runner.py to refresh portfolio analysis
   2. Execute rebalancing trades on Alpaca paper trading
-  3. Check exits (ATR trailing, hard stop, ADX exit) more frequently
+
+Intraday cycles:
+  1. Evaluate intraday strategies for stock symbols
+  2. Execute trades for signals with sufficient confidence
 
 Controlled via data/alpaca_auto_trade.enabled flag file.
 """
@@ -39,6 +44,10 @@ DEFAULT_INTERVAL_MIN = int(
     or "240"  # 4 hours = 240 minutes
 )
 EXIT_CHECK_INTERVAL_MIN = int(os.environ.get("EXIT_CHECK_INTERVAL_MIN", "15"))
+
+# Intraday cycle intervals (stocks only, market hours only)
+INTRADAY_15M_INTERVAL_SEC = 15 * 60   # 15 minutes
+INTRADAY_30M_INTERVAL_SEC = 30 * 60   # 30 minutes
 
 
 def utc_now():
@@ -122,9 +131,11 @@ class AlpacaAutoTrader:
         self._stop.set()
 
     def _loop(self):
-        logger.info("AlpacaAutoTrader loop entered (4h main cycle, 15m exit checks)")
+        logger.info("AlpacaAutoTrader loop entered (4h main + 15m/30m intraday + 15m exit checks)")
         exit_check_sec = EXIT_CHECK_INTERVAL_MIN * 60
         last_main_run = 0
+        last_15m_run = 0
+        last_30m_run = 0
 
         while not self._stop.is_set():
             if self.is_enabled():
@@ -143,12 +154,38 @@ class AlpacaAutoTrader:
                             "error": str(e),
                         })
                         last_main_run = now  # don't retry immediately
-                else:
-                    # Between main cycles: just check exits (faster stop-loss response)
-                    try:
-                        self._check_exits_only()
-                    except Exception as e:
-                        logger.warning(f"Exit check failed: {e}")
+
+                # Intraday cycles: stocks only, market hours only
+                try:
+                    from alpaca_client import is_us_market_open
+                    market_open = is_us_market_open()
+                except Exception:
+                    market_open = False
+
+                if market_open:
+                    # 15m intraday cycle
+                    if now - last_15m_run >= INTRADAY_15M_INTERVAL_SEC:
+                        try:
+                            self._run_intraday_cycle("15m")
+                            last_15m_run = now
+                        except Exception as e:
+                            logger.warning(f"Intraday 15m cycle failed: {e}")
+                            last_15m_run = now
+
+                    # 30m intraday cycle
+                    if now - last_30m_run >= INTRADAY_30M_INTERVAL_SEC:
+                        try:
+                            self._run_intraday_cycle("30m")
+                            last_30m_run = now
+                        except Exception as e:
+                            logger.warning(f"Intraday 30m cycle failed: {e}")
+                            last_30m_run = now
+
+                # Between main/intraday cycles: check exits
+                try:
+                    self._check_exits_only()
+                except Exception as e:
+                    logger.warning(f"Exit check failed: {e}")
 
             # Sleep in 10-second slices for exit_check_interval
             for _ in range(exit_check_sec // 10):
@@ -250,6 +287,129 @@ class AlpacaAutoTrader:
         self._refresh_live_monitor()
         logger.info(f"🦙 Alpaca auto-trade cycle complete ({entry['status']})")
 
+    def _run_intraday_cycle(self, timeframe):
+        """Evaluate intraday strategies for stock symbols and execute trades."""
+        from alpaca_client import AlpacaPaperClient, is_equity_symbol, normalize_crypto_symbol
+        from intraday_engine import IntradaySignalEngine, INTRADAY_STRATEGY_INSTANCES
+        from risk_manager import RiskManager
+
+        logger.info(f"📊 Intraday {timeframe} cycle start")
+        start_ts = utc_now()
+
+        client = AlpacaPaperClient()
+        engine = IntradaySignalEngine()
+        rm = RiskManager()
+
+        acct = client.get_account()
+        equity = float(acct.get("equity", 0))
+        buying_power = float(acct.get("buying_power", 0))
+
+        # Load current portfolio allocations for sizing
+        portfolio_path = os.path.join(REPORT_DIR, "latest_portfolio.json")
+        allocations = []
+        if os.path.exists(portfolio_path):
+            try:
+                with open(portfolio_path) as f:
+                    allocations = json.load(f).get("allocations", [])
+            except Exception:
+                pass
+
+        # Current positions — avoid doubling up
+        positions_list = client.get_positions()
+        held_symbols = {normalize_crypto_symbol(p["symbol"]) for p in positions_list}
+
+        # Count current stock positions for concurrency limit
+        stock_count = sum(1 for p in positions_list if is_equity_symbol(p["symbol"]))
+
+        stock_symbols = config.STOCK_ASSETS
+        intraday_strategies = list(INTRADAY_STRATEGY_INSTANCES.keys())
+
+        signals_found = 0
+        trades_executed = 0
+
+        for symbol in stock_symbols:
+            # Skip if already holding this symbol
+            if symbol in held_symbols:
+                continue
+            # Concurrency limit for intraday stocks
+            if stock_count >= config.MAX_CONCURRENT_INTRADAY_STOCKS:
+                logger.debug(f"Max {config.MAX_CONCURRENT_INTRADAY_STOCKS} intraday stock positions — skipping")
+                break
+
+            for strategy_name in intraday_strategies:
+                try:
+                    result = engine.evaluate_symbol_intraday(symbol, strategy_name, timeframe)
+                    signal = result.get("signal", "HOLD")
+                    confidence = result.get("confidence", 0)
+
+                    if signal != "BUY" or confidence < 60:
+                        continue
+
+                    signals_found += 1
+
+                    # Find matching allocation for sizing
+                    alloc_usd = 0
+                    for a in allocations:
+                        if a.get("strategy_type") == strategy_name and symbol in a.get("pair", ""):
+                            alloc_usd = a.get("allocation_usd", 0)
+                            break
+
+                    if alloc_usd < 10:
+                        logger.debug(f"  {strategy_name} {timeframe} {symbol}: no allocation")
+                        continue
+
+                    # Risk checks
+                    try:
+                        if not rm.can_place_order(symbol):
+                            continue
+                        if not rm.can_submit_order(symbol, "buy"):
+                            continue
+                    except Exception:
+                        pass
+
+                    order_usd = min(alloc_usd, buying_power * 0.9)  # leave 10% buffer
+                    if order_usd < 5:
+                        continue
+
+                    order_result = client.submit_order(symbol, order_usd, side="buy")
+                    trades_executed += 1
+                    stock_count += 1
+                    buying_power -= order_usd
+                    held_symbols.add(symbol)
+
+                    try:
+                        rm.record_order(symbol)
+                        rm.record_submitted_order(symbol, "buy")
+                    except Exception:
+                        pass
+
+                    logger.info(
+                        f"  ✅ {strategy_name} {timeframe} BUY {symbol} "
+                        f"${order_usd:.2f} (confidence={confidence:.0f}%)"
+                    )
+                    break  # one strategy per symbol per cycle
+
+                except Exception as e:
+                    logger.debug(f"  Eval/trade error {strategy_name}/{timeframe}/{symbol}: {e}")
+
+        duration = (utc_now() - start_ts).total_seconds()
+        logger.info(
+            f"📊 Intraday {timeframe} cycle done: "
+            f"{signals_found} signals, {trades_executed} trades ({duration:.1f}s)"
+        )
+
+        self._append_log({
+            "timestamp": start_ts.isoformat(),
+            "status": "ok",
+            "cycle_type": f"intraday_{timeframe}",
+            "signals": signals_found,
+            "trades": trades_executed,
+            "duration_sec": duration,
+        })
+
+        if trades_executed > 0:
+            self._refresh_live_monitor()
+
     def _check_exits_only(self):
         """Quick exit check between main cycles — ATR trailing, hard stop, ADX exit."""
         try:
@@ -289,6 +449,7 @@ class AlpacaAutoTrader:
             "broker": "alpaca",
             "thread_alive": bool(self._thread and self._thread.is_alive()),
             "interval_min": self.interval_min,
+            "intraday_intervals": {"15m": INTRADAY_15M_INTERVAL_SEC // 60, "30m": INTRADAY_30M_INTERVAL_SEC // 60},
             "last_run": self._last_run,
             "next_run": next_run,
             "last_result": self._last_result,

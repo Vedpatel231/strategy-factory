@@ -86,6 +86,19 @@ def sma(values, period):
     return out
 
 
+def macd(values, fast=12, slow=26, signal_period=9):
+    """MACD line, signal line, and histogram."""
+    if len(values) < slow + signal_period:
+        n = len(values)
+        return [0.0] * n, [0.0] * n, [0.0] * n
+    fast_ema = ema(values, fast)
+    slow_ema = ema(values, slow)
+    macd_line = [f - s for f, s in zip(fast_ema, slow_ema)]
+    signal_line = ema(macd_line, signal_period)
+    histogram = [m - s for m, s in zip(macd_line, signal_line)]
+    return macd_line, signal_line, histogram
+
+
 def rsi(values, period=14):
     if len(values) < period + 1:
         return [50.0] * len(values)
@@ -409,6 +422,7 @@ class MarketDataProvider:
                     "low": float(b.get("low")),
                     "close": float(b.get("close")),
                     "volume": float(b.get("volume", 0.0) or 0.0),
+                    "vwap": float(b.get("vwap", 0.0) or 0.0),
                 })
             else:
                 out.append({
@@ -419,6 +433,7 @@ class MarketDataProvider:
                     "low": float(getattr(b, "low")),
                     "close": float(getattr(b, "close")),
                     "volume": float(getattr(b, "volume", 0.0) or 0.0),
+                    "vwap": float(getattr(b, "vwap", 0.0) or 0.0),
                 })
         return out
 
@@ -464,6 +479,7 @@ class MarketDataProvider:
                     "low": b.get("l"),
                     "close": b.get("c"),
                     "volume": b.get("v", 0.0),
+                    "vwap": b.get("vw", 0.0),
                 }
                 for b in raw
             ]
@@ -502,6 +518,7 @@ class MarketDataProvider:
                 "low": low,
                 "close": close,
                 "volume": max(0.0, _safe_float(c.get("volume"))),
+                "vwap": max(0.0, _safe_float(c.get("vwap"))),
             })
         return out
 
@@ -650,6 +667,323 @@ STRATEGY = AdaptiveBreakoutStrategy()
 STRATEGIES = [STRATEGY]
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Intraday Stock Strategies — RSI, MACD, VWAP, EMA on 15m + 30m
+# ═══════════════════════════════════════════════════════════════════
+
+class IntradayFeatureSet(FeatureSet):
+    """Extended feature set for intraday strategies — adds MACD, VWAP, fast EMAs."""
+
+    def __init__(self, candles):
+        super().__init__(candles)
+        # MACD
+        self.macd_line, self.macd_signal, self.macd_histogram = macd(
+            self.closes, config.MACD_FAST, config.MACD_SLOW, config.MACD_SIGNAL
+        )
+        # VWAP from bar data (Alpaca provides per-bar VWAP)
+        self.vwaps = [c.get("vwap", 0.0) for c in candles]
+        self.vwap = self.vwaps[-1] if self.vwaps else 0.0
+        # Fast EMAs for EMA crossover
+        self.ema_fast = ema(self.closes, config.EMA_CROSS_FAST)    # EMA(9)
+        self.ema_slow = ema(self.closes, config.EMA_CROSS_SLOW)    # EMA(21)
+
+
+class RSIMeanReversionStrategy:
+    """Buy oversold bounce (RSI < 30 → crosses back above), sell at RSI 70.
+    Uses EMA(50) as trend filter to avoid catching falling knives."""
+    name = "rsi_mean_reversion"
+
+    def evaluate(self, features, timeframe="15m", is_stock=True):
+        f = features
+        n = len(f.closes)
+        if n < 40:
+            return Signal(self.name, "hold", 0.0, "Insufficient candles", timeframe)
+
+        rsi_val = f.rsi14[-1] if f.rsi14 else 50
+        rsi_recent = f.rsi14[-config.RSI_MR_LOOKBACK_BARS:] if len(f.rsi14) >= config.RSI_MR_LOOKBACK_BARS else f.rsi14
+
+        # Check if RSI was recently oversold and has crossed back above threshold
+        was_oversold = any(r < config.RSI_MR_OVERSOLD for r in rsi_recent)
+        crossed_above = rsi_val >= config.RSI_MR_OVERSOLD
+
+        if not was_oversold:
+            return Signal(self.name, "hold", 0.0,
+                          f"RSI {rsi_val:.1f} — not recently oversold", timeframe)
+
+        if not crossed_above:
+            return Signal(self.name, "hold", 0.0,
+                          f"RSI {rsi_val:.1f} — still below {config.RSI_MR_OVERSOLD}", timeframe)
+
+        # Trend filter: price must be above EMA(50) to avoid catching falling knives
+        if f.close < f.ema50[-1]:
+            return Signal(self.name, "hold", 0.0,
+                          f"RSI oversold bounce but below EMA50 ({f.close:.2f} < {f.ema50[-1]:.2f})",
+                          timeframe)
+
+        # Confidence: deeper oversold = stronger bounce expected
+        min_rsi = min(rsi_recent)
+        if min_rsi < 20:
+            conf = 0.80
+        elif min_rsi < 25:
+            conf = 0.72
+        else:
+            conf = 0.62
+
+        # Volume boost
+        if f.volume_ratio > 1.5:
+            conf = min(0.88, conf + 0.06)
+
+        reason = (f"RSI mean reversion: was oversold ({min_rsi:.1f}), "
+                  f"now {rsi_val:.1f}, above EMA50, vol ratio {f.volume_ratio:.2f}")
+        return Signal(self.name, "buy", conf, reason, timeframe)
+
+    def check_exit(self, features):
+        """Exit when RSI reaches overbought."""
+        if not features.rsi14:
+            return False, ""
+        rsi_val = features.rsi14[-1]
+        if rsi_val >= config.RSI_MR_OVERBOUGHT:
+            return True, f"RSI overbought at {rsi_val:.1f} (>= {config.RSI_MR_OVERBOUGHT})"
+        return False, ""
+
+
+class MACDCrossoverStrategy:
+    """Buy on MACD line crossing above signal line with positive histogram.
+    Uses EMA(20) as trend confirmation."""
+    name = "macd_crossover"
+
+    def evaluate(self, features, timeframe="15m", is_stock=True):
+        f = features
+        n = len(f.closes)
+        if n < 40:
+            return Signal(self.name, "hold", 0.0, "Insufficient candles", timeframe)
+
+        if not hasattr(f, 'macd_line') or len(f.macd_line) < 3:
+            return Signal(self.name, "hold", 0.0, "MACD not available", timeframe)
+
+        macd_now = f.macd_line[-1]
+        signal_now = f.macd_signal[-1]
+        hist_now = f.macd_histogram[-1]
+        macd_prev = f.macd_line[-2]
+        signal_prev = f.macd_signal[-2]
+
+        # MACD crossover: line crosses above signal
+        crossed = macd_prev <= signal_prev and macd_now > signal_now
+
+        if not crossed:
+            return Signal(self.name, "hold", 0.0,
+                          f"No MACD crossover (MACD={macd_now:.4f}, Signal={signal_now:.4f})",
+                          timeframe)
+
+        # Histogram must be positive
+        if hist_now <= config.MACD_MIN_HIST_THRESHOLD:
+            return Signal(self.name, "hold", 0.0,
+                          f"MACD crossed but histogram negative ({hist_now:.4f})", timeframe)
+
+        # Trend confirmation: price above EMA(20)
+        if f.close < f.ema20[-1]:
+            return Signal(self.name, "hold", 0.0,
+                          f"MACD crossed but below EMA20 ({f.close:.2f} < {f.ema20[-1]:.2f})",
+                          timeframe)
+
+        # Confidence based on histogram magnitude and ADX
+        adx_val = f.adx_14[-1] if f.adx_14 else 0
+        if adx_val >= 30:
+            conf = 0.78
+        elif adx_val >= 20:
+            conf = 0.68
+        else:
+            conf = 0.58
+
+        # Histogram strength boost
+        pct_hist = abs(hist_now) / f.close * 100 if f.close else 0
+        if pct_hist > 0.1:
+            conf = min(0.85, conf + 0.05)
+
+        reason = (f"MACD bullish crossover: MACD={macd_now:.4f} > Signal={signal_now:.4f}, "
+                  f"Histogram={hist_now:.4f}, ADX={adx_val:.1f}")
+        return Signal(self.name, "buy", conf, reason, timeframe, adx=adx_val)
+
+    def check_exit(self, features):
+        """Exit when MACD crosses below signal."""
+        if not hasattr(features, 'macd_line') or len(features.macd_line) < 2:
+            return False, ""
+        macd_now = features.macd_line[-1]
+        signal_now = features.macd_signal[-1]
+        if macd_now < signal_now:
+            return True, f"MACD bearish crossover ({macd_now:.4f} < {signal_now:.4f})"
+        return False, ""
+
+
+class VWAPBounceStrategy:
+    """Buy when price pulls back to VWAP and bounces with volume confirmation.
+    Intraday mean reversion around VWAP."""
+    name = "vwap_bounce"
+
+    def evaluate(self, features, timeframe="15m", is_stock=True):
+        f = features
+        n = len(f.closes)
+        if n < 40:
+            return Signal(self.name, "hold", 0.0, "Insufficient candles", timeframe)
+
+        if not hasattr(f, 'vwap') or f.vwap <= 0:
+            return Signal(self.name, "hold", 0.0, "No VWAP data available", timeframe)
+
+        vwap_val = f.vwap
+        close = f.close
+        open_ = f.candles[-1]["open"]
+
+        # Price must be within tolerance of VWAP
+        distance_pct = abs(close - vwap_val) / vwap_val * 100 if vwap_val else 999
+        # Check if previous bar touched VWAP zone
+        prev_close = f.closes[-2] if len(f.closes) >= 2 else close
+        prev_low = f.lows[-2] if len(f.lows) >= 2 else f.lows[-1]
+        prev_touched = abs(prev_low - vwap_val) / vwap_val * 100 <= config.VWAP_BOUNCE_TOLERANCE_PCT * 2
+
+        if not prev_touched and distance_pct > config.VWAP_BOUNCE_TOLERANCE_PCT:
+            return Signal(self.name, "hold", 0.0,
+                          f"Price not near VWAP ({distance_pct:.2f}% away)", timeframe)
+
+        # Bounce confirmation: current bar close > open (bullish bar near VWAP)
+        if close <= open_:
+            return Signal(self.name, "hold", 0.0,
+                          f"Near VWAP but no bullish bounce (close {close:.2f} <= open {open_:.2f})",
+                          timeframe)
+
+        # Price should be above VWAP (bouncing up, not breaking down)
+        if close < vwap_val:
+            return Signal(self.name, "hold", 0.0,
+                          f"Below VWAP — waiting for bounce above ({close:.2f} < {vwap_val:.2f})",
+                          timeframe)
+
+        # Volume confirmation
+        vol_ratio = f.volume_ratio
+        if vol_ratio < config.VWAP_BOUNCE_VOLUME_RATIO:
+            return Signal(self.name, "hold", 0.0,
+                          f"VWAP bounce but low volume ({vol_ratio:.2f}x < {config.VWAP_BOUNCE_VOLUME_RATIO}x)",
+                          timeframe)
+
+        # EMA slope positive (general uptrend)
+        if f.ema20_slope_pct < 0:
+            return Signal(self.name, "hold", 0.0,
+                          f"VWAP bounce but EMA20 slope negative ({f.ema20_slope_pct:.2f}%)",
+                          timeframe)
+
+        # Confidence based on volume and proximity
+        conf = 0.65
+        if vol_ratio > 2.0:
+            conf = min(0.85, conf + 0.10)
+        elif vol_ratio > 1.5:
+            conf = min(0.80, conf + 0.05)
+        if distance_pct < 0.1:
+            conf = min(0.85, conf + 0.05)
+
+        reason = (f"VWAP bounce: close {close:.2f} above VWAP {vwap_val:.2f} "
+                  f"({distance_pct:.2f}% away), vol {vol_ratio:.2f}x, bullish bar")
+        return Signal(self.name, "buy", conf, reason, timeframe)
+
+    def check_exit(self, features):
+        """Exit when price drops below VWAP."""
+        if not hasattr(features, 'vwap') or features.vwap <= 0:
+            return False, ""
+        if features.close < features.vwap * (1 - config.VWAP_BOUNCE_TOLERANCE_PCT / 100):
+            return True, f"Price {features.close:.2f} dropped below VWAP {features.vwap:.2f}"
+        return False, ""
+
+
+class EMACrossoverStrategy:
+    """Buy on EMA(9) crossing above EMA(21) with confirmation bars.
+    Simple trend-following for intraday stocks."""
+    name = "ema_crossover"
+
+    def evaluate(self, features, timeframe="15m", is_stock=True):
+        f = features
+        n = len(f.closes)
+        if n < 40:
+            return Signal(self.name, "hold", 0.0, "Insufficient candles", timeframe)
+
+        if not hasattr(f, 'ema_fast') or len(f.ema_fast) < config.EMA_CROSS_CONFIRMATION_BARS + 1:
+            return Signal(self.name, "hold", 0.0, "EMA data not available", timeframe)
+
+        fast_now = f.ema_fast[-1]
+        slow_now = f.ema_slow[-1]
+
+        # Fast must be above slow
+        if fast_now <= slow_now:
+            return Signal(self.name, "hold", 0.0,
+                          f"No EMA cross: EMA{config.EMA_CROSS_FAST}={fast_now:.2f} <= "
+                          f"EMA{config.EMA_CROSS_SLOW}={slow_now:.2f}", timeframe)
+
+        # Confirmation: fast must have stayed above slow for N bars
+        confirmed = True
+        for i in range(1, config.EMA_CROSS_CONFIRMATION_BARS + 1):
+            idx = -(i + 1)
+            if len(f.ema_fast) > abs(idx) and len(f.ema_slow) > abs(idx):
+                if f.ema_fast[idx] <= f.ema_slow[idx]:
+                    confirmed = False
+                    break
+            else:
+                confirmed = False
+                break
+
+        # We need to check: the crossover was recent (within last few bars)
+        # Check if the bar before the confirmation window had fast <= slow
+        cross_lookback = config.EMA_CROSS_CONFIRMATION_BARS + 2
+        if len(f.ema_fast) > cross_lookback and len(f.ema_slow) > cross_lookback:
+            before_cross = f.ema_fast[-cross_lookback] <= f.ema_slow[-cross_lookback]
+        else:
+            before_cross = True  # assume cross happened if not enough history
+
+        if not (confirmed and before_cross):
+            return Signal(self.name, "hold", 0.0,
+                          f"EMA cross not confirmed for {config.EMA_CROSS_CONFIRMATION_BARS} bars",
+                          timeframe)
+
+        # Volume check
+        if f.volume_ratio < 1.0:
+            return Signal(self.name, "hold", 0.0,
+                          f"EMA cross confirmed but low volume ({f.volume_ratio:.2f}x)",
+                          timeframe)
+
+        # Confidence based on EMA separation rate and ADX
+        separation_pct = (fast_now - slow_now) / slow_now * 100 if slow_now else 0
+        adx_val = f.adx_14[-1] if f.adx_14 else 0
+
+        if adx_val >= 30:
+            conf = 0.78
+        elif adx_val >= 20:
+            conf = 0.68
+        else:
+            conf = 0.58
+
+        if separation_pct > 0.5:
+            conf = min(0.85, conf + 0.05)
+
+        reason = (f"EMA crossover: EMA{config.EMA_CROSS_FAST}={fast_now:.2f} > "
+                  f"EMA{config.EMA_CROSS_SLOW}={slow_now:.2f} "
+                  f"(sep {separation_pct:.3f}%), confirmed {config.EMA_CROSS_CONFIRMATION_BARS} bars, "
+                  f"vol {f.volume_ratio:.2f}x, ADX={adx_val:.1f}")
+        return Signal(self.name, "buy", conf, reason, timeframe, adx=adx_val)
+
+    def check_exit(self, features):
+        """Exit when fast EMA crosses below slow EMA."""
+        if not hasattr(features, 'ema_fast') or len(features.ema_fast) < 1:
+            return False, ""
+        if features.ema_fast[-1] < features.ema_slow[-1]:
+            return True, (f"EMA bearish cross: EMA{config.EMA_CROSS_FAST}={features.ema_fast[-1]:.2f} "
+                          f"< EMA{config.EMA_CROSS_SLOW}={features.ema_slow[-1]:.2f}")
+        return False, ""
+
+
+# Intraday strategy registry (stocks only, 15m/30m)
+INTRADAY_STRATEGY_INSTANCES = {
+    "rsi_mean_reversion": RSIMeanReversionStrategy(),
+    "macd_crossover": MACDCrossoverStrategy(),
+    "vwap_bounce": VWAPBounceStrategy(),
+    "ema_crossover": EMACrossoverStrategy(),
+}
+
+
 class IntradaySignalEngine:
     def __init__(self, data_provider=None):
         self.data = data_provider or MarketDataProvider()
@@ -724,6 +1058,91 @@ class IntradaySignalEngine:
         self._save_last(result)
         return result
 
+    def evaluate_symbol_intraday(self, symbol, strategy_name, timeframe):
+        """Evaluate a stock symbol for a specific intraday strategy and timeframe."""
+        strategy = INTRADAY_STRATEGY_INSTANCES.get(strategy_name)
+        if not strategy:
+            return self._reject(symbol, f"Unknown strategy: {strategy_name}")
+
+        candles = self.data.get_candles(symbol, timeframe)
+        if len(candles) < 40:
+            return self._reject(symbol, f"Insufficient {timeframe} candles ({len(candles)})")
+
+        features = IntradayFeatureSet(candles)
+        should_exit, exit_reason = strategy.check_exit(features)
+        signal = strategy.evaluate(features, timeframe=timeframe, is_stock=True)
+
+        adx_val = features.adx_14[-1] if features.adx_14 else 0
+        plus_di = features.plus_di_14[-1] if features.plus_di_14 else 0
+        minus_di = features.minus_di_14[-1] if features.minus_di_14 else 0
+
+        regime = Regime(
+            label="trending" if adx_val >= config.ADX_ENTRY_THRESHOLD else "ranging",
+            adx=round(adx_val, 2),
+            plus_di=round(plus_di, 2),
+            minus_di=round(minus_di, 2),
+            atr_pct=round(features.atr_pct, 3),
+            reason=signal.reason,
+        )
+
+        accepted = signal.action == "buy" and signal.confidence >= 0.38
+        if should_exit:
+            signal = Signal(
+                strategy.name, "sell", 0.7, exit_reason,
+                timeframe, adx=adx_val, atr_pct=features.atr_pct
+            )
+            accepted = True
+
+        result = {
+            "symbol": symbol,
+            "strategy_name": strategy_name,
+            "timeframe": timeframe,
+            "accepted": accepted,
+            "action": signal.action,
+            "confidence": round(signal.confidence, 3),
+            "reason": signal.reason,
+            "strategy_signals": [asdict(signal)],
+            "trade_regime": asdict(regime),
+            "setup_regime": asdict(regime),
+            "confirm_regime": asdict(regime),
+            "confirm_regimes": {timeframe: asdict(regime)},
+            "features": {
+                f"atr_pct_{timeframe}": round(features.atr_pct, 3),
+                "adx_14": round(adx_val, 2),
+                "plus_di_14": round(plus_di, 2),
+                "minus_di_14": round(minus_di, 2),
+                f"volume_ratio_{timeframe}": round(features.volume_ratio, 3),
+                "rsi_14": round(features.rsi14[-1], 2) if features.rsi14 else 50,
+                "vwap": round(features.vwap, 4) if hasattr(features, 'vwap') else 0,
+                "macd": round(features.macd_line[-1], 6) if hasattr(features, 'macd_line') and features.macd_line else 0,
+                "macd_signal": round(features.macd_signal[-1], 6) if hasattr(features, 'macd_signal') and features.macd_signal else 0,
+                "macd_histogram": round(features.macd_histogram[-1], 6) if hasattr(features, 'macd_histogram') and features.macd_histogram else 0,
+                # Backward compat
+                "atr_pct_15m": round(features.atr_pct, 3),
+            },
+            "adx_exit": should_exit,
+            "adx_exit_reason": exit_reason,
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._save_last_intraday(result)
+        return result
+
+    def _save_last_intraday(self, result):
+        """Save intraday signal state keyed by symbol:strategy:timeframe."""
+        try:
+            os.makedirs(config.DATA_DIR, exist_ok=True)
+            intraday_state_file = os.path.join(config.DATA_DIR, "intraday_stock_state.json")
+            state = {}
+            if os.path.exists(intraday_state_file):
+                with open(intraday_state_file) as f:
+                    state = json.load(f)
+            key = f"{result['symbol']}:{result['strategy_name']}:{result['timeframe']}"
+            state[key] = result
+            with open(intraday_state_file, "w") as f:
+                json.dump(state, f, indent=2, default=str)
+        except Exception:
+            logger.debug("Could not persist intraday stock state", exc_info=True)
+
     def _reject(self, symbol, reason):
         result = {
             "symbol": symbol,
@@ -761,6 +1180,16 @@ class IntradaySignalEngine:
 def load_intraday_state():
     try:
         with open(STATE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def load_intraday_stock_state():
+    """Load saved intraday stock signal state (15m/30m strategies)."""
+    try:
+        path = os.path.join(config.DATA_DIR, "intraday_stock_state.json")
+        with open(path) as f:
             return json.load(f)
     except Exception:
         return {}
