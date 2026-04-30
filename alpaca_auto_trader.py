@@ -339,10 +339,11 @@ class AlpacaAutoTrader:
             for strategy_name in intraday_strategies:
                 try:
                     result = engine.evaluate_symbol_intraday(symbol, strategy_name, timeframe)
-                    signal = result.get("signal", "HOLD")
-                    confidence = result.get("confidence", 0)
+                    action = result.get("action", "hold")
+                    confidence = float(result.get("confidence", 0))
+                    accepted = result.get("accepted", False)
 
-                    if signal != "BUY" or confidence < 60:
+                    if action != "buy" or not accepted or confidence < 0.60:
                         continue
 
                     signals_found += 1
@@ -385,7 +386,7 @@ class AlpacaAutoTrader:
 
                     logger.info(
                         f"  ✅ {strategy_name} {timeframe} BUY {symbol} "
-                        f"${order_usd:.2f} (confidence={confidence:.0f}%)"
+                        f"${order_usd:.2f} (confidence={confidence:.0%})"
                     )
                     break  # one strategy per symbol per cycle
 
