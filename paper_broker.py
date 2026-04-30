@@ -32,19 +32,17 @@ MARK_TO_MODEL_TIME_ACCELERATION = float(os.environ.get("PAPER_BROKER_TIME_ACCELE
 # All symbols our bots trade — normalized to a simple internal symbol format.
 SUPPORTED_SYMBOLS = {
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "XRPUSDT",
-    "DOTUSDT", "AVAXUSDT", "LINKUSDT", "MATICUSDT", "DOGEUSDT", "UNIUSDT",
+    "AVAXUSDT", "LINKUSDT", "MATICUSDT", "UNIUSDT",
     "ATOMUSDT", "FTMUSDT", "NEARUSDT", "ALGOUSDT", "APEUSDT", "CRVUSDT",
-    "LTCUSDT", "BCHUSDT", "SPY", "VOO",
+    "LTCUSDT", "BCHUSDT",
 }
 
 
 def normalize_symbol(pair):
-    """'BTC/USDT' or 'BTCUSD' -> 'BTCUSDT'; ETFs stay as ticker symbols."""
+    """'BTC/USDT' or 'BTCUSD' -> 'BTCUSDT'."""
     if not pair:
         return None
     p = pair.upper().replace("/", "")
-    if p in {"SPY", "VOO"}:
-        return p
     if p.endswith("USD") and not p.endswith("USDT"):
         p = p + "T"  # BTCUSD → BTCUSDT
     return p if p in SUPPORTED_SYMBOLS else None

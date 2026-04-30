@@ -57,7 +57,7 @@ def _get_stock_data_client():
     )
 
 
-EQUITY_SYMBOLS = {"SPY", "VOO"}
+EQUITY_SYMBOLS = set()  # No equities — crypto only
 
 
 def is_equity_symbol(symbol):

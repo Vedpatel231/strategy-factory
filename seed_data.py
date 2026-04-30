@@ -21,66 +21,37 @@ G = "\033[92m"; R = "\033[91m"; Y = "\033[93m"; C = "\033[96m"
 B = "\033[1m"; X = "\033[0m"; D = "\033[90m"
 
 
-# ── All tradeable crypto pairs (Alpaca-supported + a few extra) ──────
+# ── Active crypto pairs — EMA crossover only (Tier 1 + Tier 2) ──────
 COINS = [
-    "BTC", "ETH", "SOL", "XRP", "AVAX", "DOGE", "SHIB", "DOT", "UNI",
-    "LINK", "LTC", "BCH", "AAVE", "ADA", "ALGO", "ATOM", "CRV", "NEAR",
-    "MKR", "GRT", "SUSHI", "YFI", "BAT", "XTZ",
-    # Unsupported on Alpaca but included for learning engine diversity
-    "BNB", "FTM", "APE", "MATIC",
+    "BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "ADA", "UNI", "AAVE", "LTC",
 ]
 
-ETFS = ["SPY", "VOO"]
+ETFS = []
 
 STRATEGY_TYPES = [
-    ("scalping",        "1m"),
-    ("momentum",        "15m"),
-    ("trend_following",  "4h"),
-    ("mean_reversion",   "1h"),
-    ("breakout",         "30m"),
-    ("grid",             "5m"),
-    ("swing",            "4h"),
+    ("ema_crossover", "15m"),
 ]
 
-ETF_STRATEGY_TYPES = [
-    ("momentum",         "1h"),
-    ("trend_following",  "1d"),
-    ("mean_reversion",   "1h"),
-    ("breakout",         "1h"),
-    ("swing",            "1d"),
-]
+ETF_STRATEGY_TYPES = []
 
 # Strategy name templates — maps type to a name suffix
 _NAME_SUFFIXES = {
-    "scalping":        "Scalper",
-    "momentum":        "Momentum",
-    "trend_following":  "Trend",
-    "mean_reversion":   "MeanRev",
-    "breakout":         "Breakout",
-    "grid":             "Grid",
-    "swing":            "Swing",
+    "ema_crossover":   "EMA-Cross",
 }
 
-# Extra timeframe variants for top coins (to push from ~196 → ~200+)
-_EXTRA_VARIANTS = [
-    {"name": "BTC Scalper 5m",        "type": "scalping",        "timeframe": "5m",  "pair": "BTC/USDT",  "desc": "BTC scalping on 5-minute candles"},
-    {"name": "BTC Trend 1h",          "type": "trend_following",  "timeframe": "1h",  "pair": "BTC/USDT",  "desc": "BTC trend following on 1-hour candles"},
-    {"name": "ETH Scalper 5m",        "type": "scalping",        "timeframe": "5m",  "pair": "ETH/USDT",  "desc": "ETH scalping on 5-minute candles"},
-    {"name": "ETH Breakout 1h",       "type": "breakout",        "timeframe": "1h",  "pair": "ETH/USDT",  "desc": "ETH breakout detection on 1-hour chart"},
-    {"name": "SOL Momentum 1h",       "type": "momentum",        "timeframe": "1h",  "pair": "SOL/USDT",  "desc": "SOL momentum strategy on 1-hour candles"},
-    {"name": "XRP Swing 1h",          "type": "swing",           "timeframe": "1h",  "pair": "XRP/USDT",  "desc": "XRP swing trading on 1-hour chart"},
-]
+# No extra variants needed — one bot per crypto
+_EXTRA_VARIANTS = []
 
 
 def _build_strategies():
-    """Generate strategies from all crypto pairs and selected ETFs."""
+    """Generate one EMA crossover strategy per active crypto + ETFs."""
     strategies = []
     for coin in COINS:
         for stype, tf in STRATEGY_TYPES:
             suffix = _NAME_SUFFIXES[stype]
             name = f"{coin} {suffix} {tf}"
             pair = f"{coin}/USDT"
-            desc = f"{coin} {stype.replace('_', ' ')} strategy on {tf} timeframe"
+            desc = f"{coin} EMA(12/26) crossover strategy on {tf} candles with ATR risk management"
             strategies.append({
                 "name": name, "type": stype, "timeframe": tf,
                 "pair": pair, "desc": desc,
@@ -89,12 +60,11 @@ def _build_strategies():
         for stype, tf in ETF_STRATEGY_TYPES:
             suffix = _NAME_SUFFIXES[stype]
             name = f"{symbol} {suffix} {tf}"
-            desc = f"{symbol} ETF {stype.replace('_', ' ')} strategy on {tf} timeframe"
+            desc = f"{symbol} ETF EMA(12/26) crossover strategy on {tf} candles"
             strategies.append({
                 "name": name, "type": stype, "timeframe": tf,
                 "pair": symbol, "desc": desc,
             })
-    # Add extra timeframe variants
     strategies.extend(_EXTRA_VARIANTS)
     return strategies
 
@@ -103,47 +73,16 @@ STRATEGIES = _build_strategies()
 
 # Strategy type → performance characteristics
 TYPE_PROFILES = {
-    "scalping": {
-        "win_rate": (65, 78), "trades_per_day": (50, 120),
-        "avg_win": (3, 15), "avg_loss": (2, 10),
-        "max_dd": (-8, -3), "sharpe": (0.4, 1.8),
-    },
-    "momentum": {
-        "win_rate": (48, 58), "trades_per_day": (10, 30),
-        "avg_win": (20, 60), "avg_loss": (15, 40),
-        "max_dd": (-18, -8), "sharpe": (0.2, 1.2),
-    },
-    "trend_following": {
-        "win_rate": (38, 48), "trades_per_day": (3, 10),
-        "avg_win": (50, 150), "avg_loss": (20, 50),
-        "max_dd": (-22, -10), "sharpe": (0.3, 1.5),
-    },
-    "mean_reversion": {
-        "win_rate": (55, 65), "trades_per_day": (15, 40),
-        "avg_win": (15, 40), "avg_loss": (10, 30),
-        "max_dd": (-15, -5), "sharpe": (0.5, 1.4),
-    },
-    "breakout": {
-        "win_rate": (42, 52), "trades_per_day": (8, 20),
-        "avg_win": (30, 80), "avg_loss": (15, 35),
-        "max_dd": (-20, -8), "sharpe": (0.2, 1.1),
-    },
-    "grid": {
-        "win_rate": (68, 82), "trades_per_day": (40, 100),
-        "avg_win": (2, 8), "avg_loss": (1, 5),
-        "max_dd": (-6, -2), "sharpe": (0.8, 2.0),
-    },
-    "swing": {
-        "win_rate": (40, 50), "trades_per_day": (2, 5),
-        "avg_win": (60, 200), "avg_loss": (30, 80),
-        "max_dd": (-25, -12), "sharpe": (0.2, 1.3),
+    "ema_crossover": {
+        "win_rate": (45, 55), "trades_per_day": (3, 8),
+        "avg_win": (25, 70), "avg_loss": (12, 35),
+        "max_dd": (-15, -6), "sharpe": (0.3, 1.4),
     },
 }
 
-# Bots that start paused (~5% of total, spread across the list)
-PAUSED_BOTS = {4, 10, 14, 22, 35, 48, 63, 77, 91, 105, 119, 133, 147, 161, 175, 189}
-# Bots with very few trades (for INSUFFICIENT_DATA testing, ~3%)
-LOW_TRADE_BOTS = {14, 17, 55, 82, 110, 140, 170}
+# With only 10 bots (crypto only), no bots start paused
+PAUSED_BOTS = set()
+LOW_TRADE_BOTS = set()
 
 
 def create_tables(conn):

@@ -37,15 +37,15 @@ MAX_TRADES_PER_SYMBOL_PER_DAY = int(os.environ.get("MAX_TRADES_PER_SYMBOL_DAY", 
 # Alpaca-supported crypto pairs (as of 2024). Checked via Alpaca API.
 # If a portfolio symbol isn't in this set, its allocation gets redistributed.
 ALPACA_SUPPORTED_CRYPTO = {
-    "BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "DOGE/USD",
-    "SHIB/USD", "DOT/USD", "UNI/USD", "LINK/USD", "LTC/USD",
+    "BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD",
+    "SHIB/USD", "UNI/USD", "LINK/USD", "LTC/USD",
     "BCH/USD", "AAVE/USD", "XRP/USD", "ADA/USD", "ALGO/USD",
     "ATOM/USD", "CRV/USD", "NEAR/USD", "MKR/USD", "GRT/USD",
     "SUSHI/USD", "YFI/USD", "BAT/USD", "XTZ/USD", "USDT/USD",
     "USDC/USD", "DAI/USD",
 }
 
-ALPACA_SUPPORTED_EQUITIES = {"SPY", "VOO"}
+ALPACA_SUPPORTED_EQUITIES = set()  # No equities — crypto only
 
 
 def _normalize_alpaca_symbol(pair):

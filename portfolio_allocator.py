@@ -4,12 +4,13 @@ Takes a starting capital (e.g. $1,000) and intelligently distributes it
 across active strategies based on quantum scores, risk metrics, and diversification.
 """
 
-ACTIVE_ASSETS = {"BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "DOGE", "ADA", "DOT", "UNI", "AAVE", "LTC", "SPY", "VOO"}
+ACTIVE_ASSETS = {"BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "ADA", "UNI", "AAVE", "LTC"}
 ACTIVE_COINS = ACTIVE_ASSETS  # Backward-compatible name used by older dashboard/report code.
 ETF_ASSETS = {"SPY", "VOO"}
 ETF_ACTIVE_STRATEGIES = {"momentum", "trend_following", "mean_reversion", "breakout", "swing"}
 ETF_MAX_ALLOCATION_PCT = 20.0
 ACTIVE_STRATEGIES = {
+    "ema_crossover",
     "grid", "mean_reversion", "momentum", "trend_following", "breakout",
     "pullback_continuation", "volatility_breakout", "range_trading",
     "swing_trading", "reversal_market_structure", "grid_range",
