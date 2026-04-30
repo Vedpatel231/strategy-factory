@@ -4108,51 +4108,47 @@ alpAutoLoadStatus();
 
     # ── MOCK DATA ────────────────────────────────────────────────────────
     def _mock_data(self):
-        """Generate realistic mock data for preview."""
-        names = ["BTC Scalper Alpha","ETH Momentum Wave","SOL Trend Rider","BNB Mean Reverter",
-                 "ADA Breakout Hunter","XRP Grid Master","DOT Swing Trader","AVAX Scalper Pro",
-                 "LINK Trend Surfer","MATIC Momentum Beta","DOGE Breakout Blitz","UNI Mean Reverter Pro",
-                 "ATOM Swing Elite","FTM Grid Optimizer","NEAR Scalper Gamma","ALGO Trend Catcher",
-                 "APE Momentum Surge","CRV Breakout Seeker"]
-        pairs = ["BTCUSD","ETHUSD","SOLUSD","BNBUSD","ADAUSD","XRPUSD","DOTUSD","AVAXUSD",
-                 "LINKUSD","MATICUSD","DOGEUSD","UNIUSD","ATOMUSD","FTMUSD","NEARUSD","ALGOUSD","APEUSD","CRVUSD"]
-        statuses = ["active","active","active","paused","active","active","active","paused","active",
-                    "active","active","active","paused","active","active","active","active","active"]
-        verdicts = ["HOLD","PAUSE","HOLD","PAUSE","HOLD","HOLD","HOLD","HOLD","HOLD",
-                    "HOLD","PAUSE","HOLD","REACTIVATE","HOLD","HOLD","INSUFFICIENT_DATA","HOLD","HOLD"]
-        wr = [68,52,71,48,61,75,66,45,72,58,51,69,77,64,70,49,73,60]
-        pf = [1.45,0.92,1.68,0.85,1.22,1.92,1.54,0.78,1.85,1.31,0.88,1.71,2.04,1.48,1.76,0.81,1.93,1.39]
-        sr = [0.68,0.22,0.95,0.15,0.48,1.12,0.72,0.18,1.08,0.55,0.28,0.88,1.35,0.78,0.98,0.08,1.18,0.65]
-        md = [-12.5,-28.3,-8.2,-35.1,-18.9,-5.3,-14.2,-32.7,-7.1,-16.4,-26.8,-9.5,-4.2,-13.1,-6.8,-42.5,-3.9,-11.2]
-        pnl = [2450,-380,1200,-520,890,3200,1100,-150,2800,1540,-90,2100,4300,1820,2650,-200,3100,1480]
-        adapt = [72,35,78,28,55,81,68,38,84,62,42,75,88,71,79,15,85,65]
-        trades = [145,128,156,98,112,167,134,86,178,121,95,143,189,127,151,104,169,116]
+        """Generate realistic mock data for preview — 10 EMA crossover bots."""
+        names = ["BTC EMA-Cross 15m","ETH EMA-Cross 15m","SOL EMA-Cross 15m","XRP EMA-Cross 15m",
+                 "LINK EMA-Cross 15m","AVAX EMA-Cross 15m","ADA EMA-Cross 15m","UNI EMA-Cross 15m",
+                 "AAVE EMA-Cross 15m","LTC EMA-Cross 15m"]
+        pairs = ["BTCUSD","ETHUSD","SOLUSD","XRPUSD","LINKUSD","AVAXUSD","ADAUSD","UNIUSD","AAVEUSD","LTCUSD"]
+        statuses = ["active"] * 10
+        verdicts = ["HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD"]
+        wr = [52,54,51,49,53,50,55,48,51,50]
+        pf = [1.45,1.52,1.38,1.25,1.48,1.32,1.58,1.22,1.42,1.35]
+        sr = [0.68,0.75,0.62,0.48,0.72,0.55,0.82,0.42,0.65,0.58]
+        md = [-8.5,-7.2,-9.8,-11.3,-7.8,-10.5,-6.2,-12.1,-8.8,-9.2]
+        pnl = [1200,1450,980,650,1380,820,1620,520,1050,780]
+        adapt = [72,78,68,55,75,62,81,48,70,65]
+        trades = [45,52,48,38,50,42,56,35,47,40]
+        n = len(names)
 
-        bots_data = [{"name": names[i], "pair": pairs[i], "status": statuses[i]} for i in range(18)]
+        bots_data = [{"name": names[i], "pair": pairs[i], "status": statuses[i]} for i in range(n)]
 
         evaluations = {}
-        for i in range(18):
+        for i in range(n):
             evaluations[names[i]] = {
                 "verdict": verdicts[i], "base_verdict": verdicts[i],
                 "win_rate": wr[i], "profit_factor": pf[i], "sharpe_ratio": sr[i],
                 "max_drawdown": md[i], "net_profit": pnl[i], "total_trades": trades[i],
                 "adaptation_score": adapt[i], "adaptation_label": "NEUTRAL",
-                "pair": pairs[i], "strategy_type": "mock", "bot_status": statuses[i],
+                "pair": pairs[i], "strategy_type": "ema_crossover", "bot_status": statuses[i],
                 "reasons": ["Mock data for preview"],
             }
 
         regime_info = {"regime": "trending_up", "confidence": 72,
                        "details": {"volatility": 18, "trend_direction": 0.65, "autocorrelation": 0.42, "vol_ratio": 1.15}}
         learning = {n: {"adaptation_score": adapt[i]} for i, n in enumerate(names)}
-        summary = {"PAUSE": 3, "HOLD": 13, "REACTIVATE": 1, "INSUFFICIENT_DATA": 1}
+        summary = {"HOLD": 10}
 
         portfolio = {
-            "allocations": [{"bot_name": names[i], "pair": pairs[i], "allocation_usd": 1000/12,
-                            "allocation_pct": 100/12, "score": adapt[i], "expected_monthly_return": pnl[i]*0.01,
-                            "reasoning": f"Score {adapt[i]}"} for i in range(12) if verdicts[i] not in ("PAUSE","INSUFFICIENT_DATA")],
-            "excluded": [{"bot_name": names[i], "reason": "Paused"} for i in range(18) if verdicts[i] == "PAUSE"],
-            "summary": {"total_capital": 1000, "allocated": 1000, "diversification_score": 78,
-                        "expected_monthly_return_usd": 42.5, "expected_monthly_return_pct": 4.25, "num_strategies": 12}
+            "allocations": [{"bot_name": names[i], "pair": pairs[i], "allocation_usd": 100,
+                            "allocation_pct": 10, "score": adapt[i], "expected_monthly_return": pnl[i]*0.01,
+                            "reasoning": f"Score {adapt[i]}"} for i in range(n)],
+            "excluded": [],
+            "summary": {"total_capital": 1000, "allocated": 1000, "diversification_score": 90,
+                        "expected_monthly_return_usd": 34.5, "expected_monthly_return_pct": 3.45, "num_strategies": 10}
         }
 
         return bots_data, evaluations, regime_info, learning, summary, portfolio

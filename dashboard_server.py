@@ -1051,6 +1051,33 @@ def daily_analysis_status():
     })
 
 
+# ── AUTO-RESET: detect stale DB from old multi-strategy era ──────────
+def _auto_reset_if_needed():
+    """If the DB still has old strategy types (scalping, grid, etc), run the
+    EMA crossover reset automatically on first boot after deploy."""
+    try:
+        import sqlite3
+        if not os.path.exists(config.DB_PATH):
+            return  # no DB yet — seed_data will create it
+        conn = sqlite3.connect(config.DB_PATH)
+        rows = conn.execute("SELECT DISTINCT type FROM strategies").fetchall()
+        types = {r[0] for r in rows}
+        conn.close()
+        old_types = types - {"ema_crossover"}
+        if old_types:
+            logger.info(f"Detected old strategy types {old_types} — running EMA crossover reset...")
+            import subprocess
+            subprocess.run(
+                [sys.executable, "reset_for_ema_crossover.py"],
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                timeout=120,
+            )
+            logger.info("EMA crossover reset complete.")
+    except Exception as e:
+        logger.warning(f"Auto-reset check failed (non-fatal): {e}")
+
+_auto_reset_if_needed()
+
 # Start the auto-trader thread as soon as this module loads so it also runs
 # under WSGI/gunicorn on Railway (not only when __main__).
 AutoTrader.get().start()
