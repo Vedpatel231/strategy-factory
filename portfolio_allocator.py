@@ -61,9 +61,10 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
         if verdict == "PAUSE":
             excluded.append({"bot_name": ev.get("bot_name"), "reason": "PAUSED — strategy flagged for poor performance"})
             continue
-        if "INSUFFICIENT" in verdict:
-            excluded.append({"bot_name": ev.get("bot_name"), "reason": "INSUFFICIENT DATA — not enough trades to trust"})
-            continue
+        # Allow INSUFFICIENT_DATA bots through with a bootstrap flag so they
+        # can accumulate trades.  The intraday gate still has final say on
+        # whether an actual order fires.
+        is_bootstrap = "INSUFFICIENT" in verdict
 
         win_rate = m.get("win_rate", 0)
         pf = m.get("profit_factor", 0)
@@ -80,6 +81,24 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
             continue
         if asset in ETF_ASSETS and stype not in ETF_ACTIVE_STRATEGIES:
             excluded.append({"bot_name": ev.get("bot_name"), "reason": f"ETF strategy type {stype} not allowed for {asset}"})
+            continue
+
+        # Bootstrap bots skip quality thresholds — they need to trade to
+        # collect data.  Give them equal-weight scores.
+        if is_bootstrap:
+            eligible.append({
+                "bot_name": ev.get("bot_name", "?"),
+                "pair": ev.get("pair", ""),
+                "strategy_type": ev.get("strategy_type", ""),
+                "score": 50,  # equal weight across all bootstrap bots
+                "metrics": m,
+                "adaptation_score": adapt,
+                "verdict": verdict,
+                "real_paper_score": real_score,
+                "real_paper_closed_trades": real_closed,
+                "real_paper_avg_pl_pct": real_avg_pl,
+                "bootstrap": True,
+            })
             continue
 
         if pf <= 0 or win_rate <= 0:
