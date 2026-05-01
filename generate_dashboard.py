@@ -1077,6 +1077,14 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
           <div class="metric-label">Interval</div>
           <div id="alpAutoInterval" class="metric-value" style="font-size:1.1em;">15 min</div>
         </div>
+        <div class="metric-card">
+          <div class="metric-label">Market Status</div>
+          <div id="alpAutoMarketStatus" class="metric-value" style="font-size:1.0em;">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Cycle Counts</div>
+          <div id="alpAutoIntradayCount" class="metric-value" style="font-size:0.95em;">—</div>
+        </div>
       </div>
 
       <!-- Recent auto-runs log -->
@@ -3961,6 +3969,25 @@ function alpAutoUpdateUI(data) {{
   }} else {{
     document.getElementById('alpAutoNextRun').textContent = data.enabled ? 'Soon' : '—';
   }}
+  // Market status
+  var marketEl = document.getElementById('alpAutoMarketStatus');
+  if (marketEl) {{
+    if (data.us_market_open === true) {{
+      marketEl.textContent = '🟢 US Market Open';
+      marketEl.style.color = 'var(--lime)';
+    }} else if (data.us_market_open === false) {{
+      marketEl.textContent = '🔴 US Market Closed (intraday paused)';
+      marketEl.style.color = 'var(--red)';
+    }} else {{
+      marketEl.textContent = '⚪ Market status unknown';
+      marketEl.style.color = 'var(--gray)';
+    }}
+  }}
+  // Intraday run counter
+  var intradayCountEl = document.getElementById('alpAutoIntradayCount');
+  if (intradayCountEl) {{
+    intradayCountEl.textContent = (data.intraday_runs_total || 0) + ' intraday · ' + (data.exit_check_runs_total || 0) + ' exit checks';
+  }}
   // Render logs
   var runs = data.recent_runs || [];
   var logsEl = document.getElementById('alpAutoLogs');
@@ -3975,8 +4002,16 @@ function alpAutoUpdateUI(data) {{
     runs.slice().reverse().forEach(function(r) {{
       var ts = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : '?';
       var statusColor = r.status === 'ok' ? 'var(--lime)' : (r.status === 'error' ? 'var(--red)' : 'var(--amber)');
-      var s2 = (r.steps && r.steps.trade && r.steps.trade.summary) || {{}};
+      var cycleType = r.cycle_type || 'main';
+      var cycleBadge = '';
+      if (cycleType.startsWith('intraday_')) {{
+        cycleBadge = '<span style="background:var(--blue);color:#000;padding:1px 6px;border-radius:3px;font-size:0.8em;margin:0 4px;">' + cycleType.replace('intraday_','') + '</span>';
+      }} else if (cycleType === 'exit_check') {{
+        cycleBadge = '<span style="background:var(--amber);color:#000;padding:1px 6px;border-radius:3px;font-size:0.8em;margin:0 4px;">EXIT</span>';
+      }}
       var detail = '';
+      // Main cycle details
+      var s2 = (r.steps && r.steps.trade && r.steps.trade.summary) || {{}};
       if (s2.buys !== undefined) {{
         detail = ' · ' + (s2.buys||0) + ' buys, ' + (s2.sells||0) + ' sells, ' + (s2.closes||0) + ' closes';
       }}
@@ -3984,8 +4019,35 @@ function alpAutoUpdateUI(data) {{
         var eq = s2.equity_after || r.steps.trade.equity_after;
         detail += ' · equity $' + Number(eq).toFixed(2);
       }}
+      // Intraday cycle details
+      if (cycleType.startsWith('intraday_')) {{
+        detail = ' · ' + (r.signals||0) + ' signals, ' + (r.trades||0) + ' trades';
+        if (r.duration_sec) detail += ' (' + r.duration_sec.toFixed(1) + 's)';
+        if (r.details && r.details.length > 0) {{
+          var skips = r.details.filter(function(d){{ return d.skip || d.best_signal; }});
+          if (skips.length > 0) {{
+            detail += '<br><span style="color:var(--text-dim);font-size:0.82em;">';
+            skips.slice(0,5).forEach(function(d) {{
+              if (d.best_signal) {{
+                detail += d.symbol + ': ' + d.best_signal.action + ' ' + (d.best_signal.confidence*100).toFixed(0) + '% (' + (d.best_signal.reason||'').substring(0,40) + ') · ';
+              }} else if (d.skip) {{
+                detail += d.symbol + ': ' + d.skip + ' · ';
+              }}
+            }});
+            detail += '</span>';
+          }}
+        }}
+      }}
+      // Exit check details
+      if (cycleType === 'exit_check' && r.exits) {{
+        detail = ' · ' + r.exits.positions_checked + ' positions checked';
+        if (r.exits.exits_triggered > 0) {{
+          detail += ', ' + r.exits.exits_triggered + ' exits';
+        }}
+      }}
       html += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">' +
         '<span style="color:var(--text-dim);">' + ts + '</span> ' +
+        cycleBadge +
         '<span style="color:' + statusColor + ';font-weight:600;">' + (r.status||'?').toUpperCase() + '</span>' +
         detail +
         (r.error ? ' <span style="color:var(--red);font-size:0.85em;">' + r.error.substring(0,80) + '</span>' : '') +

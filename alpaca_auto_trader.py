@@ -140,11 +140,11 @@ class AlpacaAutoTrader:
         while not self._stop.is_set():
             if self.is_enabled():
                 now = time.time()
-                # Main cycle: run every 4 hours (entry checks + full analysis)
+                # Main cycle: run every N minutes (entry checks + full analysis)
                 if now - last_main_run >= self.interval_sec:
                     try:
                         self._run_once()
-                        last_main_run = now
+                        last_main_run = time.time()  # use fresh timestamp after run
                     except Exception as e:
                         self._last_error = str(e)
                         logger.error(f"Alpaca auto run failed: {e}", exc_info=True)
@@ -153,13 +153,17 @@ class AlpacaAutoTrader:
                             "status": "error",
                             "error": str(e),
                         })
-                        last_main_run = now  # don't retry immediately
+                        last_main_run = time.time()  # don't retry immediately
+
+                # Refresh now after main cycle (which can take minutes)
+                now = time.time()
 
                 # Intraday cycles: stocks only, market hours only
                 try:
                     from alpaca_client import is_us_market_open
                     market_open = is_us_market_open()
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Market open check failed: {e}")
                     market_open = False
 
                 if market_open:
@@ -167,23 +171,44 @@ class AlpacaAutoTrader:
                     if now - last_15m_run >= INTRADAY_15M_INTERVAL_SEC:
                         try:
                             self._run_intraday_cycle("15m")
-                            last_15m_run = now
+                            last_15m_run = time.time()
                         except Exception as e:
-                            logger.warning(f"Intraday 15m cycle failed: {e}")
-                            last_15m_run = now
+                            logger.warning(f"Intraday 15m cycle failed: {e}", exc_info=True)
+                            self._append_log({
+                                "timestamp": datetime.datetime.utcnow().isoformat(),
+                                "status": "error",
+                                "cycle_type": "intraday_15m",
+                                "error": str(e),
+                            })
+                            last_15m_run = time.time()
 
                     # 30m intraday cycle
                     if now - last_30m_run >= INTRADAY_30M_INTERVAL_SEC:
                         try:
                             self._run_intraday_cycle("30m")
-                            last_30m_run = now
+                            last_30m_run = time.time()
                         except Exception as e:
-                            logger.warning(f"Intraday 30m cycle failed: {e}")
-                            last_30m_run = now
+                            logger.warning(f"Intraday 30m cycle failed: {e}", exc_info=True)
+                            self._append_log({
+                                "timestamp": datetime.datetime.utcnow().isoformat(),
+                                "status": "error",
+                                "cycle_type": "intraday_30m",
+                                "error": str(e),
+                            })
+                            last_30m_run = time.time()
+                else:
+                    logger.debug(f"US market closed — skipping intraday cycles")
 
                 # Between main/intraday cycles: check exits
                 try:
-                    self._check_exits_only()
+                    exit_info = self._check_exits_only()
+                    if exit_info:
+                        self._append_log({
+                            "timestamp": datetime.datetime.utcnow().isoformat(),
+                            "status": "ok",
+                            "cycle_type": "exit_check",
+                            "exits": exit_info,
+                        })
                 except Exception as e:
                     logger.warning(f"Exit check failed: {e}")
 
@@ -326,24 +351,37 @@ class AlpacaAutoTrader:
 
         signals_found = 0
         trades_executed = 0
+        eval_details = []  # track per-symbol evaluation for logging
+
+        logger.info(f"  Evaluating {len(stock_symbols)} stocks, {len(intraday_strategies)} strategies, "
+                     f"held={list(held_symbols)}, stock_positions={stock_count}/{config.MAX_CONCURRENT_INTRADAY_STOCKS}")
 
         for symbol in stock_symbols:
             # Skip if already holding this symbol
             if symbol in held_symbols:
+                eval_details.append({"symbol": symbol, "skip": "already_held"})
                 continue
             # Concurrency limit for intraday stocks
             if stock_count >= config.MAX_CONCURRENT_INTRADAY_STOCKS:
-                logger.debug(f"Max {config.MAX_CONCURRENT_INTRADAY_STOCKS} intraday stock positions — skipping")
+                eval_details.append({"symbol": symbol, "skip": "max_positions"})
+                logger.info(f"  Max {config.MAX_CONCURRENT_INTRADAY_STOCKS} intraday stock positions — skipping rest")
                 break
 
+            best_for_symbol = None
             for strategy_name in intraday_strategies:
                 try:
                     result = engine.evaluate_symbol_intraday(symbol, strategy_name, timeframe)
                     action = result.get("action", "hold")
                     confidence = float(result.get("confidence", 0))
                     accepted = result.get("accepted", False)
+                    reason = result.get("reason", "")
+
+                    logger.info(f"  {symbol}/{strategy_name}/{timeframe}: action={action} conf={confidence:.2f} accepted={accepted} reason={reason[:80]}")
 
                     if action != "buy" or not accepted or confidence < 0.60:
+                        if not best_for_symbol or confidence > best_for_symbol.get("confidence", 0):
+                            best_for_symbol = {"strategy": strategy_name, "action": action,
+                                               "confidence": round(confidence, 3), "reason": reason[:100]}
                         continue
 
                     signals_found += 1
@@ -356,20 +394,26 @@ class AlpacaAutoTrader:
                             break
 
                     if alloc_usd < 10:
-                        logger.debug(f"  {strategy_name} {timeframe} {symbol}: no allocation")
+                        logger.info(f"  {strategy_name} {timeframe} {symbol}: signal accepted but no allocation (${alloc_usd:.2f})")
+                        eval_details.append({"symbol": symbol, "strategy": strategy_name,
+                                             "skip": "no_allocation", "alloc_usd": alloc_usd})
                         continue
 
                     # Risk checks
                     try:
                         if not rm.can_place_order(symbol):
+                            eval_details.append({"symbol": symbol, "strategy": strategy_name, "skip": "risk_order_limit"})
                             continue
                         if not rm.can_submit_order(symbol, "buy"):
+                            eval_details.append({"symbol": symbol, "strategy": strategy_name, "skip": "risk_submit_limit"})
                             continue
                     except Exception:
                         pass
 
                     order_usd = min(alloc_usd, buying_power * 0.9)  # leave 10% buffer
                     if order_usd < 5:
+                        eval_details.append({"symbol": symbol, "strategy": strategy_name,
+                                             "skip": "insufficient_buying_power", "order_usd": round(order_usd, 2)})
                         continue
 
                     order_result = client.submit_order(symbol, order_usd, side="buy")
@@ -377,6 +421,8 @@ class AlpacaAutoTrader:
                     stock_count += 1
                     buying_power -= order_usd
                     held_symbols.add(symbol)
+                    eval_details.append({"symbol": symbol, "strategy": strategy_name,
+                                         "action": "BUY", "usd": round(order_usd, 2), "confidence": round(confidence, 3)})
 
                     try:
                         rm.record_order(symbol)
@@ -391,7 +437,12 @@ class AlpacaAutoTrader:
                     break  # one strategy per symbol per cycle
 
                 except Exception as e:
-                    logger.debug(f"  Eval/trade error {strategy_name}/{timeframe}/{symbol}: {e}")
+                    logger.warning(f"  Eval/trade error {strategy_name}/{timeframe}/{symbol}: {e}")
+                    eval_details.append({"symbol": symbol, "strategy": strategy_name, "error": str(e)[:100]})
+
+            # Log best signal if no trade was placed for this symbol
+            if best_for_symbol and not any(d.get("symbol") == symbol and d.get("action") == "BUY" for d in eval_details):
+                eval_details.append({"symbol": symbol, "best_signal": best_for_symbol})
 
         duration = (utc_now() - start_ts).total_seconds()
         logger.info(
@@ -406,13 +457,17 @@ class AlpacaAutoTrader:
             "signals": signals_found,
             "trades": trades_executed,
             "duration_sec": duration,
+            "equity": equity,
+            "buying_power": buying_power,
+            "details": eval_details[:20],  # cap to avoid huge logs
         })
 
         if trades_executed > 0:
             self._refresh_live_monitor()
 
     def _check_exits_only(self):
-        """Quick exit check between main cycles — ATR trailing, hard stop, ADX exit."""
+        """Quick exit check between main cycles — ATR trailing, hard stop, ADX exit.
+        Returns dict with exit info if any positions were checked/closed."""
         try:
             from alpaca_client import AlpacaPaperClient
             from alpaca_client import normalize_crypto_symbol
@@ -421,7 +476,7 @@ class AlpacaAutoTrader:
             client = AlpacaPaperClient()
             positions_list = client.get_positions()
             if not positions_list:
-                return  # no open positions, nothing to check
+                return None  # no open positions, nothing to check
 
             positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
             trader = AlpacaTrader()
@@ -430,11 +485,22 @@ class AlpacaAutoTrader:
             trader._backfill_risk_book(positions)
 
             exit_orders = trader._enforce_adaptive_exits(positions)
+            info = {
+                "positions_checked": len(positions),
+                "symbols": list(positions.keys()),
+                "exits_triggered": len(exit_orders) if exit_orders else 0,
+            }
             if exit_orders:
                 logger.info(f"Exit check closed {len(exit_orders)} positions")
+                info["exit_details"] = [
+                    {"symbol": o.get("symbol"), "reason": o.get("reason", "")}
+                    for o in exit_orders[:5]
+                ]
                 self._refresh_live_monitor()
+            return info
         except Exception as e:
             logger.debug(f"Exit-only check error: {e}")
+            return None
 
     # ── STATUS ───────────────────────────────────────────────────────────
     def status(self):
@@ -445,17 +511,32 @@ class AlpacaAutoTrader:
                 next_run = (last + datetime.timedelta(minutes=self.interval_min)).isoformat()
             except Exception:
                 pass
+
+        # Check market status
+        try:
+            from alpaca_client import is_us_market_open
+            market_open = is_us_market_open()
+        except Exception:
+            market_open = None
+
+        # Count intraday runs in recent log
+        intraday_runs = sum(1 for r in self._runs_log if "intraday" in r.get("cycle_type", ""))
+        exit_check_runs = sum(1 for r in self._runs_log if r.get("cycle_type") == "exit_check")
+
         return {
             "enabled": self.is_enabled(),
             "broker": "alpaca",
             "thread_alive": bool(self._thread and self._thread.is_alive()),
             "interval_min": self.interval_min,
             "intraday_intervals": {"15m": INTRADAY_15M_INTERVAL_SEC // 60, "30m": INTRADAY_30M_INTERVAL_SEC // 60},
+            "us_market_open": market_open,
             "last_run": self._last_run,
             "next_run": next_run,
             "last_result": self._last_result,
             "last_error": self._last_error,
-            "recent_runs": self._runs_log[-10:],
+            "intraday_runs_total": intraday_runs,
+            "exit_check_runs_total": exit_check_runs,
+            "recent_runs": self._runs_log[-15:],
         }
 
     def trigger_now(self):
