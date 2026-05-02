@@ -68,24 +68,27 @@ class TradeExecutor:
                 self.logger.append("order_error", result)
                 return result
 
-        result.update({"status": order.get("status", "submitted"), "order": order})
-        self.logger.append("order_submitted", result)
+        order_status = str(order.get("status", "submitted") or "submitted").lower()
+        result.update({"status": order_status, "order": order})
+        broker_rejected = order_status in {"rejected", "canceled", "cancelled", "expired"} or bool(order.get("error"))
+        self.logger.append("order_error" if broker_rejected else "order_submitted", result)
         self.journal.append({
-            "event": "order_submitted",
+            "event": "entry_rejected" if broker_rejected else "order_submitted",
             "symbol": symbol,
             "side": side,
             "notional": round(notional, 2),
-            "status": order.get("status"),
+            "status": order_status,
             "bot_names": [request.get("bot_name")],
             "strategy": request.get("strategy"),
             "regime": request.get("ceo_regime"),
             "confidence": request.get("confidence"),
             "entry_reason": request.get("entry_reason"),
+            "reason": order.get("error") or (f"Broker order status was {order_status}." if broker_rejected else ""),
             "order": order,
             "signal": request,
         })
 
-        if side == "buy" and not order.get("error") and not dry_run:
+        if side == "buy" and not broker_rejected and not dry_run:
             entry_price = order.get("filled_avg_price") or request.get("entry_price")
             entry_notional = notional
             if self.client is not None and not dry_run:

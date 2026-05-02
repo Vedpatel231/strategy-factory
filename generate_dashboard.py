@@ -4264,14 +4264,14 @@ alpAutoLoadStatus();
 
     # ── MOCK DATA ────────────────────────────────────────────────────────
     def _mock_data(self):
-        """Generate realistic mock data for preview — mixed strategy bots."""
-        names = ["BTC Breakout 4h","ETH Breakout 4h","TSLA Breakout 4h","TSLA RSI-MR 15m",
-                 "AAPL MACD 15m","NVDA VWAP 30m","MSFT EMA-X 15m","GOOGL RSI-MR 30m",
-                 "AMZN MACD 30m","META VWAP 15m"]
-        pairs = ["BTCUSD","ETHUSD","TSLA","TSLA","AAPL","NVDA","MSFT","GOOGL","AMZN","META"]
-        stypes = ["adaptive_breakout","adaptive_breakout","adaptive_breakout","rsi_mean_reversion",
-                  "macd_crossover","vwap_bounce","ema_crossover","rsi_mean_reversion",
-                  "macd_crossover","vwap_bounce"]
+        """Generate realistic mock data for preview — professional 1H bots."""
+        names = ["BTC Trend Pullback 1h","ETH EMA-X 1h","SOL MACD Momentum 1h","TSLA RSI-MR 1h",
+                 "AAPL Bollinger 1h","NVDA VWAP 1h","MSFT Breakout Retest 1h","GOOGL Donchian 1h",
+                 "AMZN ATR Momentum 1h","META Supertrend 1h"]
+        pairs = ["BTCUSD","ETHUSD","SOLUSD","TSLA","AAPL","NVDA","MSFT","GOOGL","AMZN","META"]
+        stypes = ["trend_pullback","ema_crossover","macd_momentum","rsi_mean_reversion",
+                  "bollinger_reversion","vwap_bounce","breakout_retest","donchian_breakout",
+                  "atr_momentum_expansion","supertrend_continuation"]
         statuses = ["active"] * 10
         verdicts = ["HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD"]
         wr = [52,54,51,55,53,58,50,54,51,56]

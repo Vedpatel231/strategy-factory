@@ -1,16 +1,9 @@
 """
-Strategy Factory — Alpaca Portfolio Trader (Adaptive Breakout)
+Strategy Factory — legacy Alpaca portfolio trader.
 
-Executes Adaptive Breakout strategy signals on Alpaca paper/live trading.
-Single strategy: Donchian breakout + ADX filter on 4h timeframe.
-
-Exit logic:
-  - Trailing stop: 3x ATR(14) from peak price
-  - Hard stop: 8% loss from entry
-  - ADX exit: close when ADX drops below 15
-
-Concurrency: max 3 crypto + max 3 stock positions at any time.
-Long only. Cooldown: 2 bars (8h) after a losing trade.
+The professional trading desk now handles live 1H entries through
+trading_desk.py.  This module remains for older dashboard/backtest/rebalance
+paths and for compatibility with existing helper endpoints.
 """
 
 import os
@@ -68,7 +61,7 @@ def _is_supported_alpaca_symbol(symbol):
 
 
 class AlpacaTrader:
-    """Executes Adaptive Breakout trades via Alpaca."""
+    """Legacy Alpaca rebalancer retained for compatibility."""
 
     def __init__(self):
         self.client = AlpacaPaperClient()

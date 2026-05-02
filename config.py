@@ -19,11 +19,6 @@ BINANCE_BASE_URL = "https://api.binance.com"
 # === Database ===
 DB_PATH = os.environ.get("STRATEGY_FACTORY_DB", os.path.join(DATA_DIR, "strategy_factory.db"))
 
-# ═══════════════════════════════════════════════════════════════════
-# Adaptive Breakout Strategy — Proven on TradingView with real data
-# BTC +99%, ETH +142%, SOL +121%, TSLA +113% on 4h timeframe
-# ═══════════════════════════════════════════════════════════════════
-
 # === Asset Universe ===
 CRYPTO_ASSETS = ["BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "ADA", "UNI", "AAVE", "LTC"]
 STOCK_ASSETS = ["TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"]
@@ -45,7 +40,7 @@ PROFESSIONAL_STRATEGIES = [
     "supertrend_continuation",
 ]
 
-# === Legacy Adaptive Breakout Strategy Parameters ===
+# === Legacy Strategy Parameters (kept for old dashboard/backtest paths) ===
 STRATEGY_NAME = "adaptive_breakout"
 STRATEGY_TIMEFRAME = "1h"
 DONCHIAN_PERIOD = 20          # Donchian channel lookback
@@ -64,13 +59,13 @@ MAX_CONCURRENT_STOCKS = 3     # Max 3 stock positions at once
 # === Cooldown ===
 POST_LOSS_COOLDOWN_BARS = 2   # 2 bars = 8 hours cooldown after a loss
 
-# === Check Intervals ===
-CRYPTO_CHECK_INTERVAL_HOURS = 4   # Crypto: check every 4h (24/7)
-STOCK_CHECK_INTERVAL_HOURS = 4    # Stocks: check every 4h (market hours only)
+# === Legacy Check Intervals ===
+CRYPTO_CHECK_INTERVAL_HOURS = 4
+STOCK_CHECK_INTERVAL_HOURS = 4
 
 # ═══════════════════════════════════════════════════════════════════
-# Intraday Stock Strategies — RSI, MACD, VWAP, EMA on 15m + 30m
-# Stocks only. Crypto stays on Adaptive Breakout 4h.
+# Legacy Intraday Stock Strategies
+# Disabled by default in alpaca_auto_trader unless ENABLE_LEGACY_INTRADAY=true.
 # ═══════════════════════════════════════════════════════════════════
 
 INTRADAY_STRATEGIES = ["rsi_mean_reversion", "macd_crossover", "vwap_bounce", "ema_crossover"]

@@ -22,19 +22,21 @@ import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import config
+
 logger = logging.getLogger("daily_trade_analysis")
 
 # ── Config ─────────────────────────────────────────────────────────────
-DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://strategy-factory-production-9843.up.railway.app")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "")
 DASHBOARD_USER = os.getenv("DASHBOARD_USERNAME", "admin")
 DASHBOARD_PASS = os.getenv("DASHBOARD_PASSWORD", "")
-REPORT_DIR = Path(os.getenv("REPORT_DIR", "/data/reports"))
+REPORT_DIR = Path(os.getenv("REPORT_DIR") or os.getenv("STRATEGY_FACTORY_REPORT_DIR") or config.REPORT_DIR)
 
 # ── API helpers ────────────────────────────────────────────────────────
 
 def _is_local():
-    """Return True if running inside the same process as dashboard_server (Railway)."""
-    return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER"))
+    """Return True when the report can read local state directly."""
+    return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or not DASHBOARD_URL)
 
 
 def _api_get(path, params=None):
@@ -72,7 +74,9 @@ def _local_trade_ledger(limit=500):
 def _local_account():
     """Fetch account directly via Alpaca client."""
     try:
-        from alpaca_client import AlpacaPaperClient
+        from alpaca_client import AlpacaPaperClient, is_configured
+        if not is_configured():
+            return {}
         client = AlpacaPaperClient()
         result = client.get_account()
         return result if result else {}
@@ -84,7 +88,9 @@ def _local_account():
 def _local_positions():
     """Fetch positions directly via Alpaca client."""
     try:
-        from alpaca_client import AlpacaPaperClient
+        from alpaca_client import AlpacaPaperClient, is_configured
+        if not is_configured():
+            return {"positions": [], "summary": {}}
         client = AlpacaPaperClient()
         positions = client.get_positions() or []
         total_cost = sum(float(p.get("cost_basis", 0) or 0) for p in positions)
