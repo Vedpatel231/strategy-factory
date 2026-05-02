@@ -473,6 +473,11 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .last-refresh-badge .lr-time{{font-family:'Courier New',monospace;color:var(--cyan);}}
 .last-refresh-badge .lr-trigger{{font-size:0.7em;padding:2px 8px;border-radius:10px;background:rgba(0,212,255,0.12);color:var(--cyan);text-transform:uppercase;letter-spacing:0.5px;}}
 .last-refresh-badge .lr-trigger.manual{{background:rgba(255,183,0,0.12);color:var(--amber);}}
+#alpAutoLogs{{scrollbar-width:thin;scrollbar-color:rgba(154,164,199,0.55) rgba(10,14,39,0.35);}}
+#alpAutoLogs::-webkit-scrollbar{{width:8px;}}
+#alpAutoLogs::-webkit-scrollbar-track{{background:rgba(10,14,39,0.35);border-radius:8px;}}
+#alpAutoLogs::-webkit-scrollbar-thumb{{background:rgba(154,164,199,0.55);border-radius:8px;}}
+#alpAutoLogs::-webkit-scrollbar-thumb:hover{{background:rgba(0,212,255,0.55);}}
 @media(max-width:900px){{.last-refresh-badge{{top:10px;left:80px;right:10px;font-size:0.72em;padding:8px 12px;}}}}
 
 @media(max-width:1200px){{
@@ -1078,7 +1083,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
           <div id="alpAutoInterval" class="metric-value" style="font-size:1.1em;">15 min</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Market Status</div>
+          <div class="metric-label">Market Access</div>
           <div id="alpAutoMarketStatus" class="metric-value" style="font-size:1.0em;">—</div>
         </div>
         <div class="metric-card">
@@ -1088,7 +1093,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       </div>
 
       <!-- Recent auto-runs log -->
-      <div style="font-weight:600;font-size:0.95em;margin-bottom:8px;">Recent Auto-Runs</div>
+      <div style="font-weight:600;font-size:0.95em;margin-bottom:8px;">Recent Engine Runs</div>
       <div id="alpAutoLogsEmpty" style="color:var(--text-dim);font-size:0.85em;">No auto-runs recorded yet. Automatic cycles will appear here after the scheduler runs.</div>
       <div id="alpAutoLogs" style="display:none;max-height:250px;overflow-y:auto;font-size:0.85em;"></div>
     </div>
@@ -1571,6 +1576,54 @@ function formatNyTime(iso) {{
       timeZoneName: 'short'
     }}).format(parseUtcIso(iso));
   }} catch (e) {{
+    return '?';
+  }}
+}}
+
+function nyDayKey(dateObj) {{
+  try {{
+    return new Intl.DateTimeFormat('en-CA', {{
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }}).format(dateObj);
+  }} catch(e) {{
+    return '';
+  }}
+}}
+
+function formatNyClock(iso) {{
+  try {{
+    return new Intl.DateTimeFormat('en-US', {{
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short'
+    }}).format(parseUtcIso(iso));
+  }} catch(e) {{
+    return '?';
+  }}
+}}
+
+function formatNyRunStamp(iso) {{
+  try {{
+    var dt = parseUtcIso(iso);
+    var clock = new Intl.DateTimeFormat('en-US', {{
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }}).format(dt);
+    if (nyDayKey(dt) === nyDayKey(new Date())) return clock;
+    var day = new Intl.DateTimeFormat('en-US', {{
+      timeZone: 'America/New_York',
+      month: 'short',
+      day: 'numeric'
+    }}).format(dt);
+    return day + ', ' + clock;
+  }} catch(e) {{
     return '?';
   }}
 }}
@@ -4036,40 +4089,55 @@ function alpAutoUpdateUI(data) {{
     }}
   }}
   var statusEl = document.getElementById('alpAutoRunStatus');
-  if (data.thread_alive) {{
-    statusEl.textContent = data.enabled ? '🟢 Running' : '🟡 Idle (disabled)';
-    statusEl.style.color = data.enabled ? 'var(--lime)' : 'var(--amber)';
-  }} else {{
-    statusEl.textContent = '⚪ Stopped';
-    statusEl.style.color = 'var(--gray)';
+  if (statusEl) {{
+    if (data.thread_alive) {{
+      statusEl.textContent = data.enabled ? '● Running' : '● Idle';
+      statusEl.style.color = data.enabled ? 'var(--lime)' : 'var(--amber)';
+    }} else {{
+      statusEl.textContent = '○ Stopped';
+      statusEl.style.color = 'var(--gray)';
+    }}
   }}
-  document.getElementById('alpAutoInterval').textContent = (data.interval_min || 15) + ' min';
-  if (data.last_run) {{
-    document.getElementById('alpAutoLastRun').textContent = new Date(data.last_run).toLocaleString();
+  var intervalEl = document.getElementById('alpAutoInterval');
+  if (intervalEl) intervalEl.textContent = (data.interval_min || 15) + ' min';
+  var lastRunEl = document.getElementById('alpAutoLastRun');
+  if (lastRunEl) {{
+    lastRunEl.textContent = data.last_run ? formatNyClock(data.last_run) : 'Never';
+    if (data.last_run) lastRunEl.title = formatNyTime(data.last_run);
   }}
-  if (data.next_run && data.enabled) {{
-    document.getElementById('alpAutoNextRun').textContent = new Date(data.next_run).toLocaleString();
-  }} else {{
-    document.getElementById('alpAutoNextRun').textContent = data.enabled ? 'Soon' : '—';
+  var nextRunEl = document.getElementById('alpAutoNextRun');
+  if (nextRunEl) {{
+    nextRunEl.textContent = data.next_run && data.enabled ? formatNyClock(data.next_run) : (data.enabled ? 'Soon' : '—');
+    if (data.next_run) nextRunEl.title = formatNyTime(data.next_run);
   }}
   // Market status
   var marketEl = document.getElementById('alpAutoMarketStatus');
   if (marketEl) {{
     if (data.us_market_open === true) {{
-      marketEl.textContent = '🟢 US Market Open';
+      marketEl.textContent = 'Stocks open · Crypto active';
       marketEl.style.color = 'var(--lime)';
+      marketEl.title = 'Stock and crypto managers can evaluate entries.';
     }} else if (data.us_market_open === false) {{
-      marketEl.textContent = '🔴 US Market Closed (stock entries deferred)';
-      marketEl.style.color = 'var(--red)';
+      marketEl.textContent = 'Stocks closed · Crypto active';
+      marketEl.style.color = 'var(--amber)';
+      marketEl.title = 'Stock entries are deferred outside regular US market hours. Crypto managers can still evaluate 24/7.';
     }} else {{
-      marketEl.textContent = '⚪ Market status unknown';
+      marketEl.textContent = 'Stocks unknown · Crypto active';
       marketEl.style.color = 'var(--gray)';
+      marketEl.title = 'Could not confirm the US stock market schedule. Crypto managers can still evaluate.';
     }}
   }}
-  // Intraday run counter
+  // Cycle counters
   var intradayCountEl = document.getElementById('alpAutoIntradayCount');
   if (intradayCountEl) {{
-    intradayCountEl.textContent = (data.intraday_runs_total || 0) + ' legacy intraday · ' + (data.exit_check_runs_total || 0) + ' exit checks';
+    var deskRuns = Number(data.trading_desk_runs_total || 0);
+    var exitRuns = Number(data.exit_check_runs_total || 0);
+    var legacyRuns = Number(data.intraday_runs_total || 0);
+    var countText = deskRuns + ' desk · ' + exitRuns + ' exits';
+    if (data.intraday_intervals && data.intraday_intervals.legacy_enabled) countText += ' · ' + legacyRuns + ' legacy';
+    intradayCountEl.textContent = countText;
+    intradayCountEl.title = deskRuns + ' professional desk cycles, ' + exitRuns + ' exit checks' +
+      (legacyRuns ? ', ' + legacyRuns + ' legacy intraday cycles' : '');
   }}
   // Render logs
   var runs = data.recent_runs || [];
@@ -4082,18 +4150,46 @@ function alpAutoUpdateUI(data) {{
     emptyEl.style.display = 'none';
     logsEl.style.display = 'block';
     var html = '';
-    runs.slice().reverse().forEach(function(r) {{
-      var ts = r.timestamp ? new Date(r.timestamp).toLocaleTimeString() : '?';
+    runs.slice().sort(function(a,b) {{
+      var bt = parseUtcIso(b.timestamp || '').getTime();
+      var at = parseUtcIso(a.timestamp || '').getTime();
+      if (!isFinite(bt)) bt = 0;
+      if (!isFinite(at)) at = 0;
+      return bt - at;
+    }}).forEach(function(r) {{
+      var ts = r.timestamp ? formatNyRunStamp(r.timestamp) : '?';
       var statusColor = r.status === 'ok' ? 'var(--lime)' : (r.status === 'error' ? 'var(--red)' : 'var(--amber)');
       var cycleType = r.cycle_type || 'main';
       var cycleBadge = '';
-      if (cycleType.startsWith('intraday_')) {{
-        cycleBadge = '<span style="background:var(--blue);color:#000;padding:1px 6px;border-radius:3px;font-size:0.8em;margin:0 4px;">' + cycleType.replace('intraday_','') + '</span>';
+      if (cycleType === 'trading_desk') {{
+        cycleBadge = '<span style="background:rgba(0,212,255,0.18);color:var(--cyan);padding:1px 6px;border-radius:3px;font-size:0.8em;margin:0 4px;">DESK</span>';
+      }} else if (cycleType.startsWith('intraday_')) {{
+        cycleBadge = '<span style="background:rgba(0,212,255,0.18);color:var(--cyan);padding:1px 6px;border-radius:3px;font-size:0.8em;margin:0 4px;">LEGACY ' + cycleType.replace('intraday_','') + '</span>';
       }} else if (cycleType === 'exit_check') {{
         cycleBadge = '<span style="background:var(--amber);color:#000;padding:1px 6px;border-radius:3px;font-size:0.8em;margin:0 4px;">EXIT</span>';
       }}
       var detail = '';
-      // Main cycle details
+      // Professional desk details
+      if (cycleType === 'trading_desk') {{
+        var deskStep = (r.steps && r.steps.trading_desk) || {{}};
+        var ds = deskStep.summary || {{}};
+        var ceo = deskStep.ceo || {{}};
+        var managers = Number(ds.managers || 0);
+        var bots = Number(ds.bots || 0);
+        var entries = Number(ds.enter_decisions || 0);
+        var waits = Number(ds.wait_decisions || 0);
+        var manage = Number(ds.manage_decisions || 0);
+        var submitted = Number(ds.orders_submitted || 0);
+        var rejected = Number(ds.orders_rejected || 0);
+        var exits = Number(ds.exits_triggered || 0);
+        var ceoLabel = ceo.regime ? 'CEO ' + String(ceo.regime).replace(/_/g, ' ') : 'CEO analyzed';
+        detail = ' · ' + ceoLabel + ' · ' + managers + ' managers checked · ' + bots + ' bots';
+        detail += ' · ' + entries + ' entry candidates';
+        if (waits || manage) detail += ' · ' + waits + ' waiting, ' + manage + ' managing';
+        detail += ' · ' + exits + ' exits';
+        if (submitted || rejected) detail += ' · ' + submitted + ' submitted, ' + rejected + ' rejected';
+      }}
+      // Legacy main-cycle details
       var s2 = (r.steps && r.steps.trade && r.steps.trade.summary) || {{}};
       if (s2.buys !== undefined) {{
         detail = ' · ' + (s2.buys||0) + ' buys, ' + (s2.sells||0) + ' sells, ' + (s2.closes||0) + ' closes';
@@ -4126,14 +4222,17 @@ function alpAutoUpdateUI(data) {{
         detail = ' · ' + r.exits.positions_checked + ' positions checked';
         if (r.exits.exits_triggered > 0) {{
           detail += ', ' + r.exits.exits_triggered + ' exits';
+        }} else {{
+          detail += ', 0 exits';
         }}
       }}
+      if (!detail && r.status === 'ok') detail = ' · cycle complete';
       html += '<div style="padding:6px 0;border-bottom:1px solid var(--border);">' +
         '<span style="color:var(--text-dim);">' + ts + '</span> ' +
         cycleBadge +
         '<span style="color:' + statusColor + ';font-weight:600;">' + (r.status||'?').toUpperCase() + '</span>' +
         detail +
-        (r.error ? ' <span style="color:var(--red);font-size:0.85em;">' + r.error.substring(0,80) + '</span>' : '') +
+        (r.error ? ' <span style="color:var(--red);font-size:0.85em;">' + escHtml(r.error.substring(0,80)) + '</span>' : '') +
         '</div>';
     }});
     logsEl.innerHTML = html;

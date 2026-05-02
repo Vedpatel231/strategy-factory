@@ -543,7 +543,8 @@ class AlpacaAutoTrader:
         except Exception:
             market_open = None
 
-        # Count intraday runs in recent log
+        # Count recent cycle types for dashboard clarity.
+        desk_runs = sum(1 for r in self._runs_log if r.get("cycle_type") == "trading_desk")
         intraday_runs = sum(1 for r in self._runs_log if "intraday" in r.get("cycle_type", ""))
         exit_check_runs = sum(1 for r in self._runs_log if r.get("cycle_type") == "exit_check")
 
@@ -561,6 +562,7 @@ class AlpacaAutoTrader:
             "next_run": next_run,
             "last_result": self._last_result,
             "last_error": self._last_error,
+            "trading_desk_runs_total": desk_runs,
             "intraday_runs_total": intraday_runs,
             "exit_check_runs_total": exit_check_runs,
             "recent_runs": self._runs_log[-15:],
