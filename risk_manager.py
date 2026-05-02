@@ -754,6 +754,137 @@ class RiskManager:
         """Return the current cooldown exposure multiplier (0.0 – 1.0)."""
         return self.cooldown.get_multiplier()
 
+    # ── Trading desk approval ──────────────────────────────────────────
+    def approve_trade_request(
+        self,
+        trade_request: dict,
+        account: dict,
+        open_positions: list,
+        ceo_state=None,
+    ) -> dict:
+        """
+        Approve/reject a manager trade request and compute safe notional size.
+
+        Long-only for now.  Sizing is driven by per-trade risk and the ATR stop
+        produced by the selected strategy, then capped by buying power, regime,
+        and exposure limits.
+        """
+        symbol = trade_request.get("symbol", "")
+        side = str(trade_request.get("side", "buy")).lower()
+        equity = float(account.get("equity", account.get("portfolio_value", 0)) or 0)
+        buying_power = float(account.get("buying_power", account.get("cash", 0)) or 0)
+        entry_price = float(trade_request.get("entry_price") or 0)
+        stop_loss = float(trade_request.get("stop_loss") or 0)
+        confidence = float(trade_request.get("confidence") or 0)
+        reasons = []
+
+        approval = {
+            "approved": False,
+            "symbol": symbol,
+            "side": side,
+            "notional": 0.0,
+            "qty_estimate": 0.0,
+            "risk_dollars": 0.0,
+            "reasons": reasons,
+            "trade_request": trade_request,
+        }
+
+        if side != "buy":
+            reasons.append("Only long entries are enabled in the professional desk engine.")
+            return approval
+        if equity <= 0 or buying_power <= 0:
+            reasons.append("Account equity or buying power is unavailable.")
+            return approval
+
+        ok, pre_reasons = self.pre_trade_check(equity)
+        if not ok:
+            reasons.extend(pre_reasons or ["pre-trade risk check failed"])
+            return approval
+
+        if not symbol:
+            reasons.append("Missing symbol.")
+            return approval
+
+        normalized_positions = {str(p.get("symbol", "")).upper().replace("/", ""): p for p in open_positions or []}
+        compact = str(symbol).upper().replace("/", "")
+        if compact in normalized_positions:
+            reasons.append(f"Duplicate position blocked: {symbol} is already open.")
+            return approval
+
+        try:
+            from alpaca_client import is_equity_symbol, is_us_market_open
+            if is_equity_symbol(symbol) and not is_us_market_open():
+                reasons.append("US equity market is closed; stock entries are deferred.")
+                return approval
+        except Exception:
+            pass
+
+        crypto_count = 0
+        stock_count = 0
+        try:
+            from alpaca_client import is_equity_symbol
+            for pos in open_positions or []:
+                if is_equity_symbol(pos.get("symbol")):
+                    stock_count += 1
+                else:
+                    crypto_count += 1
+            if is_equity_symbol(symbol) and stock_count >= config.MAX_CONCURRENT_STOCKS:
+                reasons.append(f"Max stock positions reached ({stock_count}/{config.MAX_CONCURRENT_STOCKS}).")
+                return approval
+            if not is_equity_symbol(symbol) and crypto_count >= config.MAX_CONCURRENT_CRYPTO:
+                reasons.append(f"Max crypto positions reached ({crypto_count}/{config.MAX_CONCURRENT_CRYPTO}).")
+                return approval
+        except Exception:
+            pass
+
+        if not self.can_place_order(symbol):
+            reasons.append("Trade frequency limit reached.")
+            return approval
+        if not self.can_submit_order(symbol, side):
+            reasons.append("Duplicate order guard blocked this symbol/side.")
+            return approval
+
+        if entry_price <= 0 or stop_loss <= 0 or stop_loss >= entry_price:
+            reasons.append("Invalid ATR stop geometry; entry must be above stop.")
+            return approval
+
+        max_risk_pct = float(os.environ.get("DESK_RISK_PER_TRADE_PCT", "0.50"))
+        base_risk_dollars = equity * max_risk_pct / 100.0
+        stop_distance = entry_price - stop_loss
+        qty_by_risk = base_risk_dollars / stop_distance if stop_distance > 0 else 0.0
+        notional_by_risk = qty_by_risk * entry_price
+
+        regime_mult = float(trade_request.get("ceo_risk_multiplier") or 0.75)
+        if ceo_state is not None:
+            regime_mult = float(getattr(ceo_state, "risk_multiplier", regime_mult) or regime_mult)
+        confidence_mult = max(0.45, min(1.20, 0.45 + confidence))
+        cooldown_mult = self.get_exposure_multiplier()
+
+        max_position_pct = float(os.environ.get("DESK_MAX_POSITION_PCT", "8.0"))
+        max_position_notional = equity * max_position_pct / 100.0
+        notional = min(notional_by_risk, max_position_notional, buying_power * 0.90)
+        notional *= max(0.0, regime_mult) * confidence_mult * cooldown_mult
+
+        min_notional = float(os.environ.get("DESK_MIN_ORDER_NOTIONAL", "5.0"))
+        if notional < min_notional:
+            reasons.append(
+                f"Calculated size ${notional:.2f} is below minimum ${min_notional:.2f}; "
+                "risk, confidence, buying power, or regime multiplier is too low."
+            )
+            return approval
+
+        approval.update({
+            "approved": True,
+            "notional": round(notional, 2),
+            "qty_estimate": round(notional / entry_price, 8) if entry_price else 0.0,
+            "risk_dollars": round(min(base_risk_dollars, notional * stop_distance / entry_price), 2),
+            "reasons": [
+                f"Approved: risk ${base_risk_dollars:.2f}, stop distance ${stop_distance:.4f}, "
+                f"regime multiplier {regime_mult:.2f}, confidence multiplier {confidence_mult:.2f}."
+            ],
+        })
+        return approval
+
     # ── Dashboard status ───────────────────────────────────────────────
     def get_status(self) -> dict:
         """Return a dict summarising all risk-control states for the dashboard."""

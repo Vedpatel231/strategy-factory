@@ -1,7 +1,7 @@
 """
 Strategy Factory Bot Manager — Database Seeder
 Initializes SQLite database and populates with bots and strategies
-for Adaptive Breakout on 4h timeframe (crypto + stocks).
+for the professional 1H trading desk universe.
 
 NOTE: Performance history is PLACEHOLDER data for database initialization only.
 Real performance comes from live trading via Alpaca.
@@ -24,66 +24,49 @@ G = "\033[92m"; R = "\033[91m"; Y = "\033[93m"; C = "\033[96m"
 B = "\033[1m"; X = "\033[0m"; D = "\033[90m"
 
 
-# ── Assets — one bot per asset, all running Adaptive Breakout on 4h ──
+# ── Assets — 10 professional 1H bots per asset ───────────────────────
 COINS = config.CRYPTO_ASSETS
 STOCKS = config.STOCK_ASSETS
 
 STRATEGY_TYPES = [
-    ("adaptive_breakout", "4h"),
-]
-
-# Intraday strategies for stocks only (15m + 30m)
-INTRADAY_STOCK_STRATEGY_TYPES = [
-    ("rsi_mean_reversion", "15m"),
-    ("rsi_mean_reversion", "30m"),
-    ("macd_crossover", "15m"),
-    ("macd_crossover", "30m"),
-    ("vwap_bounce", "15m"),
-    ("vwap_bounce", "30m"),
-    ("ema_crossover", "15m"),
-    ("ema_crossover", "30m"),
+    (stype, config.DESK_ENTRY_TIMEFRAME)
+    for stype in config.PROFESSIONAL_STRATEGIES
 ]
 
 _NAME_SUFFIXES = {
-    "adaptive_breakout": "Breakout",
-    "rsi_mean_reversion": "RSI-MR",
-    "macd_crossover": "MACD",
-    "vwap_bounce": "VWAP",
+    "trend_pullback": "Trend Pullback",
     "ema_crossover": "EMA-X",
+    "macd_momentum": "MACD Momentum",
+    "rsi_mean_reversion": "RSI-MR",
+    "bollinger_reversion": "Bollinger",
+    "breakout_retest": "Breakout Retest",
+    "donchian_breakout": "Donchian",
+    "vwap_bounce": "VWAP",
+    "atr_momentum_expansion": "ATR Momentum",
+    "supertrend_continuation": "Supertrend",
 }
 
 _EXTRA_VARIANTS = []
 
 
 def _build_strategies():
-    """Generate strategies: Adaptive Breakout for all assets + intraday for stocks."""
+    """Generate professional 1H strategies for all assets."""
     strategies = []
-    # Crypto: Adaptive Breakout 4h only
     for coin in COINS:
         for stype, tf in STRATEGY_TYPES:
             suffix = _NAME_SUFFIXES[stype]
             name = f"{coin} {suffix} {tf}"
             pair = f"{coin}/USDT"
-            desc = f"{coin} Adaptive Breakout (Donchian+ADX) strategy on {tf} candles"
+            desc = f"{coin} {suffix} professional strategy on {tf} candles"
             strategies.append({
                 "name": name, "type": stype, "timeframe": tf,
                 "pair": pair, "desc": desc,
             })
-    # Stocks: Adaptive Breakout 4h + intraday strategies on 15m/30m
     for symbol in STOCKS:
         for stype, tf in STRATEGY_TYPES:
             suffix = _NAME_SUFFIXES[stype]
             name = f"{symbol} {suffix} {tf}"
-            desc = f"{symbol} Adaptive Breakout (Donchian+ADX) strategy on {tf} candles"
-            strategies.append({
-                "name": name, "type": stype, "timeframe": tf,
-                "pair": symbol, "desc": desc,
-            })
-        for stype, tf in INTRADAY_STOCK_STRATEGY_TYPES:
-            suffix = _NAME_SUFFIXES[stype]
-            name = f"{symbol} {suffix} {tf}"
-            friendly = stype.replace("_", " ").title()
-            desc = f"{symbol} {friendly} strategy on {tf} candles"
+            desc = f"{symbol} {suffix} professional strategy on {tf} candles"
             strategies.append({
                 "name": name, "type": stype, "timeframe": tf,
                 "pair": symbol, "desc": desc,
@@ -98,31 +81,24 @@ STRATEGIES = _build_strategies()
 # NOTE: This is PLACEHOLDER data for database initialization.
 # Real performance comes from live trading.
 TYPE_PROFILES = {
-    "adaptive_breakout": {
-        "win_rate": (35, 45), "trades_per_day": (0.5, 2),
-        "avg_win": (50, 150), "avg_loss": (20, 60),
-        "max_dd": (-55, -15), "sharpe": (0.2, 1.0),
-    },
+    "trend_pullback": {"win_rate": (46, 58), "trades_per_day": (0.5, 2), "avg_win": (25, 70), "avg_loss": (15, 40), "max_dd": (-22, -8), "sharpe": (0.4, 1.2)},
+    "ema_crossover": {"win_rate": (42, 55), "trades_per_day": (0.5, 2), "avg_win": (25, 70), "avg_loss": (15, 40), "max_dd": (-28, -10), "sharpe": (0.3, 1.0)},
+    "macd_momentum": {"win_rate": (43, 56), "trades_per_day": (0.5, 2), "avg_win": (25, 75), "avg_loss": (15, 42), "max_dd": (-26, -9), "sharpe": (0.3, 1.1)},
     "rsi_mean_reversion": {
-        "win_rate": (45, 60), "trades_per_day": (1, 4),
-        "avg_win": (15, 40), "avg_loss": (10, 25),
+        "win_rate": (45, 60), "trades_per_day": (0.5, 2),
+        "avg_win": (15, 45), "avg_loss": (10, 30),
         "max_dd": (-20, -8), "sharpe": (0.4, 1.2),
     },
-    "macd_crossover": {
-        "win_rate": (40, 55), "trades_per_day": (1, 3),
-        "avg_win": (20, 50), "avg_loss": (12, 30),
-        "max_dd": (-25, -10), "sharpe": (0.3, 1.0),
-    },
+    "bollinger_reversion": {"win_rate": (45, 61), "trades_per_day": (0.5, 2), "avg_win": (15, 42), "avg_loss": (10, 28), "max_dd": (-20, -7), "sharpe": (0.4, 1.2)},
+    "breakout_retest": {"win_rate": (40, 54), "trades_per_day": (0.4, 1.5), "avg_win": (30, 85), "avg_loss": (15, 42), "max_dd": (-30, -10), "sharpe": (0.2, 1.0)},
+    "donchian_breakout": {"win_rate": (36, 50), "trades_per_day": (0.3, 1.2), "avg_win": (35, 95), "avg_loss": (16, 45), "max_dd": (-35, -12), "sharpe": (0.2, 1.0)},
     "vwap_bounce": {
-        "win_rate": (50, 65), "trades_per_day": (2, 5),
-        "avg_win": (10, 30), "avg_loss": (8, 20),
+        "win_rate": (48, 63), "trades_per_day": (0.5, 2),
+        "avg_win": (12, 38), "avg_loss": (8, 24),
         "max_dd": (-15, -5), "sharpe": (0.5, 1.3),
     },
-    "ema_crossover": {
-        "win_rate": (38, 52), "trades_per_day": (1, 3),
-        "avg_win": (25, 60), "avg_loss": (15, 35),
-        "max_dd": (-30, -10), "sharpe": (0.3, 0.9),
-    },
+    "atr_momentum_expansion": {"win_rate": (38, 52), "trades_per_day": (0.4, 1.4), "avg_win": (35, 95), "avg_loss": (16, 45), "max_dd": (-35, -12), "sharpe": (0.2, 1.0)},
+    "supertrend_continuation": {"win_rate": (44, 57), "trades_per_day": (0.5, 2), "avg_win": (25, 75), "avg_loss": (14, 40), "max_dd": (-26, -9), "sharpe": (0.3, 1.1)},
 }
 
 PAUSED_BOTS = set()
@@ -224,17 +200,24 @@ def seed_bots(conn):
     print(f"  {G}✓{X} Seeded {count} bots ({paused} paused)")
 
 
-def generate_performance_history(conn):
+def generate_performance_history(conn, strategy_ids=None):
     """Generate 30 days of PLACEHOLDER performance data per strategy.
     This is NOT real backtest data — it's for database initialization only.
     Real performance comes from live trading via Alpaca."""
-    cursor = conn.execute("SELECT id, name, type FROM strategies ORDER BY id")
+    if strategy_ids:
+        placeholders = ",".join("?" for _ in strategy_ids)
+        cursor = conn.execute(
+            f"SELECT id, name, type FROM strategies WHERE id IN ({placeholders}) ORDER BY id",
+            list(strategy_ids),
+        )
+    else:
+        cursor = conn.execute("SELECT id, name, type FROM strategies ORDER BY id")
     strategies = cursor.fetchall()
     now = datetime.datetime.utcnow().date()
     total_rows = 0
 
     for idx, (strat_id, strat_name, strat_type) in enumerate(strategies):
-        profile = TYPE_PROFILES.get(strat_type, TYPE_PROFILES["adaptive_breakout"])
+        profile = TYPE_PROFILES.get(strat_type, TYPE_PROFILES["trend_pullback"])
         random.seed(hash(strat_name) + 42)
 
         base_wr = random.uniform(*profile["win_rate"])
@@ -328,9 +311,32 @@ def verify_data(conn):
         print(f"    {D}{pair}: {name}{X}")
 
 
+def ensure_seed_data():
+    """Non-destructively ensure the professional 1H bot universe exists."""
+    os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(config.DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON")
+    create_tables(conn)
+    before = conn.execute("SELECT COUNT(*) FROM strategies").fetchone()[0]
+    seed_strategies(conn)
+    seed_bots(conn)
+    after = conn.execute("SELECT COUNT(*) FROM strategies").fetchone()[0]
+    missing_perf = conn.execute("""
+        SELECT s.id
+        FROM strategies s
+        LEFT JOIN performance_history p ON p.strategy_id = s.id
+        GROUP BY s.id
+        HAVING COUNT(p.id) = 0
+    """).fetchall()
+    if missing_perf:
+        generate_performance_history(conn, strategy_ids=[row[0] for row in missing_perf])
+    conn.close()
+    return {"strategies_before": before, "strategies_after": after, "added": max(0, after - before)}
+
+
 def main():
     print(f"\n{C}{B}{'=' * 56}")
-    print("  Strategy Factory — Database Seeder (Adaptive Breakout)")
+    print("  Strategy Factory — Database Seeder (Professional 1H Desk)")
     print(f"{'=' * 56}{X}\n")
 
     os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
@@ -363,12 +369,12 @@ def main():
     verify_data(conn)
     conn.close()
 
-    n_intraday = len(STOCKS) * len(INTRADAY_STOCK_STRATEGY_TYPES)
-    n_breakout = len(COINS) + len(STOCKS)
+    n_assets = len(COINS) + len(STOCKS)
+    n_bots = len(STRATEGIES)
     print(f"\n  {G}{B}Database ready!{X} {D}{config.DB_PATH}{X}")
-    print(f"  {C}Assets: {len(COINS)} crypto + {len(STOCKS)} stocks = {len(COINS) + len(STOCKS)} total{X}")
-    print(f"  {C}Bots: {n_breakout} Adaptive Breakout (4h) + {n_intraday} intraday stock (15m/30m) = {n_breakout + n_intraday} total{X}")
-    print(f"  {C}Strategies: Adaptive Breakout, RSI-MR, MACD, VWAP, EMA-X{X}")
+    print(f"  {C}Assets: {len(COINS)} crypto + {len(STOCKS)} stocks = {n_assets} total{X}")
+    print(f"  {C}Bots: {n_bots} professional 1H bots ({len(config.PROFESSIONAL_STRATEGIES)} per asset){X}")
+    print(f"  {C}Strategies: {', '.join(config.PROFESSIONAL_STRATEGIES)}{X}")
     print(f"  {C}Next: python daily_runner.py{X}\n")
 
 

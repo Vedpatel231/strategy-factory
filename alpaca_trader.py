@@ -806,7 +806,19 @@ class AlpacaTrader:
                 net_pl = gross_pl - total_fees
                 strategy = (entry_state or {}).get("strategy", "adaptive_breakout")
                 regime = (entry_state or {}).get("regime", "unknown")
-                self.learner.record_real_trade(strategy, regime, net_pl, sym)
+                try:
+                    self.learner.record_strategy_outcome(
+                        strategy,
+                        regime,
+                        net_pl,
+                        symbol=sym,
+                        timeframe=(entry_state or {}).get("timeframe", config.STRATEGY_TIMEFRAME),
+                        false_signal=net_pl < 0,
+                        save=False,
+                    )
+                    self.learner.save_state()
+                except Exception:
+                    pass
             except Exception as e:
                 logger.debug(f"Learning engine record failed: {e}")
 

@@ -260,6 +260,7 @@ def run_analysis(args, logger):
             "bot_name": bot.get("name", "?"),
             "pair": bot.get("pair", ""),
             "strategy_type": bot.get("strategy_type", ""),
+            "timeframe": bot.get("timeframe", ""),
             "bot_status": bot_status,
             "verdict": base_verdict,
             "enhanced_verdict": enhanced_verdict,

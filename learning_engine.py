@@ -50,7 +50,20 @@ class LearningEngine:
         }
 
     def _empty_regime_stats(self):
-        return {"trades": 0, "wins": 0, "pnl": 0, "win_rate": 0, "profit_factor": 0}
+        return {
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "pnl": 0,
+            "gross_wins": 0,
+            "gross_losses": 0,
+            "win_rate": 0,
+            "profit_factor": 0,
+            "avg_r": 0,
+            "drawdown": 0,
+            "false_signals": 0,
+            "false_signal_rate": 0,
+        }
 
     def _default_seeded_regime_performance(self):
         return {
@@ -122,6 +135,8 @@ class LearningEngine:
                 "regime_performance": self._default_seeded_regime_performance(),
                 "real_regime_performance": self._default_real_regime_performance(),
                 "real_symbol_performance": {},
+                "real_timeframe_performance": {},
+                "real_asset_strategy_timeframe": {},
                 "adaptation_history": [],
                 "pause_events": [],
             }
@@ -129,9 +144,41 @@ class LearningEngine:
         strategy_state.setdefault("regime_performance", self._default_seeded_regime_performance())
         strategy_state.setdefault("real_regime_performance", self._default_real_regime_performance())
         strategy_state.setdefault("real_symbol_performance", {})
+        strategy_state.setdefault("real_timeframe_performance", {})
+        strategy_state.setdefault("real_asset_strategy_timeframe", {})
         for regime_name, empty_stats in self._default_real_regime_performance().items():
             strategy_state["real_regime_performance"].setdefault(regime_name, dict(empty_stats))
         return strategy_state
+
+    def _update_perf_row(self, perf, net_pl, r_multiple=None, false_signal=False, drawdown=None):
+        perf.setdefault("trades", 0)
+        perf.setdefault("wins", 0)
+        perf.setdefault("losses", 0)
+        perf.setdefault("pnl", 0)
+        perf.setdefault("gross_wins", 0)
+        perf.setdefault("gross_losses", 0)
+        perf.setdefault("false_signals", 0)
+        perf["trades"] += 1
+        perf["pnl"] = round(float(perf.get("pnl", 0) or 0) + net_pl, 2)
+        if net_pl > 0:
+            perf["wins"] += 1
+            perf["gross_wins"] = round(float(perf.get("gross_wins", 0) or 0) + net_pl, 2)
+        else:
+            perf["losses"] += 1
+            perf["gross_losses"] = round(float(perf.get("gross_losses", 0) or 0) + abs(net_pl), 2)
+        if false_signal:
+            perf["false_signals"] += 1
+        if drawdown is not None:
+            perf["drawdown"] = min(float(perf.get("drawdown", 0) or 0), float(drawdown or 0))
+        if r_multiple is not None:
+            old_avg = float(perf.get("avg_r", 0) or 0)
+            perf["avg_r"] = round(((old_avg * (perf["trades"] - 1)) + float(r_multiple or 0)) / perf["trades"], 3)
+        perf["win_rate"] = round(perf["wins"] / perf["trades"] * 100, 1) if perf["trades"] else 0
+        losses = float(perf.get("gross_losses", 0) or 0)
+        wins = float(perf.get("gross_wins", 0) or 0)
+        perf["profit_factor"] = round(wins / losses, 3) if losses > 0 else (round(wins, 3) if wins > 0 else 0)
+        perf["false_signal_rate"] = round(perf["false_signals"] / perf["trades"] * 100, 1) if perf["trades"] else 0
+        return perf
 
     # ── PHASE 6 FIX: Feed REAL Alpaca trade outcomes ──────────────
     def record_real_trade(self, strategy_id, regime, net_pl, symbol=None, save=True):
@@ -149,25 +196,126 @@ class LearningEngine:
 
         regime_key = self._normalize_real_regime(regime)
         perf = strategy_state["real_regime_performance"][regime_key]
-
-        perf["trades"] += 1
-        perf["pnl"] = round(perf["pnl"] + net_pl, 2)
-        if net_pl > 0:
-            perf["wins"] += 1
-        perf["win_rate"] = round(perf["wins"] / perf["trades"] * 100, 1) if perf["trades"] > 0 else 0
+        self._update_perf_row(perf, net_pl)
 
         # Track per-symbol performance
         if symbol:
             sym_perf = strategy_state["real_symbol_performance"].setdefault(
-                symbol, {"trades": 0, "wins": 0, "pnl": 0}
+                symbol, dict(self._empty_regime_stats())
             )
-            sym_perf["trades"] += 1
-            sym_perf["pnl"] = round(sym_perf["pnl"] + net_pl, 2)
-            if net_pl > 0:
-                sym_perf["wins"] += 1
+            self._update_perf_row(sym_perf, net_pl)
 
         if save:
             self.save_state()
+
+    def record_strategy_outcome(
+        self,
+        strategy_id,
+        regime,
+        net_pl,
+        symbol=None,
+        timeframe="1h",
+        r_multiple=None,
+        false_signal=False,
+        drawdown=None,
+        save=True,
+    ):
+        """Track real/paper outcome by asset, strategy, timeframe, and regime."""
+        strategy_state = self.get_strategy_state(strategy_id)
+        regime_key = self._normalize_real_regime(regime)
+        net_pl = float(net_pl or 0)
+
+        self._update_perf_row(
+            strategy_state["real_regime_performance"].setdefault(regime_key, dict(self._empty_regime_stats())),
+            net_pl,
+            r_multiple=r_multiple,
+            false_signal=false_signal,
+            drawdown=drawdown,
+        )
+        tf_key = timeframe or "unknown"
+        self._update_perf_row(
+            strategy_state["real_timeframe_performance"].setdefault(tf_key, dict(self._empty_regime_stats())),
+            net_pl,
+            r_multiple=r_multiple,
+            false_signal=false_signal,
+            drawdown=drawdown,
+        )
+        if symbol:
+            symbol_key = str(symbol)
+            self._update_perf_row(
+                strategy_state["real_symbol_performance"].setdefault(symbol_key, dict(self._empty_regime_stats())),
+                net_pl,
+                r_multiple=r_multiple,
+                false_signal=false_signal,
+                drawdown=drawdown,
+            )
+            combo_key = f"{symbol_key}|{strategy_id}|{tf_key}|{regime_key}"
+            self._update_perf_row(
+                strategy_state["real_asset_strategy_timeframe"].setdefault(combo_key, dict(self._empty_regime_stats())),
+                net_pl,
+                r_multiple=r_multiple,
+                false_signal=false_signal,
+                drawdown=drawdown,
+            )
+        if save:
+            self.save_state()
+
+    def get_strategy_quality(self, strategy_id, regime=None, symbol=None, timeframe="1h"):
+        """Return a cautious score adjustment for manager ranking."""
+        strategy_state = self.get_strategy_state(strategy_id)
+        rows = []
+        if symbol and timeframe and regime:
+            combo_key = f"{symbol}|{strategy_id}|{timeframe}|{self._normalize_real_regime(regime)}"
+            row = strategy_state.get("real_asset_strategy_timeframe", {}).get(combo_key)
+            if row:
+                rows.append((row, 1.0))
+        if symbol:
+            row = strategy_state.get("real_symbol_performance", {}).get(symbol)
+            if row:
+                rows.append((row, 0.45))
+        if timeframe:
+            row = strategy_state.get("real_timeframe_performance", {}).get(timeframe)
+            if row:
+                rows.append((row, 0.30))
+        if regime:
+            row = strategy_state.get("real_regime_performance", {}).get(self._normalize_real_regime(regime))
+            if row:
+                rows.append((row, 0.35))
+
+        adjustment = 0.0
+        evidence = 0
+        reasons = []
+        for row, weight in rows:
+            trades = int(row.get("trades", 0) or 0)
+            if trades < 3:
+                continue
+            evidence += trades
+            win_rate = float(row.get("win_rate", 0) or 0)
+            profit_factor = float(row.get("profit_factor", 0) or 0)
+            avg_r = float(row.get("avg_r", 0) or 0)
+            false_rate = float(row.get("false_signal_rate", 0) or 0)
+            local = 0.0
+            if win_rate >= 55:
+                local += 5
+            elif win_rate < 35:
+                local -= 7
+            if profit_factor >= 1.35:
+                local += 5
+            elif 0 < profit_factor < 0.85:
+                local -= 6
+            if avg_r > 0.25:
+                local += 3
+            elif avg_r < -0.2:
+                local -= 3
+            if false_rate > 45:
+                local -= 4
+            adjustment += local * weight
+            reasons.append(f"{trades} trades WR {win_rate:.1f}% PF {profit_factor:.2f}")
+        return {
+            "score_adjustment": max(-15.0, min(12.0, adjustment)),
+            "evidence_trades": evidence,
+            "reasons": reasons,
+        }
 
     def get_strategy_real_win_rate(self, strategy_id, regime=None):
         """Get real win rate for a strategy, optionally filtered by regime."""

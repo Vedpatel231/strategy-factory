@@ -11,13 +11,18 @@ ACTIVE_COINS = set(config.CRYPTO_ASSETS)  # Backward-compatible name for dashboa
 STOCK_ASSETS = set(config.STOCK_ASSETS)
 STOCK_MAX_ALLOCATION_PCT = 40.0  # Max 40% of portfolio in stocks combined
 ACTIVE_STRATEGIES = {
-    "adaptive_breakout",
-    "rsi_mean_reversion",
-    "macd_crossover",
-    "vwap_bounce",
+    "trend_pullback",
     "ema_crossover",
+    "macd_momentum",
+    "rsi_mean_reversion",
+    "bollinger_reversion",
+    "breakout_retest",
+    "donchian_breakout",
+    "vwap_bounce",
+    "atr_momentum_expansion",
+    "supertrend_continuation",
 }
-INTRADAY_STOCK_STRATEGIES = {"rsi_mean_reversion", "macd_crossover", "vwap_bounce", "ema_crossover"}
+INTRADAY_STOCK_STRATEGIES = set()
 INTRADAY_STOCK_MAX_ALLOCATION_PCT = 25.0  # Max 25% in intraday stock strategies combined
 
 
@@ -77,11 +82,15 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
 
         asset = ev.get("pair", "").split("/")[0].upper()
         stype = ev.get("strategy_type", "").lower()
+        timeframe = ev.get("timeframe") or config.DESK_ENTRY_TIMEFRAME
         if asset not in ACTIVE_ASSETS:
             excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Asset {asset} not in active set"})
             continue
         if stype not in ACTIVE_STRATEGIES:
             excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Strategy type {stype} not in active set"})
+            continue
+        if timeframe != config.DESK_ENTRY_TIMEFRAME:
+            excluded.append({"bot_name": ev.get("bot_name"), "reason": f"Timeframe {timeframe} is legacy; desk entries use {config.DESK_ENTRY_TIMEFRAME}"})
             continue
 
         # Bootstrap bots skip quality thresholds — they need to trade to
@@ -91,6 +100,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
                 "bot_name": ev.get("bot_name", "?"),
                 "pair": ev.get("pair", ""),
                 "strategy_type": ev.get("strategy_type", ""),
+                "timeframe": timeframe,
                 "score": 50,  # equal weight across all bootstrap bots
                 "metrics": m,
                 "adaptation_score": adapt,
@@ -134,6 +144,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
             "bot_name": ev.get("bot_name", "?"),
             "pair": ev.get("pair", ""),
             "strategy_type": ev.get("strategy_type", ""),
+            "timeframe": timeframe,
             "score": max(1, score),
             "metrics": m,
             "adaptation_score": adapt,
@@ -229,6 +240,7 @@ def allocate_portfolio(capital, evaluations, min_allocation_pct=0.3, max_allocat
             "bot_name": e["bot_name"],
             "pair": e["pair"],
             "strategy_type": e["strategy_type"],
+            "timeframe": e.get("timeframe", config.DESK_ENTRY_TIMEFRAME),
             "allocation_usd": e["allocation_usd"],
             "allocation_pct": round(e["final_pct"], 1),
             "score": round(e["score"], 1),

@@ -693,16 +693,65 @@ def risk_status():
 @app.route("/api/intraday/state")
 @require_auth
 def intraday_state():
-    """Return latest intraday signal/regime evaluations by symbol."""
+    """Return latest live signal/regime evaluations by symbol."""
     try:
+        from decision_logger import load_trading_desk_state
         from intraday_engine import load_intraday_state
+        desk_state = load_trading_desk_state()
+        if desk_state and desk_state.get("symbols"):
+            return jsonify({
+                "source": "professional_trading_desk",
+                "seeded_metrics_included": False,
+                "ceo": desk_state.get("ceo", {}),
+                "managers": desk_state.get("managers", []),
+                "registry": desk_state.get("registry", {}),
+                "summary": desk_state.get("summary", {}),
+                "decision_log": desk_state.get("decision_log", []),
+                "symbols": desk_state.get("symbols", {}),
+                "updated_at": desk_state.get("updated_at"),
+            })
         return jsonify({
-            "source": "live_intraday_signal_engine",
+            "source": "legacy_intraday_signal_engine",
             "seeded_metrics_included": False,
             "symbols": load_intraday_state(),
         })
     except Exception as e:
         return jsonify({"error": str(e), "symbols": {}})
+
+
+@app.route("/api/trading-desk/state")
+@require_auth
+def trading_desk_state():
+    """Return the professional CEO/manager/bot desk state."""
+    try:
+        from decision_logger import load_trading_desk_state
+        state = load_trading_desk_state()
+        return jsonify(state or {
+            "source": "professional_trading_desk",
+            "symbols": {},
+            "managers": [],
+            "summary": {},
+            "message": "No trading desk cycle has run yet.",
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "symbols": {}, "managers": []}), 500
+
+
+@app.route("/api/trading-desk/run-now", methods=["POST"])
+@require_auth
+def trading_desk_run_now():
+    """Run one professional desk cycle from the dashboard."""
+    data = request.get_json(silent=True) or {}
+    if not data.get("confirm"):
+        return jsonify({"error": "Missing 'confirm: true'"}), 400
+    try:
+        dry_run = bool(data.get("dry_run", False))
+        from trading_desk import TradingDeskEngine
+        state = TradingDeskEngine(dry_run=dry_run).run_cycle(dry_run=dry_run)
+        return jsonify(state)
+    except Exception as e:
+        logger.error(f"Trading desk run failed: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/debug/candles/<symbol>")
@@ -1080,11 +1129,10 @@ def daily_analysis_status():
 
 
 # ── AUTO-RESET: detect stale or incomplete DB ────────────────────────
-EXPECTED_STRATEGY_TYPES = {"adaptive_breakout", "rsi_mean_reversion", "macd_crossover", "vwap_bounce", "ema_crossover"}
+EXPECTED_STRATEGY_TYPES = set(getattr(config, "PROFESSIONAL_STRATEGIES", []))
 
 def _auto_reset_if_needed():
-    """Reset + reseed the DB if it has old strategy types or is missing
-    the expected intraday strategies. Runs once on first boot after deploy."""
+    """Add missing professional strategy rows without clearing live history."""
     try:
         import sqlite3
         if not os.path.exists(config.DB_PATH):
@@ -1093,26 +1141,12 @@ def _auto_reset_if_needed():
         rows = conn.execute("SELECT DISTINCT type FROM strategies").fetchall()
         types = {r[0] for r in rows}
         conn.close()
-        old_types = types - EXPECTED_STRATEGY_TYPES
         missing_types = EXPECTED_STRATEGY_TYPES - types
-        if old_types:
-            logger.info(f"Detected old strategy types {old_types} — running reset...")
-            import subprocess
-            subprocess.run(
-                [sys.executable, "reset_for_ema_crossover.py"],
-                cwd=os.path.dirname(os.path.abspath(__file__)),
-                timeout=120,
-            )
-            logger.info("Strategy reset complete.")
-        elif missing_types:
-            logger.info(f"Missing strategy types {missing_types} — reseeding DB...")
-            import subprocess
-            subprocess.run(
-                [sys.executable, "reset_for_ema_crossover.py"],
-                cwd=os.path.dirname(os.path.abspath(__file__)),
-                timeout=120,
-            )
-            logger.info("DB reseed complete — new intraday strategies added.")
+        if missing_types:
+            logger.info(f"Missing professional strategy types {missing_types} — adding seed rows...")
+            import seed_data
+            seed_data.ensure_seed_data()
+            logger.info("Professional strategy seed rows ensured.")
     except Exception as e:
         logger.warning(f"Auto-reset check failed (non-fatal): {e}")
 

@@ -2,18 +2,15 @@
 Strategy Factory — Alpaca Auto-Trader Background Worker
 
 Multi-schedule worker:
-  - 4h main cycle: Adaptive Breakout entries (crypto 24/7, stocks during market hours)
-  - 15m intraday cycle: RSI-MR, MACD, VWAP, EMA-X for stocks (market hours only)
-  - 30m intraday cycle: Same strategies, 30m timeframe (market hours only)
+  - 15m professional trading desk cycle: CEO → asset managers → risk → Alpaca
   - 15m exit checks: ATR trailing, hard stop, ADX exit, TP for all positions
 
 Each main cycle:
-  1. Invoke daily_runner.py to refresh portfolio analysis
-  2. Execute rebalancing trades on Alpaca paper trading
+  1. Run CEO market intelligence
+  2. Let each asset manager rank its 1H strategy bots
+  3. Send valid trade requests through risk and Alpaca paper execution
 
-Intraday cycles:
-  1. Evaluate intraday strategies for stock symbols
-  2. Execute trades for signals with sufficient confidence
+Legacy 15m/30m stock cycles are disabled unless ENABLE_LEGACY_INTRADAY=true.
 
 Controlled via data/alpaca_auto_trade.enabled flag file.
 """
@@ -36,14 +33,15 @@ DATA_DIR = config.DATA_DIR
 REPORT_DIR = config.REPORT_DIR
 FLAG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.enabled")
 LOG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.log.json")
-# Main cycle runs every 4 hours (matching 4h candle timeframe)
-# Exit checks run every 15 minutes for faster stop-loss response
+# Main professional desk cycle runs every 15 minutes. Entries are based on
+# 1H candles, with 4H/1D confirmation used only by managers.
 DEFAULT_INTERVAL_MIN = int(
     os.environ.get("ALPACA_AUTO_TRADE_INTERVAL_MIN")
     or os.environ.get("AUTO_TRADE_INTERVAL_MIN")
-    or "240"  # 4 hours = 240 minutes
+    or str(getattr(config, "DESK_CYCLE_INTERVAL_MIN", 15))
 )
 EXIT_CHECK_INTERVAL_MIN = int(os.environ.get("EXIT_CHECK_INTERVAL_MIN", "15"))
+ENABLE_LEGACY_INTRADAY = os.environ.get("ENABLE_LEGACY_INTRADAY", "false").lower() == "true"
 
 # Intraday cycle intervals (stocks only, market hours only)
 INTRADAY_15M_INTERVAL_SEC = 15 * 60   # 15 minutes
@@ -131,7 +129,7 @@ class AlpacaAutoTrader:
         self._stop.set()
 
     def _loop(self):
-        logger.info("AlpacaAutoTrader loop entered (4h main + 15m/30m intraday + 15m exit checks)")
+        logger.info("AlpacaAutoTrader loop entered (15m professional desk + 15m exit checks)")
         exit_check_sec = EXIT_CHECK_INTERVAL_MIN * 60
         last_main_run = 0
         last_15m_run = 0
@@ -166,7 +164,7 @@ class AlpacaAutoTrader:
                     logger.warning(f"Market open check failed: {e}")
                     market_open = False
 
-                if market_open:
+                if ENABLE_LEGACY_INTRADAY and market_open:
                     # 15m intraday cycle
                     if now - last_15m_run >= INTRADAY_15M_INTERVAL_SEC:
                         try:
@@ -196,7 +194,7 @@ class AlpacaAutoTrader:
                                 "error": str(e),
                             })
                             last_30m_run = time.time()
-                else:
+                elif ENABLE_LEGACY_INTRADAY:
                     logger.debug(f"US market closed — skipping intraday cycles")
 
                 # Between main/intraday cycles: check exits
@@ -221,14 +219,46 @@ class AlpacaAutoTrader:
     def _run_once(self):
         """One full cycle: re-analyze, then rebalance on Alpaca."""
         start_ts = utc_now()
-        logger.info("🦙 Alpaca auto-trade cycle start")
+        logger.info("🦙 Professional trading desk cycle start")
 
         entry = {
             "timestamp": start_ts.isoformat(),
             "status": "running",
             "broker": "alpaca",
+            "cycle_type": "trading_desk",
             "steps": {},
         }
+
+        try:
+            from trading_desk import TradingDeskEngine
+            desk_state = TradingDeskEngine().run_cycle(dry_run=False)
+            entry["steps"]["trading_desk"] = {
+                "ok": True,
+                "summary": desk_state.get("summary", {}),
+                "ceo": desk_state.get("ceo", {}),
+                "broker_note": desk_state.get("broker_note", ""),
+            }
+            entry["status"] = "ok"
+            entry["duration_sec"] = (utc_now() - start_ts).total_seconds()
+            self._last_run = start_ts.isoformat()
+            self._last_result = entry
+            self._last_error = None
+            self._append_log(entry)
+            self._refresh_live_monitor()
+            logger.info(f"🦙 Professional trading desk cycle complete ({entry['status']})")
+            return
+        except Exception as e:
+            logger.error(f"Professional trading desk cycle failed: {e}", exc_info=True)
+            entry["steps"]["trading_desk"] = {"ok": False, "error": str(e)}
+            entry["status"] = "error"
+            entry["error"] = str(e)
+            entry["duration_sec"] = (utc_now() - start_ts).total_seconds()
+            self._last_run = start_ts.isoformat()
+            self._last_result = entry
+            self._last_error = str(e)
+            self._append_log(entry)
+            self._refresh_live_monitor()
+            return
 
         try:
             # Risk checks before any trading
@@ -466,28 +496,22 @@ class AlpacaAutoTrader:
             self._refresh_live_monitor()
 
     def _check_exits_only(self):
-        """Quick exit check between main cycles — ATR trailing, hard stop, ADX exit.
+        """Quick exit check between main cycles — stop, TP, partial, trailing.
         Returns dict with exit info if any positions were checked/closed."""
         try:
             from alpaca_client import AlpacaPaperClient
-            from alpaca_client import normalize_crypto_symbol
-            from alpaca_trader import AlpacaTrader
+            from exit_manager import ExitManager
 
             client = AlpacaPaperClient()
             positions_list = client.get_positions()
             if not positions_list:
                 return None  # no open positions, nothing to check
 
-            positions = {normalize_crypto_symbol(p["symbol"]): p for p in positions_list}
-            trader = AlpacaTrader()
-
-            # Backfill risk book if needed
-            trader._backfill_risk_book(positions)
-
-            exit_orders = trader._enforce_adaptive_exits(positions)
+            exit_result = ExitManager(client=client).check_exits(positions=positions_list, dry_run=False)
+            exit_orders = exit_result.get("actions", [])
             info = {
-                "positions_checked": len(positions),
-                "symbols": list(positions.keys()),
+                "positions_checked": len(positions_list),
+                "symbols": [p.get("symbol") for p in positions_list],
                 "exits_triggered": len(exit_orders) if exit_orders else 0,
             }
             if exit_orders:
@@ -526,9 +550,12 @@ class AlpacaAutoTrader:
         return {
             "enabled": self.is_enabled(),
             "broker": "alpaca",
+            "engine": "professional_trading_desk",
             "thread_alive": bool(self._thread and self._thread.is_alive()),
             "interval_min": self.interval_min,
-            "intraday_intervals": {"15m": INTRADAY_15M_INTERVAL_SEC // 60, "30m": INTRADAY_30M_INTERVAL_SEC // 60},
+            "entry_timeframe": getattr(config, "DESK_ENTRY_TIMEFRAME", "1h"),
+            "confirm_timeframes": getattr(config, "DESK_CONFIRM_TIMEFRAMES", ["4h", "1D"]),
+            "intraday_intervals": {"legacy_enabled": ENABLE_LEGACY_INTRADAY},
             "us_market_open": market_open,
             "last_run": self._last_run,
             "next_run": next_run,

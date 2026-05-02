@@ -1178,11 +1178,16 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
     # ── PAGE: BOT STATUS ─────────────────────────────────────────────────
     _STRATEGY_LABELS = {
-        "adaptive_breakout": ("Breakout", "#00d4ff"),
-        "rsi_mean_reversion": ("RSI-MR", "#a78bfa"),
-        "macd_crossover": ("MACD", "#f59e0b"),
-        "vwap_bounce": ("VWAP", "#10b981"),
+        "trend_pullback": ("Pullback", "#00d4ff"),
         "ema_crossover": ("EMA-X", "#f472b6"),
+        "macd_momentum": ("MACD", "#f59e0b"),
+        "rsi_mean_reversion": ("RSI-MR", "#a78bfa"),
+        "bollinger_reversion": ("Bollinger", "#60a5fa"),
+        "breakout_retest": ("Retest", "#22c55e"),
+        "donchian_breakout": ("Donchian", "#00d4ff"),
+        "vwap_bounce": ("VWAP", "#10b981"),
+        "atr_momentum_expansion": ("ATR", "#ef4444"),
+        "supertrend_continuation": ("Supertrend", "#39ff14"),
     }
 
     def _page_bots(self, bots_data, evaluations):
@@ -1207,8 +1212,25 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </tr>"""
 
         return f"""<div class="page" id="bots">
-  <div class="page-title"><span class="accent">🤖</span> Bot Signals <span class="data-badge">LIVE INTRADAY STATE</span></div>
+  <div class="page-title"><span class="accent">🤖</span> Bot Signals <span class="data-badge">PROFESSIONAL DESK STATE</span></div>
   <p class="page-sub">Use this page to understand what the bot is seeing right now: signal, confidence, regime, and why a symbol was accepted or rejected.</p>
+  <div class="section-card">
+    <div class="section-header">
+      <div><div class="section-title">CEO & Asset Managers</div><div class="section-sub">Professional desk state: market posture, per-asset manager decisions, active bot, and closest setup.</div></div>
+      <span class="status-pill" id="deskLiveStatus">Loading</span>
+    </div>
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">CEO Posture</div><div class="metric-value" id="deskCeoPosture" style="font-size:1.2em;">—</div><div class="metric-sub" id="deskCeoReason">Waiting for cycle</div></div>
+      <div class="metric-card"><div class="metric-label">CEO Regime</div><div class="metric-value" id="deskCeoRegime" style="font-size:1.2em;">—</div><div class="metric-sub" id="deskCeoDirection">—</div></div>
+      <div class="metric-card"><div class="metric-label">Managers</div><div class="metric-value" id="deskManagers">—</div><div class="metric-sub">One per asset</div></div>
+      <div class="metric-card"><div class="metric-label">Active Entries</div><div class="metric-value" id="deskActiveEntries" style="color:var(--lime);">—</div><div class="metric-sub">Approved candidates this cycle</div></div>
+    </div>
+    <div id="deskManagersEmpty" class="read-only-note">No professional desk cycle has been saved yet.</div>
+    <div id="deskManagersTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Asset</th><th>Manager Action</th><th>Active Bot</th><th class="num">Confidence</th><th class="num">Score</th><th>Why / Waiting For</th></tr></thead>
+      <tbody id="deskManagersBody"></tbody>
+    </table></div>
+  </div>
   <div class="metric-grid">
     <div class="metric-card"><div class="metric-label">Symbols Checked</div><div class="metric-value" id="signalsSymbols">—</div><div class="metric-sub">Latest intraday cycle</div></div>
     <div class="metric-card"><div class="metric-label">Tradable Signals</div><div class="metric-value" id="signalsTradable" style="color:var(--lime);">—</div><div class="metric-sub">Passed quality gate</div></div>
@@ -1338,10 +1360,19 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         vol_ratio = self._fmt_metric(details.get("coefficient_of_variation", details.get("volatility_ratio")), 2)
 
         return f"""<div class="page" id="regime">
-  <div class="page-title"><span class="accent">🌊</span> Market Regime <span class="data-badge">LIVE INTRADAY STATE</span></div>
+  <div class="page-title"><span class="accent">🌊</span> Market Regime <span class="data-badge">CEO MARKET INTELLIGENCE</span></div>
   <p class="page-sub">This page should explain the market condition behind the trade gate, not just show a pretty chart. The symbol table updates from the intraday engine state.</p>
   <div class="regime-badge-large regime-{regime}">
     {emoji} Seed Baseline: {regime.replace('_',' ').title()} — {confidence:.0f}% Confidence
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">CEO Market Intelligence</div><div class="section-sub">The live desk-level read that controls manager aggressiveness and strategy preference.</div></div><span class="status-pill" id="regimeCeoStatus">Loading</span></div>
+    <div class="metric-grid" style="margin-bottom:0;">
+      <div class="metric-card"><div class="metric-label">Direction</div><div class="metric-value" id="regimeCeoDirection" style="font-size:1.15em;">—</div></div>
+      <div class="metric-card"><div class="metric-label">Regime</div><div class="metric-value" id="regimeCeoRegime" style="font-size:1.15em;">—</div></div>
+      <div class="metric-card"><div class="metric-label">Posture</div><div class="metric-value" id="regimeCeoPosture" style="font-size:1.15em;">—</div></div>
+      <div class="metric-card"><div class="metric-label">Risk Multiplier</div><div class="metric-value" id="regimeCeoRisk" style="font-size:1.15em;">—</div></div>
+    </div>
   </div>
   <div class="cards-row">
     <div class="card"><div class="card-label">Live Regimes</div><div class="card-value" id="regimeLiveCount" style="font-size:1.2em;">—</div><div class="card-sub">Symbols classified</div></div>
@@ -1955,10 +1986,11 @@ async function loadInsightData(force) {{
   _insightInFlight = true;
   try {{
     var state = await apiGet('/api/intraday/state').catch(function() {{ return {{symbols: {{}}}}; }});
+    var desk = await apiGet('/api/trading-desk/state').catch(function() {{ return {{symbols: {{}}, managers: [], summary: {{}}}}; }});
     var journal = await apiGet('/api/trade-journal?limit=200').catch(function() {{ return {{events: []}}; }});
     var ledger = await apiGet('/api/alpaca/trade-ledger?limit=500').catch(function() {{ return {{rows: [], summary: {{}}}}; }});
     var learning = await apiGet('/api/learning/live-status').catch(function() {{ return {{strategies: [], blocked_pairs: []}}; }});
-    _insightCache = {{state: state, journal: journal, ledger: ledger, learning: learning, fetchedAt: Date.now()}};
+    _insightCache = {{state: state, desk: desk, journal: journal, ledger: ledger, learning: learning, fetchedAt: Date.now()}};
   }} finally {{
     _insightInFlight = false;
   }}
@@ -2096,7 +2128,10 @@ async function renderStrategyScorecard(force) {{
 
 async function renderSignalBoard(force) {{
   var data = await loadInsightData(force);
-  var symbols = Object.values((data.state && data.state.symbols) || {{}});
+  var desk = data.desk || data.state || {{}};
+  var symbols = Object.values((desk && desk.symbols) || (data.state && data.state.symbols) || {{}});
+  var managers = (desk && desk.managers) || (data.state && data.state.managers) || [];
+  var ceo = (desk && desk.ceo) || (data.state && data.state.ceo) || {{}};
   var blockedPairs = (data.learning && data.learning.blocked_pairs) || [];
   var body = document.getElementById('signalsBody');
   var table = document.getElementById('signalsTable');
@@ -2111,6 +2146,39 @@ async function renderSignalBoard(force) {{
   setCardText('signalsBlocked', String(blockedPairs.length), blockedPairs.length ? 'var(--red)' : null);
   setCardText('signalsTopReject', topRejects.length ? topRejects[0].reason : '—');
   setStatusPill('signalsLiveStatus', symbols.length ? 'Live state loaded' : 'No state yet', symbols.length ? 'ok' : 'warn');
+  setStatusPill('deskLiveStatus', managers.length ? 'Desk state loaded' : 'No desk state yet', managers.length ? 'ok' : 'warn');
+  setCardText('deskCeoPosture', ceo.posture ? String(ceo.posture).toUpperCase() : '—');
+  setCardText('deskCeoRegime', ceo.market_regime ? String(ceo.market_regime).replace(/_/g, ' ').toUpperCase() : '—');
+  setCardText('deskManagers', managers.length ? String(managers.length) : '0');
+  var enterCount = managers.filter(function(m) {{ return m.action === 'enter'; }}).length;
+  setCardText('deskActiveEntries', String(enterCount));
+  var ceoReason = document.getElementById('deskCeoReason');
+  if (ceoReason) ceoReason.textContent = (ceo.reasons || []).slice(0, 1).join(' ') || 'Waiting for CEO analysis';
+  var ceoDir = document.getElementById('deskCeoDirection');
+  if (ceoDir) ceoDir.textContent = (ceo.market_direction || 'unknown') + ' · trend strength ' + (ceo.trend_strength || '—');
+  var mgrBody = document.getElementById('deskManagersBody');
+  var mgrTable = document.getElementById('deskManagersTable');
+  var mgrEmpty = document.getElementById('deskManagersEmpty');
+  if (mgrBody && mgrTable && mgrEmpty) {{
+    if (!managers.length) {{
+      mgrTable.style.display = 'none';
+      mgrEmpty.style.display = 'block';
+    }} else {{
+      mgrEmpty.style.display = 'none';
+      mgrTable.style.display = 'block';
+      mgrBody.innerHTML = managers.slice().sort(function(a,b) {{ return String(a.symbol || '').localeCompare(String(b.symbol || '')); }}).map(function(m) {{
+        var cls = m.action === 'enter' ? 'ok' : (m.action === 'cooldown' ? 'danger' : 'warn');
+        return '<tr>' +
+          '<td><strong>' + escHtml(m.symbol || '?') + '</strong><span class="muted-line">' + escHtml(m.asset_class || '') + '</span></td>' +
+          '<td><span class="status-pill ' + cls + '">' + escHtml(String(m.action || 'wait').toUpperCase()) + '</span></td>' +
+          '<td>' + escHtml(m.active_bot || 'None') + '<span class="muted-line">' + escHtml(m.active_strategy || '') + '</span></td>' +
+          '<td class="num">' + Number(m.confidence || 0).toFixed(2) + '</td>' +
+          '<td class="num">' + Number(m.score || 0).toFixed(1) + '</td>' +
+          '<td>' + escHtml(shortText(m.reason || m.rejection_reason || 'No reason stored', 260)) + '</td>' +
+          '</tr>';
+      }}).join('');
+    }}
+  }}
   if (!symbols.length) {{
     table.style.display = 'none';
     empty.style.display = 'block';
@@ -2245,11 +2313,18 @@ async function renderLearningPage(force) {{
 
 async function renderRegimePage(force) {{
   var data = await loadInsightData(force);
-  var symbols = Object.values((data.state && data.state.symbols) || {{}});
+  var desk = data.desk || data.state || {{}};
+  var ceo = (desk && desk.ceo) || (data.state && data.state.ceo) || {{}};
+  var symbols = Object.values((desk && desk.symbols) || (data.state && data.state.symbols) || {{}});
   var body = document.getElementById('regimeLiveBody');
   var table = document.getElementById('regimeLiveTable');
   var empty = document.getElementById('regimeLiveEmpty');
   if (!body || !table || !empty) return;
+  setStatusPill('regimeCeoStatus', ceo.market_regime ? 'CEO live' : 'No CEO state', ceo.market_regime ? 'ok' : 'warn');
+  setCardText('regimeCeoDirection', ceo.market_direction ? String(ceo.market_direction).toUpperCase() : '—');
+  setCardText('regimeCeoRegime', ceo.market_regime ? String(ceo.market_regime).replace(/_/g, ' ').toUpperCase() : '—');
+  setCardText('regimeCeoPosture', ceo.posture ? String(ceo.posture).toUpperCase() : '—');
+  setCardText('regimeCeoRisk', ceo.risk_multiplier !== undefined ? Number(ceo.risk_multiplier).toFixed(2) + 'x' : '—');
   var trending = 0, choppy = 0, highVol = 0;
   symbols.forEach(function(s) {{
     var rg = (s.setup_regime && s.setup_regime.label) || (s.trade_regime && s.trade_regime.label) || 'unknown';
@@ -2293,35 +2368,42 @@ async function renderRegimePage(force) {{
 async function renderDecisionPage(force) {{
   var data = await loadInsightData(force);
   var events = (data.journal && data.journal.events) || [];
-  var submitted = events.filter(function(e) {{ return e.event === 'order_submitted'; }}).length;
-  var rejected = events.filter(function(e) {{ return e.event === 'entry_rejected' || e.event === 'target_downweighted'; }}).length;
-  var closed = events.filter(function(e) {{ return e.event === 'position_closed'; }}).length;
-  setCardText('decEvents', String(events.length));
+  var deskEvents = ((data.desk && data.desk.decision_log) || []).map(function(e) {{
+    var row = Object.assign({{}}, e);
+    row._source = 'desk';
+    return row;
+  }});
+  var allEvents = deskEvents.concat(events || []);
+  allEvents.sort(function(a,b) {{ return String(b.timestamp || '').localeCompare(String(a.timestamp || '')); }});
+  var submitted = allEvents.filter(function(e) {{ return e.event === 'order_submitted'; }}).length;
+  var rejected = allEvents.filter(function(e) {{ return e.event === 'entry_rejected' || e.event === 'target_downweighted' || e.event === 'order_rejected'; }}).length;
+  var closed = allEvents.filter(function(e) {{ return e.event === 'position_closed'; }}).length;
+  setCardText('decEvents', String(allEvents.length));
   setCardText('decSubmitted', String(submitted));
   setCardText('decRejected', String(rejected));
   setCardText('decClosed', String(closed));
-  setStatusPill('decLiveStatus', events.length ? 'Real journal active' : 'No events', events.length ? 'ok' : 'warn');
+  setStatusPill('decLiveStatus', allEvents.length ? 'Decision log active' : 'No events', allEvents.length ? 'ok' : 'warn');
   var table = document.getElementById('decTable');
   var empty = document.getElementById('decEmpty');
   var body = document.getElementById('decBody');
   if (!table || !empty || !body) return;
-  if (!events.length) {{
+  if (!allEvents.length) {{
     table.style.display = 'none';
     empty.style.display = 'block';
     return;
   }}
   empty.style.display = 'none';
   table.style.display = 'block';
-  body.innerHTML = events.slice(0, 100).map(function(e) {{
+  body.innerHTML = allEvents.slice(0, 140).map(function(e) {{
     var event = e.event || 'event';
-    var cls = event === 'order_submitted' ? 'ok' : event === 'position_closed' ? '' : 'warn';
+    var cls = event === 'order_submitted' ? 'ok' : event === 'position_closed' ? '' : (event.indexOf('rejected') >= 0 ? 'danger' : 'warn');
     var conf = e.confidence !== undefined && e.confidence !== null ? Number(e.confidence).toFixed(2) : '—';
-    var reason = e.reason || e.entry_reason || (e.signal && e.signal.reason) || '';
+    var reason = e.reason || e.entry_reason || (e.signal && e.signal.reason) || (e.reasons || []).join('; ') || '';
     return '<tr>' +
       '<td>' + escHtml((e.timestamp || '').replace('T',' ').slice(0,19)) + '</td>' +
       '<td><strong>' + escHtml(e.symbol || '—') + '</strong></td>' +
       '<td><span class="status-pill ' + cls + '">' + escHtml(event) + '</span></td>' +
-      '<td>' + escHtml(e.strategy || '—') + '</td>' +
+      '<td>' + escHtml(e.strategy || e.active_strategy || '—') + '</td>' +
       '<td class="num">' + conf + '</td>' +
       '<td>' + escHtml(shortText(reason || 'No reason stored', 260)) + '</td>' +
       '</tr>';
@@ -3659,9 +3741,10 @@ async function alpLiveRefreshPositions(opts) {{
       var plSign = p.unrealized_pl >= 0 ? '+' : '';
       var entry = Number(r.entry_price || p.avg_entry_price || 0);
       var high = Number(r.high_water_price || p.current_price || entry || 0);
-      var sl = riskPrice(entry, r.stop_loss_pct, 'stop');
-      var tp = riskPrice(entry, r.take_profit_pct, 'take');
-      var trail = trailPrice(high, r.trailing_stop_pct);
+      var sl = Number(r.stop_loss_price || 0) || riskPrice(entry, r.stop_loss_pct, 'stop');
+      var tp = Number(r.take_profit_price || 0) || riskPrice(entry, r.take_profit_pct, 'take');
+      var partial = Number(r.partial_profit_price || 0);
+      var trail = Number(r.trailing_stop_price || 0) || trailPrice(high, r.trailing_stop_pct);
       var reason = shortReason(r.entry_reason || 'No bot entry reason stored for this position.');
       var strategy = r.strategy || 'manual/legacy';
       var regime = r.regime || 'unknown';
@@ -3671,7 +3754,7 @@ async function alpLiveRefreshPositions(opts) {{
         '<td class="price-cell num">' + fmtPrice(p.current_price) + '</td>' +
         '<td class="num">' + fmtUSD(p.market_value) + '</td>' +
         '<td class="num" style="color:' + plColor + ';font-weight:700;">' + plSign + fmtUSD(p.unrealized_pl) + '<span class="muted-line" style="color:' + plColor + ';">' + plSign + pnlPct.toFixed(2) + '%</span></td>' +
-        '<td class="risk-cell"><span style="color:var(--red);">SL ' + fmtPrice(sl) + '</span><br><span style="color:var(--lime);">TP ' + fmtPrice(tp) + '</span><br><span style="color:var(--amber);">Trail ' + fmtPrice(trail) + '</span></td>' +
+        '<td class="risk-cell"><span style="color:var(--red);">SL ' + fmtPrice(sl) + '</span><br><span style="color:var(--lime);">TP ' + fmtPrice(tp) + '</span><br><span style="color:var(--cyan);">Partial ' + fmtPrice(partial) + '</span><br><span style="color:var(--amber);">Trail ' + fmtPrice(trail) + '</span></td>' +
         '<td>' + esc(strategy) + '<span class="muted-line">conf ' + (r.confidence !== undefined && r.confidence !== null ? Number(r.confidence).toFixed(2) : '—') + '</span></td>' +
         '<td>' + esc(regime) + '</td>' +
         '</tr>' +
@@ -3976,7 +4059,7 @@ function alpAutoUpdateUI(data) {{
       marketEl.textContent = '🟢 US Market Open';
       marketEl.style.color = 'var(--lime)';
     }} else if (data.us_market_open === false) {{
-      marketEl.textContent = '🔴 US Market Closed (intraday paused)';
+      marketEl.textContent = '🔴 US Market Closed (stock entries deferred)';
       marketEl.style.color = 'var(--red)';
     }} else {{
       marketEl.textContent = '⚪ Market status unknown';
@@ -3986,7 +4069,7 @@ function alpAutoUpdateUI(data) {{
   // Intraday run counter
   var intradayCountEl = document.getElementById('alpAutoIntradayCount');
   if (intradayCountEl) {{
-    intradayCountEl.textContent = (data.intraday_runs_total || 0) + ' intraday · ' + (data.exit_check_runs_total || 0) + ' exit checks';
+    intradayCountEl.textContent = (data.intraday_runs_total || 0) + ' legacy intraday · ' + (data.exit_check_runs_total || 0) + ' exit checks';
   }}
   // Render logs
   var runs = data.recent_runs || [];

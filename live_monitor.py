@@ -73,6 +73,7 @@ def build_live_monitor_snapshot(hours=24):
     from learning_engine import LearningEngine
     from trade_journal import JOURNAL_FILE, load_trade_ledger
     from intraday_engine import load_intraday_state
+    from decision_logger import load_trading_desk_state
 
     now = _utcnow()
     cutoff = now - timedelta(hours=hours)
@@ -83,7 +84,8 @@ def build_live_monitor_snapshot(hours=24):
     journal_events = list(reversed(_read_json(JOURNAL_FILE, [])))
     ledger_rows = load_trade_ledger(limit=2000)
     auto_runs = list(reversed(_read_json(LOG_FILE, [])))
-    intraday_state = load_intraday_state()
+    desk_state = load_trading_desk_state()
+    intraday_state = (desk_state.get("symbols") if isinstance(desk_state, dict) else None) or load_intraday_state()
     learner = LearningEngine()
 
     recent_events = [e for e in journal_events if _in_window(e.get("timestamp") or e.get("closed_at"), cutoff)]
@@ -196,6 +198,8 @@ def build_live_monitor_snapshot(hours=24):
             "tradable_signals_now": tradable_signals,
             "rejected_signals_now": rejected_signals,
             "top_reject_reason_now": top_reject_reason,
+            "ceo_posture": (desk_state.get("ceo") or {}).get("posture") if isinstance(desk_state, dict) else None,
+            "ceo_regime": (desk_state.get("ceo") or {}).get("market_regime") if isinstance(desk_state, dict) else None,
         },
         "alerts": alerts,
     }

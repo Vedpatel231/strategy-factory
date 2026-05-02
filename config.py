@@ -28,9 +28,26 @@ DB_PATH = os.environ.get("STRATEGY_FACTORY_DB", os.path.join(DATA_DIR, "strategy
 CRYPTO_ASSETS = ["BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "ADA", "UNI", "AAVE", "LTC"]
 STOCK_ASSETS = ["TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"]
 
-# === Strategy Parameters (match TradingView Pine Script exactly) ===
+# === Professional Trading Desk Parameters ===
+DESK_ENTRY_TIMEFRAME = "1h"
+DESK_CONFIRM_TIMEFRAMES = ["4h", "1D"]
+DESK_CYCLE_INTERVAL_MIN = int(os.environ.get("DESK_CYCLE_INTERVAL_MIN", "15"))
+PROFESSIONAL_STRATEGIES = [
+    "trend_pullback",
+    "ema_crossover",
+    "macd_momentum",
+    "rsi_mean_reversion",
+    "bollinger_reversion",
+    "breakout_retest",
+    "donchian_breakout",
+    "vwap_bounce",
+    "atr_momentum_expansion",
+    "supertrend_continuation",
+]
+
+# === Legacy Adaptive Breakout Strategy Parameters ===
 STRATEGY_NAME = "adaptive_breakout"
-STRATEGY_TIMEFRAME = "4h"
+STRATEGY_TIMEFRAME = "1h"
 DONCHIAN_PERIOD = 20          # Donchian channel lookback
 ADX_PERIOD = 14               # ADX smoothing period
 ADX_ENTRY_THRESHOLD = 20      # Only enter when ADX > 20 (trending)

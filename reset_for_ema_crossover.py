@@ -1,14 +1,14 @@
 """
-Strategy Factory — Fresh Start Reset for EMA Crossover Migration
+Strategy Factory — Fresh Start Reset for Professional 1H Desk Migration
 
 Clears all old strategy data, trade history, and learning state so the
-system starts clean with the new 10-bot EMA crossover configuration.
+system starts clean with the new professional 1H trading desk configuration.
 
 Run ONCE after deploying the new code:
     python reset_for_ema_crossover.py
 
 What it does:
-  1. Deletes and re-seeds the SQLite database with 10 EMA crossover bots
+  1. Deletes and re-seeds the SQLite database with professional 1H desk bots
   2. Clears the trade journal (old trend_following / backfill_recovery entries)
   3. Clears the learning engine state
   4. Clears the intraday state cache
@@ -43,7 +43,7 @@ DATA_FILES_TO_CLEAR = [
 
 def main():
     print(f"\n{C}{B}{'=' * 56}")
-    print("  EMA Crossover Migration — Fresh Start Reset")
+    print("  Professional 1H Desk Migration — Fresh Start Reset")
     print(f"{'=' * 56}{X}\n")
 
     data_dir = config.DATA_DIR
@@ -99,9 +99,9 @@ def main():
 
     print(f"\n  {G}{B}Fresh start complete!{X}")
     print(f"  {C}New system:{X}")
-    print(f"    • 10 EMA crossover bots (BTC, ETH, SOL, XRP, LINK, AVAX, ADA, UNI, AAVE, LTC)")
-    print(f"    • Single strategy: EMA(12/26) crossover on 15m candles")
-    print(f"    • ATR-based risk management (1 ATR SL, 2 ATR TP)")
+    print(f"    • 10 professional 1H strategy bots per asset")
+    print(f"    • CEO → asset manager → bot hierarchy")
+    print(f"    • ATR-based stops, take profits, partials, and trailing stops")
     print(f"    • All old trade history cleared")
     print(f"    • Learning engine reset to zero")
     print(f"\n  {C}Next steps:{X}")

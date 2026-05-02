@@ -112,6 +112,12 @@ class PositionRiskBook:
         max_hold_hours,
         reason,
         bot_names=None,
+        stop_loss_price=None,
+        take_profit_price=None,
+        partial_profit_price=None,
+        trailing_stop_logic=None,
+        risk_reward=None,
+        timeframe=None,
     ):
         existing = self.state.get(symbol, {})
         high_water = max(float(existing.get("high_water_price", 0) or 0), float(entry_price or 0))
@@ -131,6 +137,15 @@ class PositionRiskBook:
             "max_hold_hours": max_hold_hours,
             "entry_reason": reason,
             "bot_names": list(bot_names or []),
+            "stop_loss_price": stop_loss_price,
+            "take_profit_price": take_profit_price,
+            "partial_profit_price": partial_profit_price,
+            "partial_profit_taken": bool(existing.get("partial_profit_taken", False)),
+            "trailing_stop_logic": trailing_stop_logic or {},
+            "trailing_stop_price": (trailing_stop_logic or {}).get("initial_trail") if isinstance(trailing_stop_logic, dict) else None,
+            "trailing_active": bool(existing.get("trailing_active", False)),
+            "risk_reward": risk_reward,
+            "timeframe": timeframe,
         }
         self.save()
         return self.state[symbol]
@@ -151,6 +166,14 @@ class PositionRiskBook:
         entry["updated_at"] = _utcnow()
         self.save()
         return entry
+
+    def update_fields(self, symbol, **fields):
+        if symbol not in self.state:
+            return None
+        self.state[symbol].update(fields)
+        self.state[symbol]["updated_at"] = _utcnow()
+        self.save()
+        return self.state[symbol]
 
     def get(self, symbol):
         return self.state.get(symbol)

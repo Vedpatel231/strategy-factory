@@ -30,11 +30,21 @@ def seed_if_needed():
         print("[entrypoint] DB seeded ✓")
     else:
         print(f"[entrypoint] DB already exists at {config.DB_PATH}")
+        try:
+            import seed_data
+            result = seed_data.ensure_seed_data()
+            print(f"[entrypoint] Professional bots ensured: +{result.get('added', 0)} strategies")
+        except Exception as exc:
+            print(f"[entrypoint] Professional seed ensure skipped: {exc}")
 
 
 def generate_dashboard_if_needed():
     dashboard_exists = os.path.exists(config.DASHBOARD_OUTPUT)
-    source_files = ["generate_dashboard.py", "dashboard_server.py", "daily_runner.py"]
+    source_files = [
+        "generate_dashboard.py", "dashboard_server.py", "daily_runner.py",
+        "trading_desk.py", "market_ceo.py", "asset_manager.py",
+        "bot_registry.py", "risk_manager.py",
+    ]
     repo_dir = os.path.dirname(__file__)
     source_mtime = max(
         os.path.getmtime(os.path.join(repo_dir, p))
