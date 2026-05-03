@@ -58,6 +58,15 @@ def _today_str():
     return _utcnow().strftime("%Y-%m-%d")
 
 
+def _safe_float(value, default=0.0):
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # 1. DrawdownCircuitBreaker
 # ---------------------------------------------------------------------------
@@ -257,8 +266,8 @@ class PositionStopLoss:
 
         for pos in positions:
             symbol = pos.get("symbol", "")
-            cost_basis = pos.get("cost_basis", 0.0)
-            market_value = pos.get("market_value", 0.0)
+            cost_basis = _safe_float(pos.get("cost_basis"))
+            market_value = _safe_float(pos.get("market_value"))
 
             if cost_basis <= 0:
                 continue

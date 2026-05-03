@@ -20,15 +20,12 @@ import json
 import time
 import logging
 import threading
-import subprocess
 import datetime
 
 import config
-from risk_manager import RiskManager
 
 logger = logging.getLogger("alpaca_auto_trader")
 
-BASE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = config.DATA_DIR
 REPORT_DIR = config.REPORT_DIR
 FLAG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.enabled")
@@ -114,6 +111,48 @@ class AlpacaAutoTrader:
             write_live_monitor_snapshot(hours=24)
         except Exception as e:
             logger.warning(f"Could not refresh live monitor snapshot: {e}")
+
+    def _write_last_refresh(self, desk_state=None):
+        """Update last_refresh.json so the dashboard badge stays current."""
+        try:
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            try:
+                from zoneinfo import ZoneInfo
+                human_est = now_utc.astimezone(ZoneInfo("America/New_York")).strftime("%b %d, %Y %I:%M %p %Z")
+            except Exception:
+                human_est = now_utc.strftime("%Y-%m-%d %H:%M UTC")
+            desk_state = desk_state or {}
+            summary = (desk_state or {}).get("summary", {})
+            registry = desk_state.get("registry") or {}
+            portfolio_summary = {}
+            try:
+                portfolio_path = os.path.join(REPORT_DIR, "latest_portfolio.json")
+                if os.path.exists(portfolio_path):
+                    with open(portfolio_path) as f:
+                        portfolio_summary = (json.load(f).get("summary") or {})
+            except Exception:
+                portfolio_summary = {}
+            payload = {
+                "refreshed": True,
+                "triggered_by": "alpaca_auto",
+                "timestamp_utc": now_utc.isoformat(),
+                "timestamp_iso": now_utc.isoformat(),
+                "display_est": human_est,
+                "num_strategies": summary.get("bots") or registry.get("bots") or portfolio_summary.get("num_strategies", 0),
+                "num_managers": summary.get("managers", 0),
+                "entry_candidates": summary.get("enter_decisions", 0),
+                "submitted": summary.get("orders_submitted", 0),
+                "rejected": summary.get("orders_rejected", 0),
+                "expected_monthly_return_pct": portfolio_summary.get("expected_monthly_return_pct", 0),
+                "regime": (desk_state.get("ceo") or {}).get("market_regime"),
+                "posture": (desk_state.get("ceo") or {}).get("posture"),
+            }
+            path = os.path.join(DATA_DIR, "last_refresh.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(payload, f, indent=2, default=str)
+        except Exception as e:
+            logger.warning(f"Could not write last_refresh.json: {e}")
 
     # ── WORKER LOOP ──────────────────────────────────────────────────────
     def start(self):
@@ -245,6 +284,7 @@ class AlpacaAutoTrader:
             self._last_error = None
             self._append_log(entry)
             self._refresh_live_monitor()
+            self._write_last_refresh(desk_state)
             logger.info(f"🦙 Professional trading desk cycle complete ({entry['status']})")
             return
         except Exception as e:
@@ -259,88 +299,6 @@ class AlpacaAutoTrader:
             self._append_log(entry)
             self._refresh_live_monitor()
             return
-
-        try:
-            # Risk checks before any trading
-            rm = RiskManager()
-            from alpaca_client import AlpacaPaperClient
-            client = AlpacaPaperClient()
-            acct = client.get_account()
-            equity = float(acct.get("equity", 0))
-
-            ok, reasons = rm.pre_trade_check(equity)
-            if not ok:
-                logger.warning(f"Risk manager blocked trading: {reasons}")
-                entry["status"] = "risk_blocked"
-                entry["risk_reasons"] = reasons
-                self._append_log(entry)
-                self._refresh_live_monitor()
-                self._last_result = entry
-                return
-
-            # Enforce position stop losses before rebalancing
-            closed = rm.enforce_position_stops(client)
-            if closed:
-                logger.info(f"Stop-loss closed {len(closed)} positions: {closed}")
-                entry["steps"]["stop_losses"] = closed
-        except Exception as e:
-            logger.error(f"Risk manager check failed: {e}", exc_info=True)
-
-        # Step 1: Run daily_runner (refresh analysis + dashboard)
-        env = dict(os.environ)
-        env["SF_TRIGGER"] = "alpaca_auto"
-        try:
-            result = subprocess.run(
-                ["python3", "daily_runner.py"],
-                cwd=BASE, capture_output=True, text=True, timeout=240, env=env,
-            )
-            entry["steps"]["analysis"] = {
-                "ok": result.returncode == 0,
-                "stdout_tail": result.stdout[-500:],
-            }
-            if result.returncode != 0:
-                entry["status"] = "analysis_failed"
-                entry["error"] = result.stderr[-500:]
-                self._append_log(entry)
-                self._refresh_live_monitor()
-                self._last_result = entry
-                return
-        except subprocess.TimeoutExpired:
-            entry["status"] = "timeout"
-            self._append_log(entry)
-            self._refresh_live_monitor()
-            self._last_result = entry
-            return
-
-        # Step 2: Load fresh portfolio, execute rebalance on Alpaca
-        try:
-            portfolio_path = os.path.join(REPORT_DIR, "latest_portfolio.json")
-            with open(portfolio_path) as f:
-                portfolio = json.load(f)
-
-            from alpaca_trader import AlpacaTrader
-            trader = AlpacaTrader()
-            results = trader.execute_portfolio(portfolio, dry_run=False)
-            acct = trader.client.get_account()
-
-            entry["steps"]["trade"] = {
-                "ok": True,
-                "summary": results.get("summary", {}),
-                "equity_after": acct["equity"],
-            }
-            entry["status"] = "ok"
-        except Exception as e:
-            entry["steps"]["trade"] = {"ok": False, "error": str(e)}
-            entry["status"] = "trade_failed"
-            entry["error"] = str(e)
-
-        entry["duration_sec"] = (utc_now() - start_ts).total_seconds()
-        self._last_run = start_ts.isoformat()
-        self._last_result = entry
-        self._last_error = None
-        self._append_log(entry)
-        self._refresh_live_monitor()
-        logger.info(f"🦙 Alpaca auto-trade cycle complete ({entry['status']})")
 
     def _run_intraday_cycle(self, timeframe):
         """Evaluate intraday strategies for stock symbols and execute trades."""

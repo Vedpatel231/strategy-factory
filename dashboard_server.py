@@ -716,7 +716,8 @@ def intraday_state():
             "symbols": load_intraday_state(),
         })
     except Exception as e:
-        return jsonify({"error": str(e), "symbols": {}})
+        logger.warning(f"Intraday/state failed: {e}")
+        return jsonify({"error": str(e), "error_type": type(e).__name__, "symbols": {}})
 
 
 @app.route("/api/trading-desk/state")
@@ -921,13 +922,22 @@ def alpaca_fee_analysis():
         return jsonify({"error": str(e), "summary": {}, "closed_trades": [], "open_trades": []})
 
 
+_ledger_rebuild_cache = {"ts": 0}
+_ledger_rebuild_lock = threading.Lock()
+
 @app.route("/api/alpaca/trade-ledger")
 @require_auth
 def alpaca_trade_ledger():
     """Return the persistent fee-aware trade ledger used for audits."""
     try:
         from trade_journal import TRADE_LEDGER_CSV, load_trade_ledger, rebuild_trade_ledger_from_journal
-        rebuild_trade_ledger_from_journal()
+        # Only rebuild at most once per 60 seconds to avoid hammering disk.
+        import time as _time
+        if _time.time() - _ledger_rebuild_cache["ts"] > 60:
+            with _ledger_rebuild_lock:
+                if _time.time() - _ledger_rebuild_cache["ts"] > 60:
+                    rebuild_trade_ledger_from_journal()
+                    _ledger_rebuild_cache["ts"] = _time.time()
         limit = int(request.args.get("limit", 500))
         rows = load_trade_ledger(limit=limit)
         net_values = []

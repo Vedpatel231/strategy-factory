@@ -102,6 +102,13 @@ def macd(values, fast=12, slow=26, signal_period=9):
 def rsi(values, period=14):
     if len(values) < period + 1:
         return [50.0] * len(values)
+
+    def rsi_from_avgs(avg_gain, avg_loss):
+        if avg_loss == 0:
+            return 100.0 if avg_gain > 0 else 50.0
+        rs = avg_gain / avg_loss
+        return 100 - (100 / (1 + rs))
+
     gains = []
     losses = []
     for idx in range(1, len(values)):
@@ -111,14 +118,11 @@ def rsi(values, period=14):
     rsis = [50.0] * min(period, len(values))
     avg_gain = _mean(gains[:period])
     avg_loss = _mean(losses[:period])
+    rsis.append(rsi_from_avgs(avg_gain, avg_loss))
     for idx in range(period, len(gains)):
         avg_gain = ((avg_gain * (period - 1)) + gains[idx]) / period
         avg_loss = ((avg_loss * (period - 1)) + losses[idx]) / period
-        if avg_loss == 0:
-            rsis.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            rsis.append(100 - (100 / (1 + rs)))
+        rsis.append(rsi_from_avgs(avg_gain, avg_loss))
     return rsis[-len(values):]
 
 
@@ -414,27 +418,33 @@ class MarketDataProvider:
                 raw = []
         out = []
         for b in raw:
-            if isinstance(b, dict):
-                out.append({
-                    "timestamp": b.get("timestamp", ""),
-                    "open": float(b.get("open")),
-                    "high": float(b.get("high")),
-                    "low": float(b.get("low")),
-                    "close": float(b.get("close")),
-                    "volume": float(b.get("volume", 0.0) or 0.0),
-                    "vwap": float(b.get("vwap", 0.0) or 0.0),
-                })
-            else:
-                out.append({
-                    "timestamp": getattr(b, "timestamp", None).isoformat()
-                    if getattr(b, "timestamp", None) else "",
-                    "open": float(getattr(b, "open")),
-                    "high": float(getattr(b, "high")),
-                    "low": float(getattr(b, "low")),
-                    "close": float(getattr(b, "close")),
-                    "volume": float(getattr(b, "volume", 0.0) or 0.0),
-                    "vwap": float(getattr(b, "vwap", 0.0) or 0.0),
-                })
+            try:
+                if isinstance(b, dict):
+                    o, h, l, c = b.get("open"), b.get("high"), b.get("low"), b.get("close")
+                    if o is None or h is None or l is None or c is None:
+                        continue  # skip bars with missing OHLC
+                    out.append({
+                        "timestamp": b.get("timestamp", ""),
+                        "open": float(o), "high": float(h),
+                        "low": float(l), "close": float(c),
+                        "volume": float(b.get("volume", 0.0) or 0.0),
+                        "vwap": float(b.get("vwap", 0.0) or 0.0),
+                    })
+                else:
+                    o, h, l, c = getattr(b, "open", None), getattr(b, "high", None), getattr(b, "low", None), getattr(b, "close", None)
+                    if o is None or h is None or l is None or c is None:
+                        continue
+                    out.append({
+                        "timestamp": getattr(b, "timestamp", None).isoformat()
+                        if getattr(b, "timestamp", None) else "",
+                        "open": float(o), "high": float(h),
+                        "low": float(l), "close": float(c),
+                        "volume": float(getattr(b, "volume", 0.0) or 0.0),
+                        "vwap": float(getattr(b, "vwap", 0.0) or 0.0),
+                    })
+            except (TypeError, ValueError) as exc:
+                logger.debug("Skipping malformed bar: %s", exc)
+                continue
         return out
 
     def _get_alpaca_rest_candles(self, symbol, timeframe, limit):

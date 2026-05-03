@@ -274,10 +274,11 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .status-pill.warn{{color:var(--amber);border-color:rgba(255,183,0,0.45);background:rgba(255,183,0,0.08);}}
 .status-pill.danger{{color:var(--red);border-color:rgba(255,68,68,0.45);background:rgba(255,68,68,0.08);}}
 .metric-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:22px;}}
-.metric-card{{background:rgba(10,14,39,0.42);border:1px solid var(--border);border-radius:8px;padding:18px;min-width:0;}}
+.metric-card{{background:rgba(10,14,39,0.42);border:1px solid var(--border);border-radius:8px;padding:18px;min-width:0;min-height:80px;}}
 .metric-label{{font-size:0.78em;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:8px;}}
-.metric-value{{font-size:2em;font-weight:750;font-family:'Courier New',monospace;color:var(--cyan);line-height:1.12;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
-.metric-sub{{font-size:0.82em;color:var(--text-dim);margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.metric-value{{font-size:2em;font-weight:750;font-family:'Courier New',monospace;color:var(--cyan);line-height:1.18;letter-spacing:0;white-space:normal;word-break:break-word;overflow-wrap:break-word;}}
+.metric-value.nowrap{{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.metric-sub{{font-size:0.82em;color:var(--text-dim);margin-top:7px;white-space:normal;word-break:break-word;}}
 .num{{font-family:'Courier New',monospace;font-variant-numeric:tabular-nums;letter-spacing:0;text-align:right;white-space:nowrap;}}
 .text-right{{text-align:right;}}
 .muted-line{{display:block;color:var(--text-dim);font-size:0.78em;margin-top:2px;line-height:1.35;}}
@@ -296,8 +297,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .card{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:24px;transition:border-color 0.2s,box-shadow 0.2s;position:relative;overflow:hidden;}}
 .card:hover{{border-color:rgba(0,212,255,0.65);box-shadow:0 8px 24px rgba(0,212,255,0.08);}}
 .card-label{{font-size:0.75em;color:var(--text-dim);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px;font-weight:600;}}
-.card-value{{font-size:2.2em;font-weight:700;font-family:'Courier New',monospace;color:var(--cyan);letter-spacing:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;font-variant-numeric:tabular-nums;}}
-.card-sub{{font-size:0.85em;color:var(--text-dim);margin-top:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
+.card-value{{font-size:2.2em;font-weight:700;font-family:'Courier New',monospace;color:var(--cyan);letter-spacing:0;white-space:normal;word-break:break-word;overflow-wrap:break-word;max-width:100%;font-variant-numeric:tabular-nums;}}
+.card-sub{{font-size:0.85em;color:var(--text-dim);margin-top:8px;white-space:normal;word-break:break-word;}}
 
 /* TABLE */
 .table-wrap{{width:100%;max-width:100%;overflow-x:auto;border-radius:8px;background:rgba(10,14,39,0.22);}}
@@ -328,6 +329,9 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .badge-hold{{background:rgba(255,183,0,0.15);color:var(--amber);border:1px solid rgba(255,183,0,0.4);}}
 .badge-reactivate{{background:rgba(57,255,20,0.15);color:var(--lime);border:1px solid rgba(57,255,20,0.4);}}
 .badge-insufficient_data{{background:rgba(107,115,148,0.15);color:var(--gray);border:1px solid rgba(107,115,148,0.4);}}
+.badge-boost{{background:rgba(0,212,255,0.15);color:var(--cyan);border:1px solid rgba(0,212,255,0.4);}}
+.badge-monitor{{background:rgba(255,183,0,0.15);color:var(--amber);border:1px solid rgba(255,183,0,0.4);}}
+.badge-downweight{{background:rgba(255,68,68,0.15);color:var(--red);border:1px solid rgba(255,68,68,0.4);}}
 
 /* BOT GRID */
 .bot-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;}}
@@ -406,7 +410,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 
 /* GANTT TIMELINE */
 .gantt-row{{display:flex;align-items:center;margin-bottom:6px;}}
-.gantt-label{{width:130px;min-width:130px;font-size:0.8em;font-weight:600;color:var(--text);padding-right:12px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.gantt-label{{width:160px;min-width:160px;font-size:0.8em;font-weight:600;color:var(--text);padding-right:12px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
 .gantt-track{{flex:1;height:28px;background:rgba(13,17,48,0.5);border-radius:6px;position:relative;overflow:hidden;}}
 .gantt-bar{{position:absolute;height:100%;border-radius:6px;min-width:4px;cursor:pointer;transition:opacity 0.2s;}}
 .gantt-bar:hover{{opacity:0.85;}}
@@ -726,7 +730,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
       <div>
         <div class="card-label">Alpaca Connection</div>
-        <div id="alpacaConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);">⚪ Not Connected</div>
+        <div id="alpacaConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);" data-fontsize="1.3em">⚪ Not Connected</div>
         <div id="alpacaConnMsg" class="card-sub">Connect to your Alpaca paper trading account</div>
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -765,7 +769,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       </div>
       <div class="card">
         <div class="card-label">Account #</div>
-        <div id="alpAcctNum" class="card-value" style="font-size:0.95em;">—</div>
+        <div id="alpAcctNum" class="card-value" style="font-size:0.95em;" data-fontsize="0.95em">—</div>
         <div class="card-sub">Local simulator</div>
       </div>
     </div>
@@ -902,7 +906,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
       <div>
         <div style="font-size:0.9em;color:var(--text-dim);margin-bottom:4px;">Connection Status</div>
-        <div id="alpLiveConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);">⚪ Not Connected</div>
+        <div id="alpLiveConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);" data-fontsize="1.3em">⚪ Not Connected</div>
         <div id="alpLiveConnMsg" class="card-sub">Auto-connects when Alpaca keys are configured</div>
       </div>
       <div id="alpLiveConnBtn" class="status-pill warn">Auto-connecting</div>
@@ -915,7 +919,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <div class="metric-card"><div class="metric-label">Equity</div><div id="alpLiveEquity" class="metric-value">—</div><div class="metric-sub">Cash plus live positions</div></div>
       <div class="metric-card"><div class="metric-label">Cash / Buying Power</div><div id="alpLiveCash" class="metric-value">—</div><div class="metric-sub">Available to deploy</div></div>
       <div class="metric-card"><div class="metric-label">Today's P&L</div><div id="alpLivePL" class="metric-value">—</div><div class="metric-sub">Live equity vs last close</div></div>
-      <div class="metric-card"><div class="metric-label">Account</div><div id="alpLiveAccNum" class="metric-value" style="font-size:1.05em;">—</div><div class="metric-sub">Paper trading</div></div>
+      <div class="metric-card"><div class="metric-label">Account</div><div id="alpLiveAccNum" class="metric-value" style="font-size:1.05em;" data-fontsize="1.05em">—</div><div class="metric-sub">Paper trading</div></div>
     </div>
 
     <!-- Positions -->
@@ -1058,37 +1062,31 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
         <span id="alpAutoStatusBadge" class="status-pill">OFF</span>
       </div>
 
-      <!-- Progress + results area -->
-      <div id="alpAutoProgressArea" style="display:none;margin-bottom:16px;padding:16px;background:rgba(0,212,255,0.05);border:1px solid var(--border);border-radius:10px;">
-        <div id="alpAutoProgressSteps" style="font-size:0.9em;"></div>
-        <div id="alpAutoProgressResult" style="margin-top:10px;font-size:0.9em;color:var(--text-dim);"></div>
-      </div>
-
       <!-- Status info -->
       <div class="metric-grid" style="margin-bottom:16px;">
         <div class="metric-card">
           <div class="metric-label">Status</div>
-          <div id="alpAutoRunStatus" class="metric-value" style="font-size:1.1em;">—</div>
+          <div id="alpAutoRunStatus" class="metric-value" style="font-size:1.1em;" data-fontsize="1.1em">—</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Last Run</div>
-          <div id="alpAutoLastRun" class="metric-value" style="font-size:1.1em;">Never</div>
+          <div id="alpAutoLastRun" class="metric-value" style="font-size:1.1em;" data-fontsize="1.1em">Never</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Next Run</div>
-          <div id="alpAutoNextRun" class="metric-value" style="font-size:1.1em;">—</div>
+          <div id="alpAutoNextRun" class="metric-value" style="font-size:1.1em;" data-fontsize="1.1em">—</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Interval</div>
-          <div id="alpAutoInterval" class="metric-value" style="font-size:1.1em;">15 min</div>
+          <div id="alpAutoInterval" class="metric-value" style="font-size:1.1em;" data-fontsize="1.1em">15 min</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Market Access</div>
-          <div id="alpAutoMarketStatus" class="metric-value" style="font-size:1.0em;">—</div>
+          <div id="alpAutoMarketStatus" class="metric-value" style="font-size:1.0em;" data-fontsize="1.0em">—</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Cycle Counts</div>
-          <div id="alpAutoIntradayCount" class="metric-value" style="font-size:0.95em;">—</div>
+          <div id="alpAutoIntradayCount" class="metric-value" style="font-size:0.95em;" data-fontsize="0.95em">—</div>
         </div>
       </div>
 
@@ -1147,7 +1145,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   <p class="page-sub">This page is for deciding which strategy families deserve trust. Seed metrics are only a starting rank; the live table below is updated from the Alpaca paper ledger when closed trades exist.</p>
   <div class="metric-grid">
     <div class="metric-card"><div class="metric-label">Real Paper Strategies</div><div class="metric-value" id="scoreRealStrategies">—</div><div class="metric-sub">Strategies with closed paper trades</div></div>
-    <div class="metric-card"><div class="metric-label">Best Real Strategy</div><div class="metric-value" id="scoreBestStrategy" style="font-size:1.35em;">—</div><div class="metric-sub" id="scoreBestStrategySub">Waiting for closed trades</div></div>
+    <div class="metric-card"><div class="metric-label">Best Real Strategy</div><div class="metric-value" id="scoreBestStrategy" style="font-size:1.35em;" data-fontsize="1.35em">—</div><div class="metric-sub" id="scoreBestStrategySub">Waiting for closed trades</div></div>
     <div class="metric-card"><div class="metric-label">Needs Review</div><div class="metric-value" id="scoreNeedsReview" style="color:var(--amber);">—</div><div class="metric-sub">Weak or thin real evidence</div></div>
   </div>
   <div class="section-card">
@@ -1162,10 +1160,10 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </table></div>
   </div>
   <div class="filter-buttons">
-    <button class="filter-btn active" onclick="filterQuantum('ALL')">Show All</button>
-    <button class="filter-btn" onclick="filterQuantum('PAUSE')">Pause</button>
-    <button class="filter-btn" onclick="filterQuantum('HOLD')">Hold</button>
-    <button class="filter-btn" onclick="filterQuantum('REACTIVATE')">Reactivate</button>
+    <button class="filter-btn active" onclick="filterQuantum('ALL', event)">Show All</button>
+    <button class="filter-btn" onclick="filterQuantum('PAUSE', event)">Pause</button>
+    <button class="filter-btn" onclick="filterQuantum('HOLD', event)">Hold</button>
+    <button class="filter-btn" onclick="filterQuantum('REACTIVATE', event)">Reactivate</button>
   </div>
   <div class="table-wrap"><table class="data-table compact" id="quantumTable">
     <thead><tr>
@@ -1225,8 +1223,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <span class="status-pill" id="deskLiveStatus">Loading</span>
     </div>
     <div class="metric-grid">
-      <div class="metric-card"><div class="metric-label">CEO Posture</div><div class="metric-value" id="deskCeoPosture" style="font-size:1.2em;">—</div><div class="metric-sub" id="deskCeoReason">Waiting for cycle</div></div>
-      <div class="metric-card"><div class="metric-label">CEO Regime</div><div class="metric-value" id="deskCeoRegime" style="font-size:1.2em;">—</div><div class="metric-sub" id="deskCeoDirection">—</div></div>
+      <div class="metric-card"><div class="metric-label">CEO Posture</div><div class="metric-value" id="deskCeoPosture" style="font-size:1.2em;" data-fontsize="1.2em">—</div><div class="metric-sub" id="deskCeoReason">Waiting for cycle</div></div>
+      <div class="metric-card"><div class="metric-label">CEO Regime</div><div class="metric-value" id="deskCeoRegime" style="font-size:1.2em;" data-fontsize="1.2em">—</div><div class="metric-sub" id="deskCeoDirection">—</div></div>
       <div class="metric-card"><div class="metric-label">Managers</div><div class="metric-value" id="deskManagers">—</div><div class="metric-sub">One per asset</div></div>
       <div class="metric-card"><div class="metric-label">Active Entries</div><div class="metric-value" id="deskActiveEntries" style="color:var(--lime);">—</div><div class="metric-sub">Approved candidates this cycle</div></div>
     </div>
@@ -1241,7 +1239,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="metric-card"><div class="metric-label">Tradable Signals</div><div class="metric-value" id="signalsTradable" style="color:var(--lime);">—</div><div class="metric-sub">Passed quality gate</div></div>
     <div class="metric-card"><div class="metric-label">Rejected / Waiting</div><div class="metric-value" id="signalsRejected" style="color:var(--amber);">—</div><div class="metric-sub">Skipped with reason</div></div>
     <div class="metric-card"><div class="metric-label">Learning Blocks</div><div class="metric-value" id="signalsBlocked" style="color:var(--red);">—</div><div class="metric-sub">Strategy-regime pairs suppressed</div></div>
-    <div class="metric-card"><div class="metric-label">Top Reject Driver</div><div class="metric-value" id="signalsTopReject" style="font-size:1.1em;">—</div><div class="metric-sub">Most common skip reason</div></div>
+    <div class="metric-card"><div class="metric-label">Top Reject Driver</div><div class="metric-value" id="signalsTopReject" style="font-size:1.1em;" data-fontsize="1.1em">—</div><div class="metric-sub">Most common skip reason</div></div>
   </div>
   <div class="section-card">
     <div class="section-header">
@@ -1275,7 +1273,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="section-header"><div><div class="section-title">Strategy Results</div><div class="section-sub">Review which strategy families deserve more capital or less trust.</div></div></div>
     <div id="perfStrategyEmpty" class="read-only-note">Waiting for closed trades.</div>
     <div id="perfStrategyTable" class="table-wrap" style="display:none;"><table class="data-table compact">
-      <thead><tr><th>Strategy</th><th class="num">Trades</th><th class="num">Net P&L</th><th class="num">Win Rate</th><th class="num">Avg Net</th><th class="num">Fees</th><th>Read</th></tr></thead>
+      <thead><tr><th>Strategy</th><th class="num">Trades</th><th class="num">Net P&L</th><th class="num">Win Rate</th><th class="num">Avg Net</th><th class="num">Fees</th><th>Action</th></tr></thead>
       <tbody id="perfStrategyBody"></tbody>
     </table></div>
   </div>
@@ -1373,17 +1371,17 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   <div class="section-card">
     <div class="section-header"><div><div class="section-title">CEO Market Intelligence</div><div class="section-sub">The live desk-level read that controls manager aggressiveness and strategy preference.</div></div><span class="status-pill" id="regimeCeoStatus">Loading</span></div>
     <div class="metric-grid" style="margin-bottom:0;">
-      <div class="metric-card"><div class="metric-label">Direction</div><div class="metric-value" id="regimeCeoDirection" style="font-size:1.15em;">—</div></div>
-      <div class="metric-card"><div class="metric-label">Regime</div><div class="metric-value" id="regimeCeoRegime" style="font-size:1.15em;">—</div></div>
-      <div class="metric-card"><div class="metric-label">Posture</div><div class="metric-value" id="regimeCeoPosture" style="font-size:1.15em;">—</div></div>
-      <div class="metric-card"><div class="metric-label">Risk Multiplier</div><div class="metric-value" id="regimeCeoRisk" style="font-size:1.15em;">—</div></div>
+      <div class="metric-card"><div class="metric-label">Direction</div><div class="metric-value" id="regimeCeoDirection" style="font-size:1.15em;" data-fontsize="1.15em">—</div></div>
+      <div class="metric-card"><div class="metric-label">Regime</div><div class="metric-value" id="regimeCeoRegime" style="font-size:1.15em;" data-fontsize="1.15em">—</div></div>
+      <div class="metric-card"><div class="metric-label">Posture</div><div class="metric-value" id="regimeCeoPosture" style="font-size:1.15em;" data-fontsize="1.15em">—</div></div>
+      <div class="metric-card"><div class="metric-label">Risk Multiplier</div><div class="metric-value" id="regimeCeoRisk" style="font-size:1.15em;" data-fontsize="1.15em">—</div></div>
     </div>
   </div>
   <div class="cards-row">
-    <div class="card"><div class="card-label">Live Regimes</div><div class="card-value" id="regimeLiveCount" style="font-size:1.2em;">—</div><div class="card-sub">Symbols classified</div></div>
-    <div class="card"><div class="card-label">Trending</div><div class="card-value" id="regimeTrending" style="font-size:1.2em;color:var(--lime);">—</div><div class="card-sub">Trend-friendly symbols</div></div>
-    <div class="card"><div class="card-label">Choppy / Range</div><div class="card-value" id="regimeChoppy" style="font-size:1.2em;color:var(--amber);">—</div><div class="card-sub">Avoid trend entries or use range logic</div></div>
-    <div class="card"><div class="card-label">High Vol Risk</div><div class="card-value" id="regimeHighVol" style="font-size:1.2em;color:var(--red);">—</div><div class="card-sub">Needs smaller size or no-trade gate</div></div>
+    <div class="card"><div class="card-label">Live Regimes</div><div class="card-value" id="regimeLiveCount" style="font-size:1.2em;" data-fontsize="1.2em">—</div><div class="card-sub">Symbols classified</div></div>
+    <div class="card"><div class="card-label">Trending</div><div class="card-value" id="regimeTrending" style="font-size:1.2em;color:var(--lime);" data-fontsize="1.2em">—</div><div class="card-sub">Trend-friendly symbols</div></div>
+    <div class="card"><div class="card-label">Choppy / Range</div><div class="card-value" id="regimeChoppy" style="font-size:1.2em;color:var(--amber);" data-fontsize="1.2em">—</div><div class="card-sub">Avoid trend entries or use range logic</div></div>
+    <div class="card"><div class="card-label">High Vol Risk</div><div class="card-value" id="regimeHighVol" style="font-size:1.2em;color:var(--red);" data-fontsize="1.2em">—</div><div class="card-sub">Needs smaller size or no-trade gate</div></div>
   </div>
   <div class="section-card">
     <div class="section-header"><div><div class="section-title">Per-Symbol Regime Board</div><div class="section-sub">Use this to see whether each symbol is trend-following, range-bound, choppy, or too volatile right now.</div></div><span class="status-pill" id="regimeLiveStatus">Loading</span></div>
@@ -1959,12 +1957,12 @@ async function alpacaFastTick() {{
 setInterval(alpacaFastTick, 1000);
 
 // ── Quantum Filter ──────────────────────────────────────────────
-function filterQuantum(verdict) {{
+function filterQuantum(verdict, evt) {{
   var table = document.getElementById('quantumTable');
   var rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
   var btns = document.querySelectorAll('.filter-btn');
   for (var b = 0; b < btns.length; b++) btns[b].classList.remove('active');
-  if (event && event.target) event.target.classList.add('active');
+  if (evt && evt.target) evt.target.classList.add('active');
   for (var i = 0; i < rows.length; i++) {{
     if (verdict === 'ALL') {{
       rows[i].style.display = '';
@@ -2307,7 +2305,11 @@ async function renderLearningPage(force) {{
   var groups = groupLedger((data.ledger && data.ledger.rows) || [], 'strategy');
   var blockedPairs = (data.learning && data.learning.blocked_pairs) || [];
   var trusted = groups.filter(function(g) {{ return g.trades >= 10; }}).length;
-  var collecting = groups.filter(function(g) {{ return g.trades < 10; }}).length;
+  // Count strategies still collecting: either <10 trades in ledger, or not in ledger at all
+  var collectingInLedger = groups.filter(function(g) {{ return g.trades < 10; }}).length;
+  var configuredNames = ((data.desk && data.desk.registry && data.desk.registry.strategy_names) || []);
+  var configuredStrategies = configuredNames.length || ((data.learning && data.learning.strategies) || []).length || groups.length;
+  var collecting = Math.max(0, configuredStrategies - groups.length) + collectingInLedger;
   var down = groups.filter(function(g) {{ return actionForGroup(g).label === 'Downweight'; }}).length;
   setCardText('learnTrusted', String(trusted));
   setCardText('learnCollecting', String(collecting));
@@ -2382,7 +2384,7 @@ async function renderRegimePage(force) {{
   symbols.forEach(function(s) {{
     var rg = (s.setup_regime && s.setup_regime.label) || (s.trade_regime && s.trade_regime.label) || 'unknown';
     if (rg.indexOf('trending') >= 0) trending++;
-    if (rg.indexOf('choppy') >= 0 || rg.indexOf('range') >= 0 || rg.indexOf('mean') >= 0) choppy++;
+    if (rg.indexOf('choppy') >= 0 || rg.indexOf('range') >= 0 || rg.indexOf('mean_revert') >= 0) choppy++;
     var atr = Number((s.features && s.features.atr_pct_15m) || (s.trade_regime && s.trade_regime.atr_pct) || 0);
     if (rg.indexOf('high_vol') >= 0 || atr >= 8) highVol++;
   }});
@@ -2426,7 +2428,14 @@ async function renderDecisionPage(force) {{
     row._source = 'desk';
     return row;
   }});
-  var allEvents = deskEvents.concat(events || []);
+  // Merge and deduplicate by timestamp+symbol+event
+  var merged = deskEvents.concat(events || []);
+  var seen = {{}};
+  var allEvents = [];
+  merged.forEach(function(e) {{
+    var key = (e.timestamp || '') + '|' + (e.symbol || '') + '|' + (e.event || '');
+    if (!seen[key]) {{ seen[key] = true; allEvents.push(e); }}
+  }});
   allEvents.sort(function(a,b) {{ return String(b.timestamp || '').localeCompare(String(a.timestamp || '')); }});
   var submitted = allEvents.filter(function(e) {{ return e.event === 'order_submitted'; }}).length;
   var rejected = allEvents.filter(function(e) {{ return e.event === 'entry_rejected' || e.event === 'target_downweighted' || e.event === 'order_rejected'; }}).length;
@@ -2447,7 +2456,13 @@ async function renderDecisionPage(force) {{
   }}
   empty.style.display = 'none';
   table.style.display = 'block';
-  body.innerHTML = allEvents.slice(0, 140).map(function(e) {{
+  var maxShow = 140;
+  if (allEvents.length > maxShow) {{
+    body.innerHTML = '<tr><td colspan="6" style="color:var(--amber);font-size:0.85em;text-align:center;padding:8px;">Showing ' + maxShow + ' of ' + allEvents.length + ' events</td></tr>';
+  }} else {{
+    body.innerHTML = '';
+  }}
+  body.innerHTML += allEvents.slice(0, maxShow).map(function(e) {{
     var event = e.event || 'event';
     var cls = event === 'order_submitted' ? 'ok' : event === 'position_closed' ? '' : (event.indexOf('rejected') >= 0 ? 'danger' : 'warn');
     var conf = e.confidence !== undefined && e.confidence !== null ? Number(e.confidence).toFixed(2) : '—';
@@ -2784,19 +2799,23 @@ function fmtUSDCompact(n) {{
 // Auto-size: shrink font if text is too long for card
 function autoSizeCardValue(el) {{
   if (!el) return;
+  // Preserve explicit data-fontsize attribute (set on elements with intentional sizing)
+  var preset = el.getAttribute('data-fontsize');
   var len = (el.textContent || '').length;
-  if (len > 12) el.style.fontSize = '1.6em';
-  else if (len > 9) el.style.fontSize = '1.8em';
-  else el.style.fontSize = '';  // reset to CSS default (2.2em)
+  if (len > 16) el.style.fontSize = preset || '1.3em';
+  else if (len > 12) el.style.fontSize = preset || '1.6em';
+  else if (len > 9) el.style.fontSize = preset || '1.8em';
+  else el.style.fontSize = preset || '';  // reset to CSS default
 }}
 
 async function apiGet(url) {{
   try {{
     var r = await fetch(url);
     var j = await r.json();
-    if (!r.ok) throw new Error(j.error || 'Request failed');
+    if (!r.ok) throw new Error((j.error || 'Request failed') + ' [' + url + ']');
     return j;
   }} catch (e) {{
+    if (!e.message.includes(url)) e.message = e.message + ' [' + url + ']';
     throw e;
   }}
 }}
@@ -3369,16 +3388,15 @@ async function calLoadData() {{
     var events = journal.events || [];
     calTradeData = {{}};
     events.forEach(function(ev) {{
-      if (ev.event === 'order_submitted' || ev.event === 'position_closed') {{
+      if (ev.event === 'position_closed') {{
         var ts = ev.timestamp || '';
         var dateKey = ts.substring(0, 10);
         if (!dateKey) return;
         if (!calTradeData[dateKey]) calTradeData[dateKey] = {{ count: 0, wins: 0 }};
         calTradeData[dateKey].count++;
-        if (ev.event === 'position_closed') {{
-          var plPct = Number(ev.unrealized_pl_pct || 0);
-          if (plPct > 0) calTradeData[dateKey].wins++;
-        }}
+        var plPct = Number(ev.unrealized_pl_pct || ev.net_pl_pct || 0);
+        var pl = Number(ev.net_pl || ev.realized_pl || 0);
+        if (plPct > 0 || pl > 0) calTradeData[dateKey].wins++;
       }}
     }});
   }} catch (e3) {{
@@ -3585,12 +3603,6 @@ calLoadData();
 
 // ── ALPACA LIVE PAGE ─────────────────────────────────────────
 var alpLiveConnected = false;
-
-function alpLiveSelectBroker(broker) {{
-  // For now only alpaca is supported
-  document.getElementById('brokerAlpacaBtn').style.background = 'rgba(0,212,255,0.2)';
-  document.getElementById('brokerAlpacaBtn').style.borderColor = 'var(--cyan)';
-}}
 
 async function alpLiveCheckStatus() {{
   try {{
@@ -4000,39 +4012,6 @@ async function alpLiveRefreshOrders() {{
   }}
 }}
 
-async function alpLiveTrade(side) {{
-  if (!alpLiveConnected) {{ alert('Connect to Alpaca first.'); return; }}
-  var symbol = document.getElementById('alpLiveTradeSymbol').value.trim();
-  var amount = parseFloat(document.getElementById('alpLiveTradeAmount').value);
-  if (!symbol) {{ alert('Enter a symbol (e.g. BTC/USD).'); return; }}
-  if (!amount || amount < 1) {{ alert('Enter an amount of at least $1.'); return; }}
-  var resultEl = document.getElementById('alpLiveTradeResult');
-  resultEl.style.display = 'block';
-  resultEl.style.background = 'rgba(255,255,255,0.05)';
-  resultEl.style.color = 'var(--text-dim)';
-  resultEl.textContent = '⏳ Placing ' + side + ' order for ' + symbol + '...';
-  try {{
-    var data = await apiPost('/api/alpaca/execute', {{
-      confirm: true, symbol: symbol, notional: amount, side: side
-    }});
-    if (data.error) {{
-      resultEl.style.background = 'rgba(255,69,58,0.1)';
-      resultEl.style.color = 'var(--red)';
-      resultEl.textContent = '❌ ' + data.error;
-    }} else {{
-      resultEl.style.background = 'rgba(57,255,20,0.1)';
-      resultEl.style.color = 'var(--lime)';
-      resultEl.textContent = '✅ ' + (data.side||side).toUpperCase() + ' ' + data.symbol + ' — ' +
-        (data.status || 'submitted') + (data.filled_avg_price ? ' at ' + fmtUSD(data.filled_avg_price) : '');
-      setTimeout(function() {{ alpLiveRefreshPositions(); alpLiveRefreshOrders(); alpLiveRefreshFeeAnalysis(); }}, 2000);
-    }}
-  }} catch(e) {{
-    resultEl.style.background = 'rgba(255,69,58,0.1)';
-    resultEl.style.color = 'var(--red)';
-    resultEl.textContent = '❌ ' + e.message;
-  }}
-}}
-
 async function alpLiveClosePos(symbol) {{
   if (!confirm('Close position in ' + symbol + '?')) return;
   try {{
@@ -4065,27 +4044,17 @@ async function alpAutoLoadStatus() {{
 }}
 
 function alpAutoUpdateUI(data) {{
+  if (!data) return;
   var badge = document.getElementById('alpAutoStatusBadge');
-  var btn = document.getElementById('alpAutoToggleBtn');
   if (data.enabled) {{
     if (badge) {{
       badge.textContent = 'ON';
       badge.className = 'status-pill ok';
     }}
-    if (btn) {{
-      btn.textContent = 'Disable Auto-Trade';
-      btn.style.borderColor = 'var(--red)';
-      btn.style.color = 'var(--red)';
-    }}
   }} else {{
     if (badge) {{
       badge.textContent = 'OFF';
       badge.className = 'status-pill warn';
-    }}
-    if (btn) {{
-      btn.textContent = 'Enable Auto-Trade';
-      btn.style.borderColor = 'var(--lime)';
-      btn.style.color = 'var(--lime)';
     }}
   }}
   var statusEl = document.getElementById('alpAutoRunStatus');
@@ -4239,123 +4208,6 @@ function alpAutoUpdateUI(data) {{
   }}
 }}
 
-async function alpAutoToggle() {{
-  var newState = !alpAutoEnabled;
-  try {{
-    var data = await apiPost('/api/alpaca/auto/toggle', {{ enabled: newState }});
-    alpAutoEnabled = data.enabled;
-    alpAutoUpdateUI(data.status || data);
-  }} catch(e) {{ alert('Error: ' + e.message); }}
-}}
-
-async function alpAutoOneClick() {{
-  var btn = document.getElementById('alpAutoRunBtn');
-  var area = document.getElementById('alpAutoProgressArea');
-  var steps = document.getElementById('alpAutoProgressSteps');
-  var result = document.getElementById('alpAutoProgressResult');
-  area.style.display = 'block';
-  result.innerHTML = '';
-  btn.disabled = true;
-  btn.textContent = '⏳ Running...';
-  btn.style.opacity = '0.6';
-
-  function step(num, text, status) {{
-    var id = 'alpStep' + num;
-    var el = document.getElementById(id);
-    var icon = status === 'done' ? '✅' : (status === 'error' ? '❌' : (status === 'running' ? '⏳' : '⬜'));
-    var color = status === 'done' ? 'var(--lime)' : (status === 'error' ? 'var(--red)' : (status === 'running' ? 'var(--amber)' : 'var(--text-dim)'));
-    if (!el) {{
-      el = document.createElement('div');
-      el.id = id;
-      el.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);';
-      steps.appendChild(el);
-    }}
-    el.innerHTML = '<span style="margin-right:8px;">' + icon + '</span><span style="color:' + color + ';">' + text + '</span>';
-  }}
-
-  steps.innerHTML = '';
-
-  // Step 1: Preview (dry run)
-  step(1, 'Previewing rebalance...', 'running');
-  step(2, 'Execute trades', 'pending');
-  step(3, 'Refresh dashboard', 'pending');
-
-  var previewData = null;
-  try {{
-    previewData = await apiGet('/api/alpaca/auto/preview');
-    if (previewData.error) {{
-      step(1, 'Preview failed: ' + previewData.error, 'error');
-      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
-      return;
-    }}
-    var s = previewData.summary || {{}};
-    var orderCount = (s.buys||0) + (s.sells||0) + (s.closes||0);
-    step(1, 'Preview: ' + (s.buys||0) + ' buys, ' + (s.sells||0) + ' sells, ' + (s.closes||0) + ' closes, ' + (s.skipped||0) + ' skipped', 'done');
-
-    // Show preview details
-    var orders = previewData.orders || [];
-    if (orders.length > 0) {{
-      var html = '<table style="width:100%;font-size:0.85em;margin-top:8px;"><tr style="color:var(--text-dim);"><th style="text-align:left;">Symbol</th><th>Side</th><th>Amount</th><th>Bot</th></tr>';
-      orders.forEach(function(o) {{
-        var cSide = (o.side || '').toLowerCase().split('.').pop();
-        var sColor = cSide === 'buy' ? 'var(--lime)' : 'var(--red)';
-        html += '<tr><td style="color:var(--cyan);font-weight:600;">' + (o.symbol||'?') + '</td>' +
-          '<td style="color:' + sColor + ';">' + cSide.toUpperCase() + '</td>' +
-          '<td>' + fmtUSD(o.notional||0) + '</td>' +
-          '<td style="color:var(--text-dim);">' + (o.bot||'—') + '</td></tr>';
-      }});
-      html += '</table>';
-      result.innerHTML = html;
-    }}
-
-    if (orderCount === 0) {{
-      step(2, 'No trades needed — portfolio is balanced', 'done');
-      step(3, 'Done', 'done');
-      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
-      return;
-    }}
-  }} catch(e) {{
-    step(1, 'Preview error: ' + e.message, 'error');
-    btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
-    return;
-  }}
-
-  // Step 2: Execute
-  step(2, 'Executing trades...', 'running');
-  try {{
-    var execData = await apiPost('/api/alpaca/auto/execute', {{ confirm: true }});
-    if (execData.error) {{
-      step(2, 'Execute failed: ' + execData.error, 'error');
-      btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
-      return;
-    }}
-    var es = execData.summary || {{}};
-    step(2, 'Executed: ' + (es.buys||0) + ' buys, ' + (es.sells||0) + ' sells, ' + (es.closes||0) + ' closes — ' + fmtUSD(es.total_capital_deployed_usd||0) + ' deployed', 'done');
-  }} catch(e) {{
-    step(2, 'Execute error: ' + e.message, 'error');
-    btn.disabled = false; btn.textContent = '🚀 Run Now'; btn.style.opacity = '';
-    return;
-  }}
-
-  // Step 3: Refresh everything
-  step(3, 'Refreshing positions & orders...', 'running');
-  try {{
-    await new Promise(function(r) {{ setTimeout(r, 2000); }});
-    await alpLiveRefreshPositions();
-    await alpLiveRefreshOrders();
-    await alpLiveRefreshFeeAnalysis();
-    await alpAutoLoadStatus();
-    await loadOverviewAccount();
-    step(3, 'Dashboard refreshed', 'done');
-  }} catch(e) {{
-    step(3, 'Refresh done (some data may still update)', 'done');
-  }}
-
-  btn.disabled = false;
-  btn.textContent = '🚀 Run Now';
-  btn.style.opacity = '';
-}}
-
 // Load Alpaca auto-trade status on page load
 alpAutoLoadStatus();
 
@@ -4372,7 +4224,7 @@ alpAutoLoadStatus();
                   "bollinger_reversion","vwap_bounce","breakout_retest","donchian_breakout",
                   "atr_momentum_expansion","supertrend_continuation"]
         statuses = ["active"] * 10
-        verdicts = ["HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD","HOLD"]
+        verdicts = ["HOLD","REACTIVATE","HOLD","PAUSE","HOLD","REACTIVATE","HOLD","HOLD","PAUSE","HOLD"]
         wr = [52,54,51,55,53,58,50,54,51,56]
         pf = [1.45,1.52,1.38,1.55,1.48,1.62,1.35,1.50,1.42,1.58]
         sr = [0.68,0.75,0.62,0.85,0.72,0.92,0.55,0.78,0.65,0.88]
@@ -4397,8 +4249,13 @@ alpAutoLoadStatus();
 
         regime_info = {"regime": "trending_up", "confidence": 72,
                        "details": {"volatility": 18, "trend_direction": 0.65, "autocorrelation": 0.42, "vol_ratio": 1.15}}
-        learning = {n: {"adaptation_score": adapt[i]} for i, n in enumerate(names)}
-        summary = {"HOLD": 10}
+        learning = {n: {"adaptation_score": adapt[i],
+                        "real_paper_score": adapt[i] - 5 if trades[i] >= 10 else None,
+                        "real_paper_closed_trades": trades[i],
+                        "real_paper_win_rate": wr[i] if trades[i] >= 10 else None,
+                        "real_paper_avg_pl_pct": round(pnl[i] / max(trades[i], 1) * 0.01, 2) if trades[i] >= 10 else None,
+                       } for i, n in enumerate(names)}
+        summary = {"HOLD": 6, "PAUSE": 2, "REACTIVATE": 2}
 
         portfolio = {
             "allocations": [{"bot_name": names[i], "pair": pairs[i], "allocation_usd": 100,

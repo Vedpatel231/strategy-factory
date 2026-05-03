@@ -81,7 +81,7 @@ def is_us_market_open():
         return False
     market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
     market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-    return market_open <= now_et <= market_close
+    return market_open <= now_et < market_close
 
 
 def normalize_crypto_symbol(symbol):
