@@ -298,8 +298,8 @@ class BaseProfessionalStrategy:
             "initial_trail": round(max(0.000001, f.close - atr_value * trail_mult), 6),
         }, rr
 
-    def _buy(self, f, confidence, reason, invalidation, stop_mult=1.5, tp_mult=2.8,
-             partial_mult=1.4, trail_mult=1.8, metadata=None):
+    def _buy(self, f, confidence, reason, invalidation, stop_mult=2.0, tp_mult=3.2,
+             partial_mult=1.5, trail_mult=2.0, metadata=None):
         stop, take, partial, trailing, rr = self._levels(
             f, stop_mult=stop_mult, tp_mult=tp_mult,
             partial_mult=partial_mult, trail_mult=trail_mult,

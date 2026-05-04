@@ -49,6 +49,27 @@ class ManagerDecision:
         return asdict(self)
 
 
+# Hard regime compatibility: strategies whose works_best has ZERO overlap
+# with the compatible set for the current CEO regime are blocked from entry.
+# This prevents e.g. breakout strategies entering during ranging markets.
+REGIME_COMPATIBLE_TAGS = {
+    "trending":       {"trending", "risk_on", "bullish", "breakout_ready"},
+    "ranging":        {"ranging", "sideways", "mean_reversion", "low_volatility"},
+    "sideways":       {"sideways", "ranging", "mean_reversion", "low_volatility", "bullish"},
+    "breakout_ready": {"breakout_ready", "trending", "volatile", "risk_on"},
+    "risk_off":       {"ranging", "sideways", "mean_reversion", "low_volatility"},
+    "low_volume":     {"ranging", "sideways", "low_volatility", "mean_reversion"},
+}
+
+
+def _regime_compatible(regime, works_best):
+    """Return True if the strategy is allowed to trade in the current regime."""
+    compatible = REGIME_COMPATIBLE_TAGS.get(regime)
+    if compatible is None:
+        return True  # unknown regime → allow everything
+    return bool(set(works_best or []) & compatible)
+
+
 class AssetManager:
     def __init__(self, symbol, asset_class, bots: List[StrategyBot], data_provider, learner=None, logger=None):
         self.symbol = symbol
@@ -97,7 +118,11 @@ class AssetManager:
 
         bot_rows.sort(key=lambda row: row["score"], reverse=True)
         selected = bot_rows[0] if bot_rows else None
-        buy_candidates = [row for row in bot_rows if row["action"] == "buy"]
+        regime = ceo_state.market_regime
+        buy_candidates = [
+            row for row in bot_rows
+            if row["action"] == "buy" and _regime_compatible(regime, row.get("works_best"))
+        ]
         best_buy = buy_candidates[0] if buy_candidates else None
         closest = selected
         instruction = (ceo_state.instructions or {}).get(self.asset_class, {})
@@ -157,10 +182,19 @@ class AssetManager:
             active = selected
             trade_request = None
             action = "wait"
+            # Check if regime filtering removed buy candidates
+            all_buy_signals = [row for row in bot_rows if row["action"] == "buy"]
+            regime_blocked = [r for r in all_buy_signals if not _regime_compatible(regime, r.get("works_best"))]
             if best_buy:
                 reason = (
                     f"Closest buy is {best_buy['bot_name']} but confidence {best_buy['confidence']:.2f} "
                     f"is below {threshold:.2f} or score {best_buy['score']:.1f} is below 48."
+                )
+            elif regime_blocked and not buy_candidates:
+                names = ", ".join(r["bot_name"] for r in regime_blocked[:3])
+                reason = (
+                    f"Buy signals from {names} blocked: regime '{regime}' is incompatible "
+                    f"with their strategy type."
                 )
             elif closest:
                 reason = f"No buy signal. Closest bot is {closest['bot_name']}: {closest['reason']}"

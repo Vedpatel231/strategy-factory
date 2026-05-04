@@ -123,7 +123,16 @@ class ExitManager:
             notional = max(1.0, market_value * 0.50)
             result = self._submit_or_dry(symbol, notional, "sell", dry_run)
             if not result.get("error"):
-                self.risk_book.update_fields(symbol, partial_profit_taken=True, trailing_active=True)
+                # CRITICAL FIX: After selling ~50%, update entry_notional to reflect
+                # the reduced position. Without this, when the remaining half is closed
+                # later, P&L = (half_market_value - full_entry_notional) = huge fake loss.
+                remaining_notional = max(1.0, _safe_float(state.get("entry_notional")) * 0.50)
+                self.risk_book.update_fields(
+                    symbol,
+                    partial_profit_taken=True,
+                    trailing_active=True,
+                    entry_notional=round(remaining_notional, 2),
+                )
             event_type = "partial_profit"
         elif close_all:
             result = self._close_or_dry(symbol, dry_run)
@@ -133,13 +142,24 @@ class ExitManager:
         else:
             return None
 
+        # For partial profit events, the entry_state should reflect only the
+        # half being sold so P&L is computed correctly.
+        if partial:
+            partial_entry_state = dict(state)
+            partial_entry_state["entry_notional"] = round(
+                _safe_float(state.get("entry_notional")) * 0.50, 2
+            )
+            event_entry_state = partial_entry_state
+        else:
+            event_entry_state = state
+
         event = {
             "event": event_type,
             "timestamp": _utcnow(),
             "symbol": symbol,
             "side": "close" if close_all else "sell",
             "reason": reason,
-            "entry_state": state,
+            "entry_state": event_entry_state,
             "exit_price": current_price,
             "exit_notional": market_value if close_all else market_value * 0.50,
             "unrealized_pl_pct": round(pl_pct, 2),
