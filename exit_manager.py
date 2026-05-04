@@ -81,15 +81,30 @@ class ExitManager:
             reason = f"Partial profit hit: price {current_price:.4f} >= partial target {partial_price:.4f}."
             partial = True
         else:
-            trail_reason = self._trailing_reason(symbol, state, current_price, high_water, partial_price)
-            if trail_reason:
-                reason = trail_reason
-                close_all = True
-            else:
-                invalid_reason = self._invalidation_reason(symbol, state, current_price)
-                if invalid_reason:
-                    reason = invalid_reason
+            # Check max hold time — don't let positions sit forever tying up capital
+            max_hold = _safe_float(state.get("max_hold_hours"), 96)
+            opened_at = state.get("opened_at")
+            if opened_at and max_hold > 0:
+                try:
+                    from datetime import datetime, timezone
+                    opened_dt = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+                    hours_held = (datetime.now(timezone.utc) - opened_dt).total_seconds() / 3600
+                    if hours_held >= max_hold:
+                        reason = f"Max hold time expired: held {hours_held:.0f}h (limit {max_hold:.0f}h), P&L {pl_pct:+.2f}%."
+                        close_all = True
+                except Exception:
+                    pass
+
+            if not reason:
+                trail_reason = self._trailing_reason(symbol, state, current_price, high_water, partial_price)
+                if trail_reason:
+                    reason = trail_reason
                     close_all = True
+                else:
+                    invalid_reason = self._invalidation_reason(symbol, state, current_price)
+                    if invalid_reason:
+                        reason = invalid_reason
+                        close_all = True
 
         if not reason:
             return None
@@ -179,14 +194,18 @@ class ExitManager:
             active = True
         if not active:
             return None
-        atr_multiple = _safe_float(logic.get("atr_multiple"), 1.8)
+        atr_multiple = _safe_float(logic.get("atr_multiple"), 2.0)
         trail_price = _safe_float(state.get("trailing_stop_price"))
         try:
             candles = self.data.get_candles(symbol, "1h", limit=40)
             atr_values = atr(candles, 14) if candles else []
             atr_value = atr_values[-1] if atr_values else 0.0
             if atr_value > 0:
-                trail_price = max(trail_price, high_water - (atr_value * atr_multiple))
+                new_trail = high_water - (atr_value * atr_multiple)
+                # CRITICAL: trailing stop must only RATCHET UP, never down.
+                # As ATR fluctuates the calculated trail can decrease, which
+                # would reduce protection. Always keep the higher of the two.
+                trail_price = max(trail_price, new_trail)
         except Exception:
             pass
         if trail_price > 0:

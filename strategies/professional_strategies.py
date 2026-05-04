@@ -64,7 +64,8 @@ def _bollinger(values, period=20, mult=2.0):
         window = values[max(0, idx - period + 1):idx + 1]
         avg = mid[idx] if idx < len(mid) else _mean(window)
         if len(window) > 1:
-            variance = sum((v - avg) ** 2 for v in window) / len(window)
+            # Use sample std dev (N-1) to match TradingView/standard Bollinger Band calculation
+            variance = sum((v - avg) ** 2 for v in window) / (len(window) - 1)
             std = variance ** 0.5
         else:
             std = 0.0
@@ -179,9 +180,16 @@ class FeatureContext:
 
     @property
     def volume_ratio(self):
-        recent = _mean(self.volumes[-5:])
-        base = _mean(self.volumes[-40:-5]) if len(self.volumes) >= 45 else _mean(self.volumes[:-5])
-        return recent / base if base > 0 else 1.0
+        # Use last 3 bars vs 20-bar baseline for more responsive volume detection.
+        # If volume data is sparse (common for Alpaca crypto), return 1.0 (neutral)
+        # to avoid false signals from noise.
+        if len(self.volumes) < 10:
+            return 1.0
+        recent = _mean(self.volumes[-3:])
+        base = _mean(self.volumes[-25:-3]) if len(self.volumes) >= 28 else _mean(self.volumes[:-3])
+        if base <= 0 or recent <= 0:
+            return 1.0  # No reliable volume data — neutral
+        return recent / base
 
     @property
     def bullish_bar(self):
@@ -271,9 +279,13 @@ class BaseProfessionalStrategy:
     def evaluate(self, features: FeatureContext) -> StrategySignal:
         raise NotImplementedError
 
-    def _levels(self, f, stop_mult=1.5, tp_mult=2.8, partial_mult=1.4, trail_mult=1.8):
-        atr_value = max(f.atr_value, f.close * 0.005)
-        stop = max(0.000001, f.close - atr_value * stop_mult)
+    def _levels(self, f, stop_mult=2.0, tp_mult=3.2, partial_mult=1.5, trail_mult=2.0):
+        # ATR floor: at least 1% of price to prevent noise stop-outs on thin markets
+        atr_value = max(f.atr_value, f.close * 0.01)
+        # Stop floor: never risk more than 8% from entry (matches proven Adaptive Breakout)
+        max_stop_distance = f.close * 0.08
+        stop_distance = min(atr_value * stop_mult, max_stop_distance)
+        stop = max(f.close * 0.92, f.close - stop_distance)
         take = f.close + atr_value * tp_mult
         partial = f.close + atr_value * partial_mult
         risk = f.close - stop
@@ -345,17 +357,22 @@ class TrendPullbackStrategy(BaseProfessionalStrategy):
         ema20 = f.ema20[-1]
         ema50 = f.ema50[-1]
         trend_ok = f.close > ema50 and ema20 > ema50
-        touched_zone = f.low <= ema20 * 1.006 or _near(f.close, ema20, 0.65)
-        rsi_ok = 38 <= f.rsi_value <= 68
-        if trend_ok and touched_zone and rsi_ok and f.bullish_bar:
-            conf = 0.52 + min(0.18, max(0, f.adx_value - 18) / 100) + min(0.08, (f.volume_ratio - 1) * 0.06)
+        # Tighter pullback zone: price must actually touch or wick through EMA20,
+        # not just be "near" it. The 0.3% tolerance handles bid-ask spread only.
+        touched_zone = f.low <= ema20 * 1.003
+        # RSI must show genuine pullback (not overbought) but not be crashing
+        rsi_ok = 40 <= f.rsi_value <= 58
+        # Require ADX to confirm a real trend exists (not just a mild drift)
+        trend_strong = f.adx_value >= 20
+        if trend_ok and touched_zone and rsi_ok and f.bullish_bar and trend_strong:
+            conf = 0.54 + min(0.16, max(0, f.adx_value - 20) / 100) + min(0.08, (f.volume_ratio - 1) * 0.06)
             if f.htf_bullish is True:
                 conf += 0.08
             return self._buy(
                 f, conf,
                 f"Trend pullback confirmed: price reclaimed EMA20/EMA50 zone, RSI {f.rsi_value:.1f}, ADX {f.adx_value:.1f}.",
                 "Close below EMA50 or loss of pullback low.",
-                stop_mult=1.35, tp_mult=2.7, partial_mult=1.25, trail_mult=1.7,
+                stop_mult=2.0, tp_mult=3.2, partial_mult=1.5, trail_mult=2.0,
             )
         blockers = []
         if not trend_ok:
@@ -364,6 +381,8 @@ class TrendPullbackStrategy(BaseProfessionalStrategy):
             blockers.append("price has not pulled back to the EMA value zone")
         if not rsi_ok:
             blockers.append(f"RSI {f.rsi_value:.1f} is outside pullback range")
+        if not trend_strong:
+            blockers.append(f"ADX {f.adx_value:.1f} too weak for trend confirmation")
         if not f.bullish_bar:
             blockers.append("latest 1H candle did not bounce convincingly")
         return self._hold(f, 0.34 if trend_ok else 0.18, "; ".join(blockers))
@@ -382,23 +401,23 @@ class EMACrossoverStrategy(BaseProfessionalStrategy):
         ema50 = f.ema50[-1]
         bullish_stack = fast > slow and f.close > ema50
         recent_cross = _crossed_above(f.ema9, f.ema21, lookback=6)
-        if bullish_stack and (recent_cross or f.adx_value >= 18):
+        # REQUIRE a fresh cross — just having EMAs stacked is not a signal.
+        # ADX confirms trend strength but cannot substitute for the actual cross event.
+        if bullish_stack and recent_cross and f.adx_value >= 18:
             sep = (fast - slow) / slow * 100 if slow else 0.0
-            conf = 0.48 + min(0.15, sep * 0.08) + min(0.14, max(0, f.adx_value - 16) / 100)
-            if recent_cross:
-                conf += 0.08
+            conf = 0.52 + min(0.15, sep * 0.08) + min(0.14, max(0, f.adx_value - 18) / 100)
             if f.htf_bullish is True:
                 conf += 0.06
             return self._buy(
                 f, conf,
-                f"EMA momentum alignment: EMA9 {fast:.2f} > EMA21 {slow:.2f}, price above EMA50, ADX {f.adx_value:.1f}.",
+                f"EMA crossover confirmed: EMA9 {fast:.2f} crossed above EMA21 {slow:.2f}, price above EMA50, ADX {f.adx_value:.1f}.",
                 "EMA9 crosses back below EMA21 or price loses EMA50.",
-                stop_mult=1.45, tp_mult=2.9, partial_mult=1.35, trail_mult=1.8,
+                stop_mult=2.0, tp_mult=3.2, partial_mult=1.5, trail_mult=2.0,
             )
         return self._hold(
             f,
             0.32 if bullish_stack else 0.14,
-            f"Waiting for EMA9 > EMA21 with price above EMA50; now EMA9={fast:.2f}, EMA21={slow:.2f}, close={f.close:.2f}.",
+            f"Waiting for fresh EMA9/EMA21 crossover with price above EMA50; now EMA9={fast:.2f}, EMA21={slow:.2f}, close={f.close:.2f}.",
             "EMA structure remains unconfirmed.",
         )
 
@@ -415,20 +434,25 @@ class MACDMomentumStrategy(BaseProfessionalStrategy):
         prev_hist = f.macd_histogram[-2] if len(f.macd_histogram) >= 2 else hist
         macd_now = f.macd_line[-1]
         signal_now = f.macd_signal[-1]
-        if macd_now > signal_now and hist > 0 and hist >= prev_hist and f.close > f.ema20[-1]:
-            conf = 0.50 + min(0.16, abs(hist) / max(f.close, 1) * 120) + min(0.12, max(0, f.adx_value - 15) / 110)
+        # Check for fresh momentum: histogram must have been negative or near-zero
+        # within recent bars (showing this is a NEW momentum move, not stale)
+        recent_hist = f.macd_histogram[-6:] if len(f.macd_histogram) >= 6 else f.macd_histogram
+        was_negative_recently = any(h <= 0 for h in recent_hist[:-1])
+        histogram_fresh = was_negative_recently and hist > 0 and hist >= prev_hist
+        if macd_now > signal_now and histogram_fresh and f.close > f.ema20[-1]:
+            conf = 0.52 + min(0.16, abs(hist) / max(f.close, 1) * 120) + min(0.12, max(0, f.adx_value - 18) / 100)
             if f.volume_ratio >= 1.15:
                 conf += 0.05
             return self._buy(
                 f, conf,
-                f"MACD momentum expanding: MACD {macd_now:.4f} > signal {signal_now:.4f}, histogram rising, close above EMA20.",
+                f"MACD fresh momentum: MACD {macd_now:.4f} > signal {signal_now:.4f}, histogram freshly positive and rising, close above EMA20.",
                 "MACD histogram turns negative or price closes below EMA20.",
-                stop_mult=1.5, tp_mult=3.0, partial_mult=1.4, trail_mult=1.9,
+                stop_mult=2.0, tp_mult=3.2, partial_mult=1.5, trail_mult=2.0,
             )
         return self._hold(
             f,
             0.30 if hist > 0 else 0.12,
-            f"MACD momentum not ready: MACD={macd_now:.4f}, signal={signal_now:.4f}, histogram={hist:.4f}, previous={prev_hist:.4f}.",
+            f"MACD momentum not ready: MACD={macd_now:.4f}, signal={signal_now:.4f}, histogram={hist:.4f}, fresh={was_negative_recently if len(recent_hist) > 1 else 'N/A'}.",
         )
 
 
@@ -440,23 +464,27 @@ class RSIMeanReversionStrategy(BaseProfessionalStrategy):
     def evaluate(self, f):
         if not f.enough:
             return self._insufficient(f)
-        recent_rsi = f.rsi14[-6:] if len(f.rsi14) >= 6 else f.rsi14
+        # Look back 8 bars (8 hours on 1H) for a genuine oversold wash
+        recent_rsi = f.rsi14[-8:] if len(f.rsi14) >= 8 else f.rsi14
         min_rsi = min(recent_rsi) if recent_rsi else 50
-        recovering = f.rsi_value > min_rsi + 2.0 or f.bullish_bar
+        # Require clear recovery: RSI must have bounced at least 4 points AND
+        # current RSI must be above 35 (confirming recovery, not still falling)
+        recovering = f.rsi_value > min_rsi + 4.0 and f.rsi_value >= 35 and f.bullish_bar
         trend_floor = not f.ema200 or f.close >= f.ema200[-1] * 0.97
-        if min_rsi <= 34 and recovering and trend_floor:
-            conf = 0.49 + min(0.17, (36 - min_rsi) / 60) + (0.05 if f.bullish_bar else 0)
+        # Require genuine oversold (RSI <= 30) not just "slightly low"
+        if min_rsi <= 30 and recovering and trend_floor:
+            conf = 0.50 + min(0.18, (32 - min_rsi) / 50) + (0.06 if f.bullish_bar else 0)
             if f.adx_value < 22:
                 conf += 0.06
             return self._buy(
                 f, conf,
                 f"RSI reversion setup: RSI washed out to {min_rsi:.1f} and is recovering to {f.rsi_value:.1f}.",
                 "RSI rolls back under the oversold low or price closes below recent swing low.",
-                stop_mult=1.2, tp_mult=2.1, partial_mult=1.0, trail_mult=1.4,
+                stop_mult=2.0, tp_mult=2.8, partial_mult=1.4, trail_mult=1.8,
             )
         return self._hold(
             f,
-            0.33 if min_rsi <= 38 else 0.10,
+            0.33 if min_rsi <= 34 else 0.10,
             f"Waiting for oversold recovery: recent RSI low {min_rsi:.1f}, current RSI {f.rsi_value:.1f}, trend floor ok={trend_floor}.",
         )
 
@@ -472,14 +500,15 @@ class BollingerBandReversionStrategy(BaseProfessionalStrategy):
         lower = f.bb_lower[-1]
         mid = f.bb_mid[-1]
         band_width = (f.bb_upper[-1] - lower) / mid * 100 if mid else 0.0
-        touched_lower = f.low <= lower * 1.004 or f.close <= lower * 1.01
-        if touched_lower and f.rsi_value <= 45 and f.close > f.open:
-            conf = 0.47 + min(0.13, (45 - f.rsi_value) / 80) + (0.06 if f.adx_value < 22 else 0)
+        touched_lower = f.low <= lower * 1.002 or f.close <= lower * 1.005
+        # Require RSI to confirm oversold, not just "slightly below average"
+        if touched_lower and f.rsi_value <= 40 and f.close > f.open and f.adx_value < 25:
+            conf = 0.50 + min(0.13, (40 - f.rsi_value) / 60) + (0.06 if f.adx_value < 20 else 0)
             return self._buy(
                 f, conf,
                 f"Bollinger reversion: price tagged lower band {lower:.2f}, RSI {f.rsi_value:.1f}, band width {band_width:.2f}%.",
                 "Close below lower band continuation or failure to reclaim band midline.",
-                stop_mult=1.15, tp_mult=2.0, partial_mult=0.95, trail_mult=1.25,
+                stop_mult=2.0, tp_mult=2.8, partial_mult=1.4, trail_mult=1.8,
             )
         return self._hold(
             f,
@@ -496,21 +525,28 @@ class BreakoutRetestStrategy(BaseProfessionalStrategy):
     def evaluate(self, f):
         if not f.enough:
             return self._insufficient(f)
+        # Use the Donchian 20-bar high (already computed with [1] offset) as the
+        # resistance level — this is a proven, well-tested resistance measure
+        # rather than a raw max of arbitrary lookback window.
         lookback_highs = f.highs[-30:-4]
         if not lookback_highs:
             return self._insufficient(f)
-        level = max(lookback_highs)
+        # Use the second-to-last Donchian high if available (more stable than raw max)
+        if len(f.donchian_high20) >= 5:
+            level = f.donchian_high20[-5]  # resistance from 5 bars ago (well-established)
+        else:
+            level = max(lookback_highs)
         broke_recently = any(c > level for c in f.closes[-4:])
         retested = f.low <= level * 1.006 and f.close >= level
-        if broke_recently and retested and f.volume_ratio >= 0.9:
-            conf = 0.51 + min(0.14, max(0, f.volume_ratio - 1) * 0.10) + min(0.11, max(0, f.adx_value - 16) / 100)
+        if broke_recently and retested and f.volume_ratio >= 1.0:
+            conf = 0.53 + min(0.14, max(0, f.volume_ratio - 1) * 0.10) + min(0.11, max(0, f.adx_value - 18) / 100)
             if f.htf_bullish is True:
                 conf += 0.06
             return self._buy(
                 f, conf,
                 f"Breakout retest: level {level:.2f} broke and held on retest, volume {f.volume_ratio:.2f}x.",
                 "Close back below retest level.",
-                stop_mult=1.35, tp_mult=3.0, partial_mult=1.35, trail_mult=1.8,
+                stop_mult=2.0, tp_mult=3.5, partial_mult=1.6, trail_mult=2.2,
             )
         return self._hold(
             f,
@@ -528,13 +564,13 @@ class DonchianChannelBreakoutStrategy(BaseProfessionalStrategy):
         if not f.enough:
             return self._insufficient(f)
         upper = f.donchian_high20[-2] if len(f.donchian_high20) >= 2 else f.donchian_high20[-1]
-        if f.close > upper and f.plus_di14[-1] > f.minus_di14[-1] and f.atr_pct >= 0.25:
-            conf = 0.50 + min(0.15, max(0, f.adx_value - 18) / 90) + min(0.10, max(0, f.volume_ratio - 1) * 0.08)
+        if f.close > upper and f.plus_di14[-1] > f.minus_di14[-1] and f.atr_pct >= 0.25 and f.adx_value >= 20:
+            conf = 0.54 + min(0.15, max(0, f.adx_value - 20) / 80) + min(0.10, max(0, f.volume_ratio - 1) * 0.08)
             return self._buy(
                 f, conf,
-                f"Donchian breakout: close {f.close:.2f} cleared 20-bar high {upper:.2f}, +DI leads -DI.",
+                f"Donchian breakout: close {f.close:.2f} cleared 20-bar high {upper:.2f}, +DI leads -DI, ADX {f.adx_value:.1f}.",
                 "Close back inside Donchian channel or ADX deterioration.",
-                stop_mult=1.7, tp_mult=3.4, partial_mult=1.6, trail_mult=2.1,
+                stop_mult=2.5, tp_mult=4.0, partial_mult=2.0, trail_mult=2.5,
             )
         return self._hold(
             f,
@@ -552,15 +588,15 @@ class VWAPBounceStrategy(BaseProfessionalStrategy):
         if not f.enough:
             return self._insufficient(f)
         vwap = f.vwap20
-        touched = f.low <= vwap * 1.006 and f.close >= vwap
-        trend_ok = f.close >= f.ema50[-1] * 0.985
+        touched = f.low <= vwap * 1.004 and f.close >= vwap
+        trend_ok = f.close >= f.ema50[-1] * 0.99
         if touched and trend_ok and f.bullish_bar:
-            conf = 0.48 + min(0.12, max(0, f.volume_ratio - 1) * 0.10) + (0.04 if f.rsi_value >= 45 else 0)
+            conf = 0.50 + min(0.12, max(0, f.volume_ratio - 1) * 0.10) + (0.04 if f.rsi_value >= 45 else 0)
             return self._buy(
                 f, conf,
                 f"VWAP bounce: price tested VWAP {vwap:.2f}, closed above it with volume {f.volume_ratio:.2f}x.",
                 "Close below rolling VWAP after entry.",
-                stop_mult=1.15, tp_mult=2.2, partial_mult=1.05, trail_mult=1.4,
+                stop_mult=2.0, tp_mult=2.8, partial_mult=1.4, trail_mult=1.8,
             )
         return self._hold(
             f,
@@ -583,14 +619,14 @@ class ATRMomentumExpansionStrategy(BaseProfessionalStrategy):
         atr_rising = len(f.atr14) >= 6 and f.atr14[-1] > _mean(f.atr14[-6:-1])
         closes_near_high = f.high > 0 and f.close >= f.high - (recent_range * 0.25)
         trend_ok = f.close > f.ema20[-1]
-        if avg_range > 0 and recent_range >= avg_range * 1.18 and atr_rising and closes_near_high and trend_ok:
+        if avg_range > 0 and recent_range >= avg_range * 1.3 and atr_rising and closes_near_high and trend_ok:
             expansion = recent_range / avg_range
-            conf = 0.50 + min(0.16, (expansion - 1) * 0.18) + min(0.10, max(0, f.volume_ratio - 1) * 0.08)
+            conf = 0.53 + min(0.16, (expansion - 1) * 0.15) + min(0.10, max(0, f.volume_ratio - 1) * 0.08)
             return self._buy(
                 f, conf,
                 f"ATR momentum expansion: current range {expansion:.2f}x average, ATR rising, close near high.",
                 "Momentum candle fails below its midpoint or ATR expansion reverses.",
-                stop_mult=1.6, tp_mult=3.2, partial_mult=1.5, trail_mult=2.0,
+                stop_mult=2.2, tp_mult=3.8, partial_mult=1.8, trail_mult=2.4,
             )
         return self._hold(
             f,
@@ -609,17 +645,18 @@ class SupertrendContinuationStrategy(BaseProfessionalStrategy):
             return self._insufficient(f)
         direction = f.supertrend_direction[-1] if f.supertrend_direction else 0
         line = f.supertrend_line[-1] if f.supertrend_line else 0.0
-        pullback_to_line = line > 0 and f.low <= line * 1.015 and f.close > line
+        pullback_to_line = line > 0 and f.low <= line * 1.012 and f.close > line
         trend_ok = direction > 0 and f.close > f.ema20[-1] > f.ema50[-1]
-        if trend_ok and (pullback_to_line or f.adx_value >= 22):
-            conf = 0.51 + min(0.16, max(0, f.adx_value - 18) / 90) + (0.05 if pullback_to_line else 0)
-            if f.htf_bullish is True:
-                conf += 0.05
+        # REQUIRE pullback to supertrend line — this is a continuation strategy,
+        # not "buy anywhere in an uptrend". ADX confirms trend strength but the
+        # pullback is the actual entry trigger.
+        if trend_ok and pullback_to_line and f.adx_value >= 20 and f.bullish_bar:
+            conf = 0.54 + min(0.16, max(0, f.adx_value - 20) / 80) + (0.05 if f.htf_bullish is True else 0)
             return self._buy(
                 f, conf,
-                f"Supertrend continuation: supertrend is bullish, price above trend line {line:.2f}, EMA stack positive.",
+                f"Supertrend continuation: pullback to line {line:.2f}, bullish bounce, ADX {f.adx_value:.1f}, EMA stack positive.",
                 "Close below supertrend line or EMA20/EMA50 trend break.",
-                stop_mult=1.45, tp_mult=3.0, partial_mult=1.35, trail_mult=1.8,
+                stop_mult=2.0, tp_mult=3.5, partial_mult=1.6, trail_mult=2.2,
             )
         return self._hold(
             f,
