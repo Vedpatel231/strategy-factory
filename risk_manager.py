@@ -418,8 +418,10 @@ class TradeFrequencyLimiter:
     Resets at midnight UTC.
     """
 
-    MAX_DAILY_TOTAL = 50
-    MAX_DAILY_PER_SYMBOL = 5
+    # Conservative limits: survival mode. Reduce to 10 total trades/day
+    # and 2 per symbol. Overtrading was a major loss driver.
+    MAX_DAILY_TOTAL = int(os.environ.get("MAX_DAILY_TRADES", "10"))
+    MAX_DAILY_PER_SYMBOL = int(os.environ.get("MAX_DAILY_PER_SYMBOL", "2"))
     STATE_FILE = os.path.join(config.DATA_DIR, "trade_frequency.json")
 
     def __init__(self):
@@ -672,7 +674,7 @@ class RiskManager:
     Facade that initialises and orchestrates all risk controls.
     """
 
-    def __init__(self, max_daily_loss_pct: float = 5.0, max_position_loss_pct: float = 12.0):
+    def __init__(self, max_daily_loss_pct: float = 2.0, max_position_loss_pct: float = 8.0):
         self.circuit_breaker = DrawdownCircuitBreaker()
         self.daily_loss_guard = DailyLossGuard(max_daily_loss_pct=max_daily_loss_pct)
         self.position_stop_loss = PositionStopLoss(max_loss_pct=max_position_loss_pct)
@@ -855,6 +857,15 @@ class RiskManager:
 
         if entry_price <= 0 or stop_loss <= 0 or stop_loss >= entry_price:
             reasons.append("Invalid ATR stop geometry; entry must be above stop.")
+            return approval
+
+        # Minimum risk:reward check
+        rr = float(trade_request.get("risk_reward") or 0)
+        min_rr = float(os.environ.get("DESK_MIN_RISK_REWARD", "1.5"))
+        if rr > 0 and rr < min_rr:
+            reasons.append(
+                f"Risk:reward {rr:.2f} is below minimum {min_rr:.2f}."
+            )
             return approval
 
         max_risk_pct = float(os.environ.get("DESK_RISK_PER_TRADE_PCT", "0.50"))

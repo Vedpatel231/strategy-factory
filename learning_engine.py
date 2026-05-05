@@ -120,6 +120,16 @@ class LearningEngine:
         with open(self.learning_state_file, "w") as f:
             json.dump(self.state, f, indent=2)
 
+    def reset_all(self):
+        """Reset all learning state.
+
+        Call this when historical P&L data was corrupted (e.g. the partial
+        profit accounting bug) and the engine has been trained on bad data.
+        After reset, the engine starts fresh with no score adjustments.
+        """
+        self.state = self._initialize_state()
+        self.save_state()
+
     def get_strategy_state(self, strategy_id):
         """
         Get or create strategy state entry.

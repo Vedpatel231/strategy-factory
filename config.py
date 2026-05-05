@@ -20,8 +20,11 @@ BINANCE_BASE_URL = "https://api.binance.com"
 DB_PATH = os.environ.get("STRATEGY_FACTORY_DB", os.path.join(DATA_DIR, "strategy_factory.db"))
 
 # === Asset Universe ===
-CRYPTO_ASSETS = ["BTC", "ETH", "SOL", "XRP", "LINK", "AVAX", "ADA", "UNI", "AAVE", "LTC"]
-STOCK_ASSETS = ["TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"]
+# Conservative asset universe: focus on the most liquid assets.
+# More assets = more marginal trades = more bleeding.
+# Expand ONLY after the focused set is consistently green.
+CRYPTO_ASSETS = ["BTC", "ETH", "SOL"]
+STOCK_ASSETS = ["AAPL", "NVDA", "MSFT"]
 
 # === Professional Trading Desk Parameters ===
 DESK_ENTRY_TIMEFRAME = "1h"
@@ -52,9 +55,9 @@ HARD_STOP_PCT = 8.0           # Hard stop loss = 8% from entry
 CRYPTO_MIN_ATR_PCT = 0.5      # Min volatility for crypto entries
 STOCK_MIN_ATR_PCT = 0.3       # Min volatility for stock entries
 
-# === Concurrency Limits ===
-MAX_CONCURRENT_CRYPTO = 3     # Max 3 crypto positions at once
-MAX_CONCURRENT_STOCKS = 3     # Max 3 stock positions at once
+# === Concurrency Limits (conservative) ===
+MAX_CONCURRENT_CRYPTO = 2     # Max 2 crypto positions at once
+MAX_CONCURRENT_STOCKS = 2     # Max 2 stock positions at once
 
 # === Cooldown ===
 POST_LOSS_COOLDOWN_BARS = 2   # 2 bars = 8 hours cooldown after a loss

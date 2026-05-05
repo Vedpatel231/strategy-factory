@@ -1,11 +1,13 @@
 """Professional Strategy Factory trading desk orchestration."""
 
+import os
 from datetime import datetime, timezone
 
 import config
 from alpaca_client import AlpacaPaperClient, is_configured, normalize_crypto_symbol
 from asset_manager import AssetManager
 from bot_registry import BotRegistry
+from conservative_mode import ConservativeMode
 from decision_logger import DecisionLogger, load_trading_desk_state
 from exit_manager import ExitManager
 from intraday_engine import MarketDataProvider
@@ -31,8 +33,21 @@ class TradingDeskEngine:
         self.logger = DecisionLogger()
         self.registry = BotRegistry()
         self.learner = LearningEngine()
+        # Reset learning state if it was trained on corrupted P&L data.
+        # The partial profit accounting bug caused massively overstated losses,
+        # which poisoned the learning engine's strategy scores.  This flag file
+        # is checked once and removed after reset.
+        _reset_flag = os.path.join(config.DATA_DIR, "learning_needs_reset")
+        if not os.path.exists(os.path.join(config.DATA_DIR, "learning_reset_done")):
+            self.learner.reset_all()
+            try:
+                with open(os.path.join(config.DATA_DIR, "learning_reset_done"), "w") as _f:
+                    _f.write(_utcnow())
+            except Exception:
+                pass
         self.ceo = MarketCEO(data_provider=self.data)
         self.risk = RiskManager()
+        self.conservative = ConservativeMode()
         self.executor = TradeExecutor(client=self.client, logger=self.logger)
         self.exit_manager = ExitManager(client=self.client, data_provider=self.data, logger=self.logger)
 
@@ -43,6 +58,27 @@ class TradingDeskEngine:
         position_map = self._position_map(positions)
 
         exit_result = self.exit_manager.check_exits(positions=positions, dry_run=dry_run)
+
+        # Record exit results in conservative mode for daily P&L tracking
+        for exit_action in (exit_result or {}).get("actions", []):
+            if exit_action.get("event") in ("position_closed", "partial_profit"):
+                entry_state = exit_action.get("entry_state") or {}
+                exit_notional = float(exit_action.get("exit_notional") or 0)
+                entry_notional = float(entry_state.get("entry_notional") or 0)
+                net_pl = exit_notional - entry_notional if entry_notional else 0
+                self.conservative.record_trade_result(
+                    symbol=exit_action.get("symbol", ""),
+                    strategy=entry_state.get("strategy", "unknown"),
+                    net_pl=net_pl,
+                    reason=exit_action.get("reason", ""),
+                )
+
+        # Update unrealized P&L from current positions
+        total_unrealized = sum(
+            float(p.get("unrealized_pl") or 0) for p in positions or []
+        )
+        self.conservative.update_unrealized(total_unrealized)
+
         ceo_state = self.ceo.analyze()
 
         managers = []
@@ -64,6 +100,30 @@ class TradingDeskEngine:
 
             if not decision.trade_request:
                 continue
+
+            # ── Conservative mode gate ──
+            trade_req = decision.trade_request
+            cm_ok, cm_reason = self.conservative.can_trade(
+                symbol=trade_req.get("symbol"),
+                strategy=trade_req.get("strategy"),
+                risk_reward=float(trade_req.get("risk_reward") or 0),
+            )
+            if not cm_ok:
+                # Log the rejection but don't send to risk manager
+                self.logger.append("conservative_block", {
+                    "symbol": trade_req.get("symbol"),
+                    "strategy": trade_req.get("strategy"),
+                    "reason": cm_reason,
+                    "timestamp": _utcnow(),
+                })
+                approvals.append({
+                    "approved": False,
+                    "symbol": trade_req.get("symbol"),
+                    "reasons": [cm_reason],
+                    "trade_request": trade_req,
+                })
+                continue
+
             approval = self.risk.approve_trade_request(
                 decision.trade_request,
                 account=account,
@@ -184,6 +244,7 @@ class TradingDeskEngine:
             "source": "professional_trading_desk",
             "updated_at": _utcnow(),
             "dry_run": dry_run,
+            "conservative_mode": self.conservative.get_status(),
             "duration_sec": round(duration, 2),
             "broker_note": broker_note,
             "registry": self.registry.summary(),
