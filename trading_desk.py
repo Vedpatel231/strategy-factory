@@ -83,6 +83,10 @@ class TradingDeskEngine:
                     net_pl=net_pl,
                     reason=exit_action.get("reason", ""),
                 )
+                # Record estimated exit fees
+                if exit_notional > 0:
+                    est_exit_fee = self.conservative.estimate_fee_for_notional(exit_notional)
+                    self.conservative.record_fees(est_exit_fee)
                 # Release open risk budget for closed positions
                 if exit_action.get("event") == "position_closed":
                     self.conservative.release_open_risk(
@@ -168,6 +172,11 @@ class TradingDeskEngine:
                             decision.trade_request.get("symbol", ""),
                             risk_dollars,
                         )
+                    # Record estimated fees for net P&L tracking
+                    notional = float(approval.get("notional") or 0)
+                    if notional > 0:
+                        est_fee = self.conservative.estimate_fee_for_notional(notional)
+                        self.conservative.record_fees(est_fee)
                 if not order_result.get("error") and not dry_run:
                     try:
                         self.risk.record_order(symbol)

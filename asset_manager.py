@@ -150,7 +150,11 @@ def _record_signal(symbol, strategy, candle_key):
 # ── Trade Quality Score ──────────────────────────────────────────────
 #
 # Composite 0-100 score that determines if a setup is worth taking.
-# Normal threshold: 70.  Green protection / post-loss threshold: 80.
+# Thresholds are now DYNAMIC — set by conservative_mode based on daily
+# net P&L:
+#   SAFE_TEST_MODE               → 75
+#   PROFIT_PROTECTION_MODE       → 90
+#   LOSS_RECOVERY_PROTECTION_MODE → 90
 # Components:
 #   1. Regime alignment (0-20): strategy works_best matches CEO regime
 #   2. HTF confirmation (0-20): 4H and 1D trend agree with entry direction
@@ -158,9 +162,6 @@ def _record_signal(symbol, strategy, candle_key):
 #   4. Volume confirmation (0-15): above-average volume on signal candle
 #   5. Extension from mean (0-10): not over-extended from key EMAs
 #   6. Strategy performance (0-15): learning engine historical score
-
-QUALITY_THRESHOLD_NORMAL = int(os.environ.get("QUALITY_THRESHOLD_NORMAL", "70"))
-QUALITY_THRESHOLD_STRICT = int(os.environ.get("QUALITY_THRESHOLD_STRICT", "80"))
 
 
 def compute_trade_quality(signal_row, features, ceo_state, regime, learner=None, symbol=None):
@@ -362,21 +363,19 @@ class AssetManager:
                 best_buy, features, ceo_state, regime,
                 learner=self.learner, symbol=self.symbol,
             )
-            # Determine quality threshold: stricter after losses or in green protection
+            # Dynamic threshold from conservative_mode's daily P&L mode:
+            #   SAFE_TEST_MODE → 75,  protection modes → 90
             from conservative_mode import ConservativeMode
             _cm = ConservativeMode()
-            cm_status = _cm.get_status()
-            is_strict = (
-                cm_status.get("green_protection", False) or
-                cm_status.get("losses_today", 0) > 0
-            )
-            quality_threshold = QUALITY_THRESHOLD_STRICT if is_strict else QUALITY_THRESHOLD_NORMAL
+            quality_threshold = _cm.get_required_quality_score()
+            current_daily_mode = _cm.get_daily_mode()
 
             if quality_score < quality_threshold:
                 action = "wait"
                 reason = (
                     f"Quality score {quality_score}/100 below threshold {quality_threshold} "
-                    f"for {best_buy['bot_name']}. Breakdown: {quality_breakdown}"
+                    f"(mode: {current_daily_mode}) for {best_buy['bot_name']}. "
+                    f"Breakdown: {quality_breakdown}"
                 )
                 trade_request = None
                 active = best_buy
@@ -408,6 +407,7 @@ class AssetManager:
                     "quality_score": quality_score,
                     "quality_breakdown": quality_breakdown,
                     "quality_threshold": quality_threshold,
+                    "daily_mode": current_daily_mode,
                     "entry_price": features.close,
                     "stop_loss": signal.get("recommended_stop_loss"),
                     "take_profit": signal.get("recommended_take_profit"),

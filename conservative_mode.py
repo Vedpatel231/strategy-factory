@@ -1,24 +1,37 @@
 """
 Conservative Profit Mode — Capital preservation first.
 
-This module tracks daily realized P&L, per-asset loss streaks, and
-per-strategy loss streaks.  When any threshold is breached, it blocks
-new trades for the remainder of the day (UTC).
+Daily behaviour is governed by NET P&L (gross P&L minus estimated fees and
+slippage), NOT by a fixed maximum-trades-per-day count.
 
-Two operating modes:
-  SAFE_TEST_MODE   — Tiny risk (0.10-0.25%), max 2 open positions, ultra-tight
-                     daily limits. Use while proving the system is profitable.
-  NORMAL_PAPER_MODE — Standard paper risk (0.50%), normal limits.
+Three dynamic daily modes:
 
-All thresholds are PERCENTAGE-BASED and computed dynamically from equity
-so the system auto-scales as the account grows or shrinks.
+  SAFE_TEST_MODE (default)
+      Net P&L between -0.5 % and +1 % of equity.
+      Trade quality threshold: 75.  Normal risk per trade.
 
-Goals (in priority order):
-  1. Do not lose money.
-  2. Lock small green profit when achieved.
-  3. Only trade when setup quality is genuinely high.
+  PROFIT_PROTECTION_MODE
+      Net P&L >= +1 % of equity.
+      Trade quality threshold: 90.  Only near-perfect setups.
+      Higher R:R minimum (2.0).  Reduced position sizing.
+      Goal: protect the green day, don't give back gains.
 
-All state resets at midnight UTC.
+  LOSS_RECOVERY_PROTECTION_MODE
+      Net P&L <= -0.5 % of equity.
+      Trade quality threshold: 90.  Only excellent setups.
+      No revenge trading, no chasing.
+      Goal: allow one great setup to reduce the loss, or end the day.
+
+All thresholds are PERCENTAGE-BASED and computed dynamically from live
+Alpaca equity each cycle.
+
+Daily net P&L includes:
+  - Realized P&L (closed trades)
+  - Unrealized P&L (open positions)
+  - Estimated trading fees / commissions
+  - Estimated slippage
+
+State resets at midnight UTC.
 """
 
 import json
@@ -31,6 +44,11 @@ import config
 logger = logging.getLogger("conservative_mode")
 
 STATE_FILE = os.path.join(config.DATA_DIR, "conservative_mode.json")
+
+# ── Daily mode names (constants) ────────────────────────────────────
+MODE_SAFE_TEST = "SAFE_TEST_MODE"
+MODE_PROFIT_PROTECTION = "PROFIT_PROTECTION_MODE"
+MODE_LOSS_RECOVERY = "LOSS_RECOVERY_PROTECTION_MODE"
 
 
 def _utcnow():
@@ -66,65 +84,43 @@ def _write_state(state):
     os.replace(tmp, STATE_FILE)
 
 
-# ── Operating Mode ──────────────────────────────────────────────────
+# ── Percentage-based thresholds (env-overridable) ───────────────────
 #
-# SAFE_TEST_MODE (default) — prove the system works before risking real money.
-# Set CONSERVATIVE_MODE=normal_paper to switch to standard paper mode.
+# All computed from CURRENT EQUITY each cycle.  $30,000 examples:
+#   profit threshold    = 1.00 % = +$300
+#   loss threshold      = 0.50 % = -$150
+#   risk per trade      = 0.15 % =  $45
+#   max open risk       = 0.50 % = $150
 
-OPERATING_MODE = os.environ.get("CONSERVATIVE_MODE", "safe_test").lower()
-IS_SAFE_TEST = OPERATING_MODE in ("safe_test", "safe_test_mode", "safe")
-
-
-# ── Percentage-based thresholds (dynamic from equity) ───────────────
-#
-# These percentages are applied to CURRENT EQUITY each day.
-# Example on $30,000 account in safe_test mode:
-#   daily profit target  = 0.50% = $150
-#   daily loss limit     = 0.67% = $200
-#   green protection     = 0.25% = $75
-#   risk per trade       = 0.15% = $45
-#   max open risk budget = 0.50% = $150
-
-# --- Daily limits (% of equity) ---
-DAILY_PROFIT_TARGET_PCT = _safe_float(
-    os.environ.get("CONSERVATIVE_DAILY_PROFIT_TARGET_PCT"),
-    0.50 if IS_SAFE_TEST else 1.00,
+# --- Daily P&L thresholds (% of equity) ---
+DAILY_PROFIT_THRESHOLD_PCT = _safe_float(
+    os.environ.get("CONSERVATIVE_DAILY_PROFIT_THRESHOLD_PCT"), 1.00
 )
-DAILY_LOSS_LIMIT_PCT = _safe_float(
-    os.environ.get("CONSERVATIVE_DAILY_LOSS_LIMIT_PCT"),
-    0.67 if IS_SAFE_TEST else 1.50,
-)
-GREEN_PROTECTION_START_PCT = _safe_float(
-    os.environ.get("CONSERVATIVE_GREEN_PROTECTION_PCT"),
-    0.25 if IS_SAFE_TEST else 0.50,
+DAILY_LOSS_THRESHOLD_PCT = _safe_float(
+    os.environ.get("CONSERVATIVE_DAILY_LOSS_THRESHOLD_PCT"), 0.50
 )
 
 # --- Per-trade risk (% of equity) ---
-# SAFE_TEST: 0.10% to 0.25% — absolute maximum $75 on a $30K account.
-# NORMAL:    0.50% — standard paper risk, ~$150 on $30K.
 RISK_PER_TRADE_PCT = _safe_float(
-    os.environ.get("CONSERVATIVE_RISK_PER_TRADE_PCT"),
-    0.15 if IS_SAFE_TEST else 0.50,
+    os.environ.get("CONSERVATIVE_RISK_PER_TRADE_PCT"), 0.15
 )
 
 # --- Open risk budget (% of equity) ---
-# Total risk across ALL open positions cannot exceed this.
-# With 0.15% per trade and 2 max positions, the cap is 0.50%.
 MAX_OPEN_RISK_BUDGET_PCT = _safe_float(
-    os.environ.get("CONSERVATIVE_MAX_OPEN_RISK_PCT"),
-    0.50 if IS_SAFE_TEST else 1.50,
+    os.environ.get("CONSERVATIVE_MAX_OPEN_RISK_PCT"), 0.50
 )
 
 # --- Max open positions ---
 MAX_OPEN_POSITIONS = int(
-    os.environ.get("CONSERVATIVE_MAX_OPEN_POSITIONS",
-                    "2" if IS_SAFE_TEST else "4")
+    os.environ.get("CONSERVATIVE_MAX_OPEN_POSITIONS", "2")
 )
 
-# --- Max trades per day ---
-MAX_TRADES_PER_DAY = int(
-    os.environ.get("CONSERVATIVE_MAX_TRADES_PER_DAY",
-                    "5" if IS_SAFE_TEST else "10")
+# --- Fee / slippage estimation ---
+# Estimated round-trip cost per trade as a percentage of notional.
+# Alpaca paper has zero commissions but real accounts have ~$0 for stocks
+# and ~0.15-0.25 % spread for crypto.  Default 0.10 % covers spread + slippage.
+EST_FEE_PCT_PER_TRADE = _safe_float(
+    os.environ.get("CONSERVATIVE_EST_FEE_PCT"), 0.10
 )
 
 # Per-asset: pause after N consecutive losses on the same asset today.
@@ -137,9 +133,22 @@ STRATEGY_CONSECUTIVE_LOSS_LIMIT = int(
     os.environ.get("CONSERVATIVE_STRATEGY_LOSS_LIMIT", "3")
 )
 
-# Minimum risk:reward ratio to allow a trade.
-MIN_RISK_REWARD = _safe_float(
+# Minimum risk:reward ratio — normal mode.
+MIN_RISK_REWARD_NORMAL = _safe_float(
     os.environ.get("CONSERVATIVE_MIN_RR"), 1.5
+)
+
+# Minimum R:R in protection modes (profit or loss threshold reached).
+MIN_RISK_REWARD_PROTECTION = _safe_float(
+    os.environ.get("CONSERVATIVE_MIN_RR_PROTECTION"), 2.0
+)
+
+# Trade quality thresholds per daily mode.
+QUALITY_SCORE_NORMAL = int(
+    os.environ.get("CONSERVATIVE_QUALITY_NORMAL", "75")
+)
+QUALITY_SCORE_PROTECTION = int(
+    os.environ.get("CONSERVATIVE_QUALITY_PROTECTION", "90")
 )
 
 # When in green protection, require this higher confidence boost.
@@ -149,14 +158,16 @@ GREEN_CONFIDENCE_BOOST = _safe_float(
 
 
 class ConservativeMode:
-    """Daily P&L tracker, open risk budget, and trade gate.
+    """Daily NET P&L tracker, dynamic mode switcher, and trade gate.
 
-    Call `set_equity()` at the start of each cycle with current account equity.
-    Call `record_trade_result()` after every closed trade.
-    Call `register_open_risk()` when a new position is opened.
-    Call `release_open_risk()` when a position is closed.
-    Call `can_trade()` before every new entry.
-    State persists to disk and resets at midnight UTC.
+    Lifecycle per cycle:
+      1. ``set_equity(equity)``  — recompute dollar thresholds
+      2. ``record_trade_result()`` — after each closed / partial trade
+      3. ``record_fees(amount)``   — accumulate estimated fees
+      4. ``update_unrealized(upl)`` — set current unrealized P&L
+      5. ``get_daily_mode()``      — returns current mode name
+      6. ``can_trade(...)``        — pre-entry gate
+      7. ``get_required_quality_score()`` — for asset manager quality gate
     """
 
     def __init__(self, equity=None):
@@ -176,37 +187,43 @@ class ConservativeMode:
     def _fresh_state(self, date):
         return {
             "date": date,
-            "operating_mode": "safe_test" if IS_SAFE_TEST else "normal_paper",
             "equity": 0.0,
+            # Gross P&L components
             "realized_pl": 0.0,
             "unrealized_pl": 0.0,
+            # Fee / slippage tracking
+            "estimated_fees": 0.0,
+            "trade_count_for_fees": 0,
+            # Net P&L = realized + unrealized - fees
+            "net_daily_pl": 0.0,
+            # Trade counters
             "trades_today": 0,
             "wins_today": 0,
             "losses_today": 0,
-            "daily_locked": False,
-            "lock_reason": "",
+            # Daily mode (recomputed each cycle)
+            "daily_mode": MODE_SAFE_TEST,
+            "daily_mode_reason": "",
+            # Streaks and pauses
             "asset_streaks": {},
             "strategy_streaks": {},
             "paused_assets": [],
             "disabled_strategies": [],
-            "green_protection": False,
-            "trade_log": [],
-            # Open risk budget tracking
-            "open_risk_slots": {},    # symbol -> risk_dollars at entry
+            # Open risk budget
+            "open_risk_slots": {},
             "total_open_risk": 0.0,
-            # Dynamic dollar thresholds (computed from equity)
-            "daily_profit_target_usd": 0.0,
-            "daily_loss_limit_usd": 0.0,
-            "green_protection_usd": 0.0,
+            # Dynamic dollar thresholds (set by set_equity)
+            "profit_threshold_usd": 0.0,
+            "loss_threshold_usd": 0.0,
             "risk_per_trade_usd": 0.0,
             "max_open_risk_usd": 0.0,
+            # Trade log
+            "trade_log": [],
         }
 
     def _persist(self):
         _write_state(self._state)
 
     def _maybe_reset(self):
-        """Reset if the date rolled over."""
         today = _today_str()
         if self._state.get("date") != today:
             old_strat_streaks = self._state.get("strategy_streaks", {})
@@ -219,66 +236,83 @@ class ConservativeMode:
     # ── Equity and dynamic thresholds ────────────────────────────────
 
     def set_equity(self, equity):
-        """Set current equity and recompute all dollar thresholds.
-
-        Must be called at the start of each trading cycle so all limits
-        scale dynamically with the account size.
-        """
+        """Set current equity and recompute all dollar thresholds."""
         self._maybe_reset()
         equity = _safe_float(equity, 0.0)
         if equity <= 0:
             return
         self._state["equity"] = round(equity, 2)
-        self._state["daily_profit_target_usd"] = round(equity * DAILY_PROFIT_TARGET_PCT / 100.0, 2)
-        self._state["daily_loss_limit_usd"] = round(-equity * DAILY_LOSS_LIMIT_PCT / 100.0, 2)
-        self._state["green_protection_usd"] = round(equity * GREEN_PROTECTION_START_PCT / 100.0, 2)
-        self._state["risk_per_trade_usd"] = round(equity * RISK_PER_TRADE_PCT / 100.0, 2)
-        self._state["max_open_risk_usd"] = round(equity * MAX_OPEN_RISK_BUDGET_PCT / 100.0, 2)
+        self._state["profit_threshold_usd"] = round(
+            equity * DAILY_PROFIT_THRESHOLD_PCT / 100.0, 2
+        )
+        self._state["loss_threshold_usd"] = round(
+            -equity * DAILY_LOSS_THRESHOLD_PCT / 100.0, 2
+        )
+        self._state["risk_per_trade_usd"] = round(
+            equity * RISK_PER_TRADE_PCT / 100.0, 2
+        )
+        self._state["max_open_risk_usd"] = round(
+            equity * MAX_OPEN_RISK_BUDGET_PCT / 100.0, 2
+        )
+        self._recompute_daily_mode()
         self._persist()
 
     def get_risk_per_trade(self):
-        """Return the max risk dollars for a single trade."""
         return _safe_float(self._state.get("risk_per_trade_usd"), 0.0)
 
     def get_risk_per_trade_pct(self):
-        """Return the per-trade risk percentage."""
         return RISK_PER_TRADE_PCT
+
+    # ── Fee / slippage tracking ──────────────────────────────────────
+
+    def record_fees(self, fee_amount):
+        """Add estimated fees/slippage for a trade.
+
+        Called by trading_desk after each order execution with the
+        estimated round-trip cost.
+        """
+        self._maybe_reset()
+        self._state["estimated_fees"] = round(
+            self._state.get("estimated_fees", 0) + _safe_float(fee_amount), 2
+        )
+        self._state["trade_count_for_fees"] = (
+            self._state.get("trade_count_for_fees", 0) + 1
+        )
+        self._recompute_daily_mode()
+        self._persist()
+
+    def estimate_fee_for_notional(self, notional):
+        """Return estimated round-trip fee for a given notional amount."""
+        return round(_safe_float(notional) * EST_FEE_PCT_PER_TRADE / 100.0, 2)
 
     # ── Open risk budget ─────────────────────────────────────────────
 
     def register_open_risk(self, symbol, risk_dollars):
-        """Record risk committed when a new position is opened."""
         self._maybe_reset()
         risk_dollars = round(_safe_float(risk_dollars), 2)
         slots = self._state.get("open_risk_slots", {})
         slots[symbol] = risk_dollars
         self._state["open_risk_slots"] = slots
-        self._state["total_open_risk"] = round(
-            sum(slots.values()), 2
-        )
+        self._state["total_open_risk"] = round(sum(slots.values()), 2)
         self._persist()
         logger.info(
             "ConservativeMode: registered open risk $%.2f for %s "
-            "(total open risk: $%.2f / $%.2f)",
+            "(total: $%.2f / $%.2f)",
             risk_dollars, symbol,
             self._state["total_open_risk"],
             self._state.get("max_open_risk_usd", 0),
         )
 
     def release_open_risk(self, symbol):
-        """Release risk budget when a position is closed."""
         self._maybe_reset()
         slots = self._state.get("open_risk_slots", {})
         released = slots.pop(symbol, 0.0)
         self._state["open_risk_slots"] = slots
-        self._state["total_open_risk"] = round(
-            sum(slots.values()), 2
-        )
+        self._state["total_open_risk"] = round(sum(slots.values()), 2)
         self._persist()
         if released:
             logger.info(
-                "ConservativeMode: released $%.2f risk for %s "
-                "(total open risk: $%.2f)",
+                "ConservativeMode: released $%.2f risk for %s (total: $%.2f)",
                 released, symbol, self._state["total_open_risk"],
             )
 
@@ -306,16 +340,16 @@ class ConservativeMode:
                 self._state["strategy_streaks"].get(strategy, 0) + 1
             )
 
-        # Check asset pause
+        # Per-asset pause
         if self._state["asset_streaks"].get(symbol, 0) >= ASSET_CONSECUTIVE_LOSS_LIMIT:
             if symbol not in self._state["paused_assets"]:
                 self._state["paused_assets"].append(symbol)
                 logger.warning(
-                    "ConservativeMode: %s paused for the day after %d consecutive losses",
+                    "ConservativeMode: %s paused after %d consecutive losses",
                     symbol, ASSET_CONSECUTIVE_LOSS_LIMIT,
                 )
 
-        # Check strategy disable
+        # Per-strategy disable
         if self._state["strategy_streaks"].get(strategy, 0) >= STRATEGY_CONSECUTIVE_LOSS_LIMIT:
             if strategy not in self._state["disabled_strategies"]:
                 self._state["disabled_strategies"].append(strategy)
@@ -324,34 +358,7 @@ class ConservativeMode:
                     strategy, STRATEGY_CONSECUTIVE_LOSS_LIMIT,
                 )
 
-        # Check daily limits (dynamic)
-        profit_target = self._state.get("daily_profit_target_usd", 0)
-        loss_limit = self._state.get("daily_loss_limit_usd", 0)
-
-        if profit_target > 0 and self._state["realized_pl"] >= profit_target:
-            self._state["daily_locked"] = True
-            self._state["lock_reason"] = (
-                f"Daily profit target reached: ${self._state['realized_pl']:.2f} "
-                f">= ${profit_target:.2f} ({DAILY_PROFIT_TARGET_PCT:.2f}% of equity)"
-            )
-            logger.info("ConservativeMode: %s", self._state["lock_reason"])
-            self._send_alert(self._state["lock_reason"])
-
-        if loss_limit < 0 and self._state["realized_pl"] <= loss_limit:
-            self._state["daily_locked"] = True
-            self._state["lock_reason"] = (
-                f"Daily loss limit hit: ${self._state['realized_pl']:.2f} "
-                f"<= ${loss_limit:.2f} ({DAILY_LOSS_LIMIT_PCT:.2f}% of equity)"
-            )
-            logger.warning("ConservativeMode: %s", self._state["lock_reason"])
-            self._send_alert(self._state["lock_reason"])
-
-        # Green protection
-        green_threshold = self._state.get("green_protection_usd", 0)
-        if green_threshold > 0 and self._state["realized_pl"] >= green_threshold:
-            self._state["green_protection"] = True
-
-        # Append to trade log
+        # Log
         self._state["trade_log"].append({
             "symbol": symbol,
             "strategy": strategy,
@@ -361,6 +368,8 @@ class ConservativeMode:
             "reason": reason[:120],
         })
         self._state["trade_log"] = self._state["trade_log"][-50:]
+
+        self._recompute_daily_mode()
         self._persist()
 
     # ── Update unrealized P&L ────────────────────────────────────────
@@ -369,21 +378,76 @@ class ConservativeMode:
         """Call each cycle with total unrealized P&L from open positions."""
         self._maybe_reset()
         self._state["unrealized_pl"] = round(_safe_float(unrealized_pl), 2)
-        combined = self._state["realized_pl"] + self._state["unrealized_pl"]
-        loss_limit = self._state.get("daily_loss_limit_usd", 0)
-
-        if loss_limit < 0 and combined <= loss_limit and not self._state["daily_locked"]:
-            self._state["daily_locked"] = True
-            self._state["lock_reason"] = (
-                f"Combined P&L hit daily loss limit: ${combined:.2f} "
-                f"(realized ${self._state['realized_pl']:.2f} + "
-                f"unrealized ${self._state['unrealized_pl']:.2f}) "
-                f"<= ${loss_limit:.2f}"
-            )
-            logger.warning("ConservativeMode: %s", self._state["lock_reason"])
-            self._send_alert(self._state["lock_reason"])
-
+        self._recompute_daily_mode()
         self._persist()
+
+    # ── Daily mode logic ─────────────────────────────────────────────
+
+    def _compute_net_daily_pl(self):
+        """Net daily P&L = realized + unrealized - estimated fees."""
+        gross = (
+            _safe_float(self._state.get("realized_pl"))
+            + _safe_float(self._state.get("unrealized_pl"))
+        )
+        fees = _safe_float(self._state.get("estimated_fees"))
+        return round(gross - fees, 2)
+
+    def _recompute_daily_mode(self):
+        """Determine which daily mode is active based on net P&L thresholds."""
+        net_pl = self._compute_net_daily_pl()
+        self._state["net_daily_pl"] = net_pl
+
+        profit_threshold = _safe_float(self._state.get("profit_threshold_usd"))
+        loss_threshold = _safe_float(self._state.get("loss_threshold_usd"))
+
+        if profit_threshold > 0 and net_pl >= profit_threshold:
+            new_mode = MODE_PROFIT_PROTECTION
+            reason = (
+                f"Daily net P&L ${net_pl:+.2f} reached profit threshold "
+                f"${profit_threshold:.2f} ({DAILY_PROFIT_THRESHOLD_PCT:.2f}% of equity). "
+                f"Only 90+ score trades allowed."
+            )
+        elif loss_threshold < 0 and net_pl <= loss_threshold:
+            new_mode = MODE_LOSS_RECOVERY
+            reason = (
+                f"Daily net P&L ${net_pl:+.2f} hit loss threshold "
+                f"${loss_threshold:.2f} ({DAILY_LOSS_THRESHOLD_PCT:.2f}% of equity). "
+                f"Only 90+ score trades allowed. No revenge trading."
+            )
+        else:
+            new_mode = MODE_SAFE_TEST
+            reason = (
+                f"Daily net P&L ${net_pl:+.2f}. Normal {QUALITY_SCORE_NORMAL}+ "
+                f"score trades allowed."
+            )
+
+        old_mode = self._state.get("daily_mode")
+        self._state["daily_mode"] = new_mode
+        self._state["daily_mode_reason"] = reason
+
+        # Alert on mode transitions
+        if old_mode and old_mode != new_mode:
+            logger.warning("ConservativeMode: mode transition %s → %s", old_mode, new_mode)
+            self._send_alert(reason)
+
+    def get_daily_mode(self):
+        """Return the current daily mode name."""
+        self._maybe_reset()
+        return self._state.get("daily_mode", MODE_SAFE_TEST)
+
+    def get_required_quality_score(self):
+        """Return the minimum trade quality score for the current mode."""
+        mode = self.get_daily_mode()
+        if mode in (MODE_PROFIT_PROTECTION, MODE_LOSS_RECOVERY):
+            return QUALITY_SCORE_PROTECTION
+        return QUALITY_SCORE_NORMAL
+
+    def get_min_risk_reward(self):
+        """Return the minimum R:R for the current mode."""
+        mode = self.get_daily_mode()
+        if mode in (MODE_PROFIT_PROTECTION, MODE_LOSS_RECOVERY):
+            return MIN_RISK_REWARD_PROTECTION
+        return MIN_RISK_REWARD_NORMAL
 
     # ── Can trade? ───────────────────────────────────────────────────
 
@@ -391,56 +455,41 @@ class ConservativeMode:
                   proposed_risk_dollars=0.0, open_position_count=0):
         """
         Return (allowed: bool, reason: str).
-        Must pass ALL gates to trade.
+        Must pass ALL gates to trade.  No fixed max-trades-per-day gate.
         """
         self._maybe_reset()
 
-        # Gate 1: Daily lock
-        if self._state.get("daily_locked"):
-            return False, f"Trading locked for today: {self._state.get('lock_reason', 'daily limit')}"
+        mode = self.get_daily_mode()
+        min_rr = self.get_min_risk_reward()
 
-        # Gate 2: Max trades per day
-        if self._state.get("trades_today", 0) >= MAX_TRADES_PER_DAY:
-            return False, (
-                f"Max trades per day reached: {self._state['trades_today']} >= {MAX_TRADES_PER_DAY}"
-            )
-
-        # Gate 3: Max open positions
+        # Gate 1: Max open positions
         if open_position_count >= MAX_OPEN_POSITIONS:
             return False, (
                 f"Max open positions reached: {open_position_count} >= {MAX_OPEN_POSITIONS}"
             )
 
-        # Gate 4: Asset paused
+        # Gate 2: Asset paused (consecutive loss cooldown)
         if symbol and symbol in self._state.get("paused_assets", []):
             streak = self._state.get("asset_streaks", {}).get(symbol, 0)
             return False, (
                 f"{symbol} paused for today after {streak} consecutive losses"
             )
 
-        # Gate 5: Strategy disabled
+        # Gate 3: Strategy disabled (consecutive loss disable)
         if strategy and strategy in self._state.get("disabled_strategies", []):
             streak = self._state.get("strategy_streaks", {}).get(strategy, 0)
             return False, (
                 f"Strategy '{strategy}' disabled after {streak} consecutive losses"
             )
 
-        # Gate 6: Minimum R:R
-        if risk_reward > 0 and risk_reward < MIN_RISK_REWARD:
+        # Gate 4: Minimum R:R (dynamic — 1.5 normal, 2.0 in protection)
+        if risk_reward > 0 and risk_reward < min_rr:
             return False, (
-                f"Risk:reward {risk_reward:.2f} below minimum {MIN_RISK_REWARD:.2f}"
+                f"Risk:reward {risk_reward:.2f} below minimum {min_rr:.2f} "
+                f"(mode: {mode})"
             )
 
-        # Gate 7: Green protection — tighter R:R when we're already green
-        if self._state.get("green_protection") and risk_reward > 0:
-            green_rr = MIN_RISK_REWARD + 0.5
-            if risk_reward < green_rr:
-                return False, (
-                    f"Green protection active: R:R {risk_reward:.2f} below "
-                    f"protected minimum {green_rr:.2f}"
-                )
-
-        # Gate 8: Open risk budget
+        # Gate 5: Open risk budget
         if proposed_risk_dollars > 0:
             max_open_risk = self._state.get("max_open_risk_usd", 0)
             current_open_risk = self._state.get("total_open_risk", 0)
@@ -449,12 +498,13 @@ class ConservativeMode:
                 if new_total > max_open_risk:
                     return False, (
                         f"Open risk budget exceeded: "
-                        f"current ${current_open_risk:.2f} + proposed ${proposed_risk_dollars:.2f} "
-                        f"= ${new_total:.2f} > budget ${max_open_risk:.2f} "
+                        f"current ${current_open_risk:.2f} + proposed "
+                        f"${proposed_risk_dollars:.2f} = ${new_total:.2f} "
+                        f"> budget ${max_open_risk:.2f} "
                         f"({MAX_OPEN_RISK_BUDGET_PCT:.2f}% of equity)"
                     )
 
-        # Gate 9: Per-trade risk cap
+        # Gate 6: Per-trade risk cap
         if proposed_risk_dollars > 0:
             max_per_trade = self._state.get("risk_per_trade_usd", 0)
             if max_per_trade > 0 and proposed_risk_dollars > max_per_trade * 1.05:
@@ -463,12 +513,13 @@ class ConservativeMode:
                     f"${max_per_trade:.2f} ({RISK_PER_TRADE_PCT:.2f}% of equity)"
                 )
 
-        return True, "Trade allowed"
+        return True, f"Trade allowed (mode: {mode})"
 
     def get_confidence_boost(self):
-        """Return extra confidence required when in green protection mode."""
+        """Return extra confidence required in protection modes."""
         self._maybe_reset()
-        if self._state.get("green_protection"):
+        mode = self.get_daily_mode()
+        if mode in (MODE_PROFIT_PROTECTION, MODE_LOSS_RECOVERY):
             return GREEN_CONFIDENCE_BOOST
         return 0.0
 
@@ -477,39 +528,75 @@ class ConservativeMode:
     def get_status(self):
         """Return full state for dashboard display."""
         self._maybe_reset()
+        mode = self.get_daily_mode()
+        net_pl = self._compute_net_daily_pl()
+        gross_pl = round(
+            _safe_float(self._state.get("realized_pl"))
+            + _safe_float(self._state.get("unrealized_pl")), 2
+        )
+        fees = _safe_float(self._state.get("estimated_fees"))
+
+        profit_threshold = _safe_float(self._state.get("profit_threshold_usd"))
+        loss_threshold = _safe_float(self._state.get("loss_threshold_usd"))
+        profit_reached = profit_threshold > 0 and net_pl >= profit_threshold
+        loss_reached = loss_threshold < 0 and net_pl <= loss_threshold
+
+        # Dashboard message
+        if profit_reached:
+            dashboard_message = (
+                f"Daily net P&L is ${net_pl:+.2f}. Profit threshold reached. "
+                f"System is now in {MODE_PROFIT_PROTECTION}. "
+                f"Only {QUALITY_SCORE_PROTECTION}+ score trades allowed."
+            )
+        elif loss_reached:
+            dashboard_message = (
+                f"Daily net P&L is ${net_pl:+.2f}. Loss threshold reached. "
+                f"System is now in {MODE_LOSS_RECOVERY}. "
+                f"Only {QUALITY_SCORE_PROTECTION}+ score trades allowed."
+            )
+        else:
+            dashboard_message = (
+                f"Daily net P&L is ${net_pl:+.2f}. {MODE_SAFE_TEST} active. "
+                f"Normal {QUALITY_SCORE_NORMAL}+ score trades allowed."
+            )
+
         return {
-            "mode": "SAFE_TEST_MODE" if IS_SAFE_TEST else "NORMAL_PAPER_MODE",
-            "operating_mode": self._state.get("operating_mode", "safe_test"),
+            # Current daily mode
+            "daily_mode": mode,
+            "daily_mode_reason": self._state.get("daily_mode_reason", ""),
+            "dashboard_message": dashboard_message,
+            "required_quality_score": self.get_required_quality_score(),
+            "min_risk_reward": self.get_min_risk_reward(),
+            # Account
             "date": self._state.get("date"),
             "equity": self._state.get("equity", 0),
+            # P&L breakdown
             "realized_pl": self._state.get("realized_pl", 0),
             "unrealized_pl": self._state.get("unrealized_pl", 0),
-            "combined_pl": round(
-                self._state.get("realized_pl", 0) + self._state.get("unrealized_pl", 0), 2
-            ),
-            # Dynamic dollar thresholds
-            "daily_profit_target": self._state.get("daily_profit_target_usd", 0),
-            "daily_loss_limit": self._state.get("daily_loss_limit_usd", 0),
-            "green_protection_threshold": self._state.get("green_protection_usd", 0),
-            "risk_per_trade": self._state.get("risk_per_trade_usd", 0),
-            # Percentage configs
-            "daily_profit_target_pct": DAILY_PROFIT_TARGET_PCT,
-            "daily_loss_limit_pct": DAILY_LOSS_LIMIT_PCT,
+            "gross_daily_pl": gross_pl,
+            "estimated_fees": fees,
+            "net_daily_pl": net_pl,
+            # Thresholds
+            "profit_threshold_usd": profit_threshold,
+            "profit_threshold_pct": DAILY_PROFIT_THRESHOLD_PCT,
+            "profit_threshold_reached": profit_reached,
+            "loss_threshold_usd": loss_threshold,
+            "loss_threshold_pct": DAILY_LOSS_THRESHOLD_PCT,
+            "loss_threshold_reached": loss_reached,
+            # Risk config
+            "risk_per_trade_usd": self._state.get("risk_per_trade_usd", 0),
             "risk_per_trade_pct": RISK_PER_TRADE_PCT,
             "max_open_risk_pct": MAX_OPEN_RISK_BUDGET_PCT,
-            # Daily state
-            "daily_locked": self._state.get("daily_locked", False),
-            "lock_reason": self._state.get("lock_reason", ""),
+            "est_fee_pct_per_trade": EST_FEE_PCT_PER_TRADE,
+            # Trade stats
             "trades_today": self._state.get("trades_today", 0),
-            "max_trades_per_day": MAX_TRADES_PER_DAY,
             "wins_today": self._state.get("wins_today", 0),
             "losses_today": self._state.get("losses_today", 0),
             "win_rate_today": round(
-                self._state.get("wins_today", 0) /
-                max(1, self._state.get("trades_today", 1)) * 100, 1
+                self._state.get("wins_today", 0)
+                / max(1, self._state.get("trades_today", 1)) * 100, 1
             ),
-            "green_protection": self._state.get("green_protection", False),
-            # Open risk budget
+            # Open risk
             "total_open_risk": self._state.get("total_open_risk", 0),
             "max_open_risk": self._state.get("max_open_risk_usd", 0),
             "open_risk_slots": self._state.get("open_risk_slots", {}),
@@ -520,7 +607,7 @@ class ConservativeMode:
             "disabled_strategies": self._state.get("disabled_strategies", []),
             "asset_streaks": self._state.get("asset_streaks", {}),
             "strategy_streaks": self._state.get("strategy_streaks", {}),
-            "min_risk_reward": MIN_RISK_REWARD,
+            # Trade log
             "trade_log": self._state.get("trade_log", [])[-10:],
         }
 
@@ -530,9 +617,9 @@ class ConservativeMode:
         try:
             from telegram_notifier import send_alert, is_configured
             if is_configured():
-                mode_label = "SAFE TEST" if IS_SAFE_TEST else "PAPER"
+                mode = self.get_daily_mode()
                 send_alert(
-                    f"🛡️ CONSERVATIVE MODE [{mode_label}]\n\n{message}",
+                    f"🛡️ [{mode}]\n\n{message}",
                     level="warning",
                 )
         except Exception:
@@ -541,7 +628,6 @@ class ConservativeMode:
     # ── Manual controls ──────────────────────────────────────────────
 
     def reset_strategy(self, strategy):
-        """Re-enable a strategy that was auto-disabled."""
         self._maybe_reset()
         if strategy in self._state.get("disabled_strategies", []):
             self._state["disabled_strategies"].remove(strategy)
@@ -549,7 +635,6 @@ class ConservativeMode:
         self._persist()
 
     def reset_asset(self, symbol):
-        """Re-enable an asset that was auto-paused."""
         self._maybe_reset()
         if symbol in self._state.get("paused_assets", []):
             self._state["paused_assets"].remove(symbol)
@@ -557,15 +642,12 @@ class ConservativeMode:
         self._persist()
 
     def force_lock(self, reason="Manual lock"):
-        """Manually lock trading for the rest of the day."""
+        """Not used as a primary mechanism any more; kept for emergency."""
         self._maybe_reset()
-        self._state["daily_locked"] = True
-        self._state["lock_reason"] = reason
-        self._persist()
+        # We no longer hard-lock.  Modes handle it.
+        logger.warning("force_lock called: %s", reason)
 
     def force_unlock(self):
-        """Manually unlock trading (use with caution)."""
+        """Not used as a primary mechanism any more; kept for emergency."""
         self._maybe_reset()
-        self._state["daily_locked"] = False
-        self._state["lock_reason"] = ""
-        self._persist()
+        logger.warning("force_unlock called")
