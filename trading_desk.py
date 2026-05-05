@@ -57,7 +57,18 @@ class TradingDeskEngine:
         account, positions, broker_note = self._load_account_and_positions(dry_run=dry_run)
         position_map = self._position_map(positions)
 
-        exit_result = self.exit_manager.check_exits(positions=positions, dry_run=dry_run)
+        # Set equity in conservative mode so all limits scale dynamically
+        equity = float(account.get("equity", account.get("portfolio_value", 0)) or 0)
+        if equity > 0:
+            self.conservative.set_equity(equity)
+
+        # CEO analysis runs first so regime-flip exit can use current regime
+        ceo_state = self.ceo.analyze()
+
+        exit_result = self.exit_manager.check_exits(
+            positions=positions, dry_run=dry_run,
+            ceo_regime=ceo_state.market_regime,
+        )
 
         # Record exit results in conservative mode for daily P&L tracking
         for exit_action in (exit_result or {}).get("actions", []):
@@ -72,14 +83,17 @@ class TradingDeskEngine:
                     net_pl=net_pl,
                     reason=exit_action.get("reason", ""),
                 )
+                # Release open risk budget for closed positions
+                if exit_action.get("event") == "position_closed":
+                    self.conservative.release_open_risk(
+                        exit_action.get("symbol", "")
+                    )
 
         # Update unrealized P&L from current positions
         total_unrealized = sum(
             float(p.get("unrealized_pl") or 0) for p in positions or []
         )
         self.conservative.update_unrealized(total_unrealized)
-
-        ceo_state = self.ceo.analyze()
 
         managers = []
         approvals = []
@@ -103,10 +117,14 @@ class TradingDeskEngine:
 
             # ── Conservative mode gate ──
             trade_req = decision.trade_request
+            # Estimate proposed risk for open risk budget check
+            proposed_risk = self.conservative.get_risk_per_trade()
             cm_ok, cm_reason = self.conservative.can_trade(
                 symbol=trade_req.get("symbol"),
                 strategy=trade_req.get("strategy"),
                 risk_reward=float(trade_req.get("risk_reward") or 0),
+                proposed_risk_dollars=proposed_risk,
+                open_position_count=len(positions or []),
             )
             if not cm_ok:
                 # Log the rejection but don't send to risk manager
@@ -143,6 +161,13 @@ class TradingDeskEngine:
                     }
                     positions.append(pseudo_position)
                     position_map[_compact_symbol(pseudo_position["symbol"])] = pseudo_position
+                    # Register open risk budget
+                    risk_dollars = float(approval.get("risk_dollars") or 0)
+                    if risk_dollars > 0:
+                        self.conservative.register_open_risk(
+                            decision.trade_request.get("symbol", ""),
+                            risk_dollars,
+                        )
                 if not order_result.get("error") and not dry_run:
                     try:
                         self.risk.record_order(symbol)
@@ -151,6 +176,9 @@ class TradingDeskEngine:
                         pass
             else:
                 self.executor.execute(approval, dry_run=True)
+
+        # Reconciliation: compare internal P&L with Alpaca account
+        reconciliation = self._reconcile(account, positions)
 
         duration = (datetime.now(timezone.utc) - start).total_seconds()
         state = self._build_state(
@@ -165,8 +193,66 @@ class TradingDeskEngine:
             dry_run=dry_run,
             broker_note=broker_note,
         )
+        state["reconciliation"] = reconciliation
         self.logger.save_cycle_state(state)
         return state
+
+    def _reconcile(self, account, positions):
+        """Compare internal P&L tracking with Alpaca's actual numbers.
+
+        Returns a dict with discrepancy info for the dashboard.
+        Logs a warning if the difference exceeds $5.
+        """
+        import logging
+        _log = logging.getLogger("reconciliation")
+        try:
+            cm_status = self.conservative.get_status()
+            internal_realized = cm_status.get("realized_pl", 0)
+            internal_unrealized = cm_status.get("unrealized_pl", 0)
+            internal_combined = internal_realized + internal_unrealized
+
+            # Alpaca's actual unrealized P&L from positions
+            alpaca_unrealized = sum(
+                float(p.get("unrealized_pl") or 0) for p in positions or []
+            )
+            # Alpaca today's P&L if available from account
+            alpaca_day_pl = float(account.get("equity", 0)) - float(account.get("last_equity", account.get("equity", 0)) or account.get("equity", 0))
+
+            discrepancy_unrealized = round(internal_unrealized - alpaca_unrealized, 2)
+
+            result = {
+                "internal_realized": internal_realized,
+                "internal_unrealized": internal_unrealized,
+                "internal_combined": round(internal_combined, 2),
+                "alpaca_unrealized": round(alpaca_unrealized, 2),
+                "discrepancy_unrealized": discrepancy_unrealized,
+                "positions_internal": len(cm_status.get("open_risk_slots", {})),
+                "positions_alpaca": len(positions or []),
+                "status": "OK",
+            }
+
+            # Flag discrepancies
+            if abs(discrepancy_unrealized) > 5.0:
+                result["status"] = "WARNING"
+                _log.warning(
+                    "Reconciliation discrepancy: internal unrealized $%.2f vs "
+                    "Alpaca unrealized $%.2f (diff $%.2f)",
+                    internal_unrealized, alpaca_unrealized, discrepancy_unrealized,
+                )
+
+            pos_diff = result["positions_internal"] - result["positions_alpaca"]
+            if abs(pos_diff) > 0:
+                result["position_mismatch"] = pos_diff
+                if result["status"] == "OK":
+                    result["status"] = "POSITION_MISMATCH"
+                _log.warning(
+                    "Position count mismatch: internal tracks %d, Alpaca has %d",
+                    result["positions_internal"], result["positions_alpaca"],
+                )
+
+            return result
+        except Exception as exc:
+            return {"status": "ERROR", "error": str(exc)}
 
     def _load_account_and_positions(self, dry_run=False):
         if self.client is None and is_configured():

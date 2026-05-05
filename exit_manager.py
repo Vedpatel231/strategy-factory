@@ -30,7 +30,7 @@ class ExitManager:
         self.journal = journal or TradeJournal()
         self.logger = logger or DecisionLogger()
 
-    def check_exits(self, positions=None, dry_run=False):
+    def check_exits(self, positions=None, dry_run=False, ceo_regime=None):
         if positions is None:
             if self.client is None:
                 if not is_configured():
@@ -43,12 +43,12 @@ class ExitManager:
 
         actions = []
         for pos in positions or []:
-            action = self._check_position(pos, dry_run=dry_run)
+            action = self._check_position(pos, dry_run=dry_run, ceo_regime=ceo_regime)
             if action:
                 actions.append(action)
         return {"checked": len(positions or []), "actions": actions}
 
-    def _check_position(self, pos, dry_run=False):
+    def _check_position(self, pos, dry_run=False, ceo_regime=None):
         symbol = pos.get("symbol")
         state = self.risk_book.get(symbol)
         if not state:
@@ -106,6 +106,16 @@ class ExitManager:
                         reason = invalid_reason
                         close_all = True
 
+            # REGIME-FLIP EXIT: if CEO regime flipped to risk_off while we're
+            # holding a long, close if in profit to protect gains.
+            if not reason and ceo_regime and ceo_regime == "risk_off":
+                if pl_pct > 0.5:  # Only exit if at least slightly positive
+                    reason = (
+                        f"Regime-flip exit: CEO regime is 'risk_off', "
+                        f"closing profitable position ({pl_pct:+.2f}%) to protect gains."
+                    )
+                    close_all = True
+
         if not reason:
             return None
 
@@ -127,11 +137,15 @@ class ExitManager:
                 # the reduced position. Without this, when the remaining half is closed
                 # later, P&L = (half_market_value - full_entry_notional) = huge fake loss.
                 remaining_notional = max(1.0, _safe_float(state.get("entry_notional")) * 0.50)
+                # BREAK-EVEN STOP: after partial profit, move stop to entry price.
+                # This guarantees the remaining position cannot lose money.
+                breakeven_stop = entry_price
                 self.risk_book.update_fields(
                     symbol,
                     partial_profit_taken=True,
                     trailing_active=True,
                     entry_notional=round(remaining_notional, 2),
+                    stop_loss_price=round(breakeven_stop, 6),
                 )
             event_type = "partial_profit"
         elif close_all:

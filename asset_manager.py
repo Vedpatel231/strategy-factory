@@ -1,14 +1,26 @@
-"""Asset manager layer: ranks strategy bots for one symbol."""
+"""Asset manager layer: ranks strategy bots for one symbol.
 
+Key rules:
+  - CLOSED CANDLE RULE: Only act on fully closed 1H candles.  The last
+    candle in the array may be incomplete (still forming), so we drop it.
+  - DUPLICATE SIGNAL PREVENTION: Track the last signal per symbol to avoid
+    entering the same setup on consecutive cycles within the same candle.
+"""
+
+import json
 import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
+import config
 from bot_registry import StrategyBot
 from decision_logger import DecisionLogger
 from strategies import build_feature_context
 from trade_journal import load_trade_journal
+
+# File to track last entry signal per symbol to prevent same-candle duplicates
+_LAST_SIGNAL_FILE = os.path.join(config.DATA_DIR, "last_entry_signals.json")
 
 
 def _utcnow():
@@ -70,6 +82,196 @@ def _regime_compatible(regime, works_best):
     return bool(set(works_best or []) & compatible)
 
 
+def _drop_incomplete_candle(candles):
+    """Drop the last candle if it might be incomplete (still forming).
+
+    Most data providers include the current forming candle at the end.
+    By removing it we ensure strategies only see fully closed candles,
+    preventing entries based on partial data that could reverse.
+    """
+    if candles and len(candles) > 1:
+        return candles[:-1]
+    return candles
+
+
+def _read_last_signals():
+    try:
+        with open(_LAST_SIGNAL_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _write_last_signals(data):
+    try:
+        os.makedirs(os.path.dirname(_LAST_SIGNAL_FILE), exist_ok=True)
+        with open(_LAST_SIGNAL_FILE, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+    except Exception:
+        pass
+
+
+def _candle_key(candles):
+    """Return a unique key for the last closed candle (timestamp + close)."""
+    if not candles:
+        return ""
+    last = candles[-1]
+    ts = last.get("timestamp") or last.get("time") or last.get("t") or ""
+    close = last.get("close") or last.get("c") or ""
+    return f"{ts}:{close}"
+
+
+def _is_duplicate_signal(symbol, strategy, candle_key):
+    """Check if we already generated an entry signal for this candle."""
+    signals = _read_last_signals()
+    key = f"{symbol}:{strategy}"
+    last = signals.get(key)
+    if last and last.get("candle_key") == candle_key:
+        return True
+    return False
+
+
+def _record_signal(symbol, strategy, candle_key):
+    """Record that we produced an entry signal for this candle."""
+    signals = _read_last_signals()
+    key = f"{symbol}:{strategy}"
+    signals[key] = {
+        "candle_key": candle_key,
+        "timestamp": _utcnow().isoformat(),
+    }
+    # Prune old entries (keep last 100)
+    if len(signals) > 100:
+        sorted_keys = sorted(signals.keys(), key=lambda k: signals[k].get("timestamp", ""))
+        for old_key in sorted_keys[:-100]:
+            signals.pop(old_key, None)
+    _write_last_signals(signals)
+
+
+# ── Trade Quality Score ──────────────────────────────────────────────
+#
+# Composite 0-100 score that determines if a setup is worth taking.
+# Normal threshold: 70.  Green protection / post-loss threshold: 80.
+# Components:
+#   1. Regime alignment (0-20): strategy works_best matches CEO regime
+#   2. HTF confirmation (0-20): 4H and 1D trend agree with entry direction
+#   3. Risk:reward (0-20): scales from 1.5 (minimum) to 3.0+ (excellent)
+#   4. Volume confirmation (0-15): above-average volume on signal candle
+#   5. Extension from mean (0-10): not over-extended from key EMAs
+#   6. Strategy performance (0-15): learning engine historical score
+
+QUALITY_THRESHOLD_NORMAL = int(os.environ.get("QUALITY_THRESHOLD_NORMAL", "70"))
+QUALITY_THRESHOLD_STRICT = int(os.environ.get("QUALITY_THRESHOLD_STRICT", "80"))
+
+
+def compute_trade_quality(signal_row, features, ceo_state, regime, learner=None, symbol=None):
+    """Compute a 0-100 trade quality score for a buy candidate.
+
+    Returns (score: int, breakdown: dict).
+    """
+    breakdown = {}
+    total = 0.0
+
+    # 1. Regime alignment (0-20)
+    works_best = signal_row.get("works_best") or []
+    compatible = REGIME_COMPATIBLE_TAGS.get(regime, set())
+    overlap = len(set(works_best) & compatible) if compatible else 0
+    if regime in works_best:
+        regime_score = 20.0
+    elif overlap >= 2:
+        regime_score = 15.0
+    elif overlap >= 1:
+        regime_score = 10.0
+    else:
+        regime_score = 0.0
+    breakdown["regime_alignment"] = round(regime_score, 1)
+    total += regime_score
+
+    # 2. HTF confirmation (0-20)
+    htf_score = 0.0
+    trend_bias = getattr(features, "trend_bias", None) or ""
+    ceo_direction = ceo_state.market_direction if ceo_state else ""
+    # 4H trend alignment
+    if trend_bias == "bullish":
+        htf_score += 10.0
+    elif trend_bias == "neutral":
+        htf_score += 5.0
+    # CEO direction alignment
+    if ceo_direction == "bullish":
+        htf_score += 10.0
+    elif ceo_direction == "neutral":
+        htf_score += 5.0
+    elif ceo_direction == "bearish":
+        htf_score -= 5.0
+    htf_score = max(0.0, min(20.0, htf_score))
+    breakdown["htf_confirmation"] = round(htf_score, 1)
+    total += htf_score
+
+    # 3. Risk:reward (0-20)
+    rr = _safe_float(signal_row.get("risk_reward"), 0.0)
+    if rr >= 3.0:
+        rr_score = 20.0
+    elif rr >= 2.5:
+        rr_score = 17.0
+    elif rr >= 2.0:
+        rr_score = 14.0
+    elif rr >= 1.5:
+        rr_score = 10.0
+    else:
+        rr_score = 0.0
+    breakdown["risk_reward"] = round(rr_score, 1)
+    total += rr_score
+
+    # 4. Volume confirmation (0-15)
+    vol_ratio = _safe_float(getattr(features, "volume_ratio", None), 1.0)
+    if vol_ratio >= 1.8:
+        vol_score = 15.0
+    elif vol_ratio >= 1.4:
+        vol_score = 12.0
+    elif vol_ratio >= 1.1:
+        vol_score = 8.0
+    elif vol_ratio >= 0.8:
+        vol_score = 4.0
+    else:
+        vol_score = 0.0
+    breakdown["volume"] = round(vol_score, 1)
+    total += vol_score
+
+    # 5. Extension from mean (0-10) — penalize over-extension
+    atr_pct = _safe_float(getattr(features, "atr_pct", None), 1.0)
+    extension_pct = _safe_float(getattr(features, "extension_from_ema20_pct", None), 0.0)
+    # If price is more than 2x ATR from EMA20, it's over-extended
+    if abs(extension_pct) < atr_pct * 0.5:
+        ext_score = 10.0  # Close to mean — ideal pullback entry
+    elif abs(extension_pct) < atr_pct:
+        ext_score = 7.0
+    elif abs(extension_pct) < atr_pct * 1.5:
+        ext_score = 4.0
+    else:
+        ext_score = 0.0  # Over-extended — risky entry
+    breakdown["extension"] = round(ext_score, 1)
+    total += ext_score
+
+    # 6. Strategy performance / learning engine (0-15)
+    perf_score = 7.5  # Default neutral
+    if learner:
+        try:
+            quality = learner.get_strategy_quality(
+                signal_row.get("strategy", ""),
+                regime,
+                symbol or "",
+                signal_row.get("timeframe", "1h"),
+            )
+            adj = _safe_float(quality.get("score_adjustment"), 0.0)
+            # Map learning adjustment (-20 to +20) into 0-15 range
+            perf_score = max(0.0, min(15.0, 7.5 + adj * 0.5))
+        except Exception:
+            pass
+    breakdown["strategy_performance"] = round(perf_score, 1)
+    total += perf_score
+
+    return int(round(total)), breakdown
+
+
 class AssetManager:
     def __init__(self, symbol, asset_class, bots: List[StrategyBot], data_provider, learner=None, logger=None):
         self.symbol = symbol
@@ -83,10 +285,16 @@ class AssetManager:
         now = _utcnow()
         cooldown_minutes, cooldown_reason = self._cooldown_remaining(now)
         open_position = open_position or None
-        candles_1h = self._get_candles("1h", 220)
-        candles_4h = self._get_candles("4h", 140)
-        candles_1d = self._get_candles("1D", 120)
+
+        # CLOSED CANDLE RULE: drop the last (potentially incomplete) candle
+        # from the entry timeframe so strategies only see fully closed data.
+        candles_1h = _drop_incomplete_candle(self._get_candles("1h", 221))
+        candles_4h = _drop_incomplete_candle(self._get_candles("4h", 141))
+        candles_1d = _drop_incomplete_candle(self._get_candles("1D", 121))
         features = build_feature_context(candles_1h, {"4h": candles_4h, "1D": candles_1d})
+
+        # Track the candle key for duplicate signal prevention
+        entry_candle_key = _candle_key(candles_1h)
 
         bot_rows = []
         for bot in self.bots:
@@ -149,35 +357,76 @@ class AssetManager:
             active = selected
             rejection = reason
         elif best_buy and best_buy["confidence"] >= threshold and best_buy["score"] >= 48:
-            active = best_buy
-            signal = best_buy["signal"]
-            trade_request = {
-                "symbol": self.symbol,
-                "asset_class": self.asset_class,
-                "side": "buy",
-                "bot_id": best_buy["bot_id"],
-                "bot_name": best_buy["bot_name"],
-                "strategy": best_buy["strategy"],
-                "timeframe": best_buy["timeframe"],
-                "confidence": best_buy["confidence"],
-                "manager_score": best_buy["score"],
-                "entry_price": features.close,
-                "stop_loss": signal.get("recommended_stop_loss"),
-                "take_profit": signal.get("recommended_take_profit"),
-                "partial_profit": signal.get("partial_profit_level"),
-                "trailing_stop": signal.get("trailing_stop_logic"),
-                "risk_reward": signal.get("risk_reward", 0),
-                "entry_reason": signal.get("entry_reason") or signal.get("reason"),
-                "invalidation_reason": signal.get("invalidation_reason"),
-                "ceo_regime": ceo_state.market_regime,
-                "ceo_posture": posture,
-                "ceo_risk_multiplier": ceo_state.risk_multiplier,
-                "market_direction": ceo_state.market_direction,
-                "features": features.latest_features(),
-            }
-            action = "enter"
-            reason = f"Selected {best_buy['bot_name']} as best ranked buy candidate."
-            rejection = ""
+            # TRADE QUALITY SCORE: composite 0-100 check
+            quality_score, quality_breakdown = compute_trade_quality(
+                best_buy, features, ceo_state, regime,
+                learner=self.learner, symbol=self.symbol,
+            )
+            # Determine quality threshold: stricter after losses or in green protection
+            from conservative_mode import ConservativeMode
+            _cm = ConservativeMode()
+            cm_status = _cm.get_status()
+            is_strict = (
+                cm_status.get("green_protection", False) or
+                cm_status.get("losses_today", 0) > 0
+            )
+            quality_threshold = QUALITY_THRESHOLD_STRICT if is_strict else QUALITY_THRESHOLD_NORMAL
+
+            if quality_score < quality_threshold:
+                action = "wait"
+                reason = (
+                    f"Quality score {quality_score}/100 below threshold {quality_threshold} "
+                    f"for {best_buy['bot_name']}. Breakdown: {quality_breakdown}"
+                )
+                trade_request = None
+                active = best_buy
+                rejection = reason
+            # DUPLICATE SIGNAL PREVENTION: don't re-enter the same setup on
+            # the same closed candle (prevents double entries within one hour).
+            elif _is_duplicate_signal(self.symbol, best_buy["strategy"], entry_candle_key):
+                action = "wait"
+                reason = (
+                    f"Duplicate signal blocked: {best_buy['bot_name']} already signalled "
+                    f"on this candle for {self.symbol}."
+                )
+                trade_request = None
+                active = best_buy
+                rejection = reason
+            else:
+                active = best_buy
+                signal = best_buy["signal"]
+                trade_request = {
+                    "symbol": self.symbol,
+                    "asset_class": self.asset_class,
+                    "side": "buy",
+                    "bot_id": best_buy["bot_id"],
+                    "bot_name": best_buy["bot_name"],
+                    "strategy": best_buy["strategy"],
+                    "timeframe": best_buy["timeframe"],
+                    "confidence": best_buy["confidence"],
+                    "manager_score": best_buy["score"],
+                    "quality_score": quality_score,
+                    "quality_breakdown": quality_breakdown,
+                    "quality_threshold": quality_threshold,
+                    "entry_price": features.close,
+                    "stop_loss": signal.get("recommended_stop_loss"),
+                    "take_profit": signal.get("recommended_take_profit"),
+                    "partial_profit": signal.get("partial_profit_level"),
+                    "trailing_stop": signal.get("trailing_stop_logic"),
+                    "risk_reward": signal.get("risk_reward", 0),
+                    "entry_reason": signal.get("entry_reason") or signal.get("reason"),
+                    "invalidation_reason": signal.get("invalidation_reason"),
+                    "ceo_regime": ceo_state.market_regime,
+                    "ceo_posture": posture,
+                    "ceo_risk_multiplier": ceo_state.risk_multiplier,
+                    "market_direction": ceo_state.market_direction,
+                    "features": features.latest_features(),
+                }
+                action = "enter"
+                reason = f"Selected {best_buy['bot_name']} as best ranked buy candidate."
+                rejection = ""
+                # Record the signal to prevent duplicate entries on same candle
+                _record_signal(self.symbol, best_buy["strategy"], entry_candle_key)
         else:
             active = selected
             trade_request = None

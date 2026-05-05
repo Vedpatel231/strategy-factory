@@ -868,7 +868,13 @@ class RiskManager:
             )
             return approval
 
-        max_risk_pct = float(os.environ.get("DESK_RISK_PER_TRADE_PCT", "0.50"))
+        # Risk per trade: use conservative mode's dynamic percentage if available,
+        # otherwise fall back to env var.  In SAFE_TEST_MODE this is 0.15% ($45 on $30K).
+        try:
+            from conservative_mode import RISK_PER_TRADE_PCT as _cm_risk_pct
+            max_risk_pct = _cm_risk_pct
+        except Exception:
+            max_risk_pct = float(os.environ.get("DESK_RISK_PER_TRADE_PCT", "0.50"))
         base_risk_dollars = equity * max_risk_pct / 100.0
         stop_distance = entry_price - stop_loss
         qty_by_risk = base_risk_dollars / stop_distance if stop_distance > 0 else 0.0
