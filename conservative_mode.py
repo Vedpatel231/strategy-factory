@@ -58,17 +58,28 @@ def _write_state(state):
     os.replace(tmp, STATE_FILE)
 
 
-# ── Configurable thresholds ──────────────────────────────────────────
-# These are intentionally TIGHT.  The whole point is survival first.
+# ── Account-aware thresholds ─────────────────────────────────────────
+#
+# Defaults are calibrated for a ~$30,000 paper account:
+#   - 0.5% risk per trade ≈ $150 risk per position
+#   - Typical win at 2:1 R:R ≈ $300
+#   - Typical loss ≈ $150
+#   - Daily target = ~0.5% of account = $150
+#   - Daily loss limit = ~0.67% of account = $200
+#
+# These allow 3-5 trades to play out before locking.
+# Override via env vars for different account sizes.
 
 # Daily profit target: once realized P&L reaches this, stop trading.
+# $150 on a $30K account = one solid winning trade locks the day green.
 DAILY_PROFIT_TARGET = _safe_float(
-    os.environ.get("CONSERVATIVE_DAILY_PROFIT_TARGET"), 2.00
+    os.environ.get("CONSERVATIVE_DAILY_PROFIT_TARGET"), 150.00
 )
 
 # Daily loss limit: once realized + unrealized P&L hits this, stop.
+# -$200 on a $30K account = about 1.3 losing trades before lockout.
 DAILY_LOSS_LIMIT = _safe_float(
-    os.environ.get("CONSERVATIVE_DAILY_LOSS_LIMIT"), -3.00
+    os.environ.get("CONSERVATIVE_DAILY_LOSS_LIMIT"), -200.00
 )
 
 # Per-asset: pause after N consecutive losses on the same asset today.
@@ -86,10 +97,11 @@ MIN_RISK_REWARD = _safe_float(
     os.environ.get("CONSERVATIVE_MIN_RR"), 1.5
 )
 
-# Green protection: once daily P&L is positive by this amount,
+# Green protection: once daily P&L is positive by this much,
 # raise confidence threshold and tighten R:R requirement.
+# $75 = half a winning trade — enough to know the day is working.
 GREEN_PROTECTION_THRESHOLD = _safe_float(
-    os.environ.get("CONSERVATIVE_GREEN_PROTECTION"), 0.50
+    os.environ.get("CONSERVATIVE_GREEN_PROTECTION"), 75.00
 )
 
 # When in green protection, require this higher confidence.
