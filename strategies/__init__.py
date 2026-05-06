@@ -1,4 +1,4 @@
-"""Professional 1H strategy library for Strategy Factory."""
+"""Professional configured-timeframe strategy library for Strategy Factory."""
 
 from .professional_strategies import (
     STRATEGY_CLASSES,

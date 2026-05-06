@@ -1,7 +1,7 @@
 """Asset manager layer: ranks strategy bots for one symbol.
 
 Key rules:
-  - CLOSED CANDLE RULE: Only act on fully closed 1H candles.  The last
+  - CLOSED CANDLE RULE: Only act on fully closed entry-timeframe candles.  The last
     candle in the array may be incomplete (still forming), so we drop it.
   - DUPLICATE SIGNAL PREVENTION: Track the last signal per symbol to avoid
     entering the same setup on consecutive cycles within the same candle.
@@ -119,6 +119,17 @@ def _candle_key(candles):
     ts = last.get("timestamp") or last.get("time") or last.get("t") or ""
     close = last.get("close") or last.get("c") or ""
     return f"{ts}:{close}"
+
+
+def _candle_limit_for_timeframe(timeframe):
+    """Enough history for 200 EMA while keeping live cycles reasonably light."""
+    return {
+        "15m": 260,
+        "30m": 260,
+        "1h": 221,
+        "4h": 141,
+        "1D": 121,
+    }.get(timeframe, 221)
 
 
 def _is_duplicate_signal(symbol, strategy, candle_key):
@@ -290,47 +301,51 @@ class AssetManager:
         cooldown_minutes, cooldown_reason = self._cooldown_remaining(now)
         open_position = open_position or None
 
-        # CLOSED CANDLE RULE: drop the last (potentially incomplete) candle
-        # from each timeframe so strategies only see fully closed data.
-        # Multi-timeframe: load candles for the bot's own timeframe.
-        # Default candles for features are loaded at 30m (primary entry tf).
-        candles_30m = _drop_incomplete_candle(self._get_candles("30m", 300))
-        candles_15m = _drop_incomplete_candle(self._get_candles("15m", 300))
-        candles_1h = _drop_incomplete_candle(self._get_candles("1h", 221))
-        candles_4h = _drop_incomplete_candle(self._get_candles("4h", 141))
-        candles_1d = _drop_incomplete_candle(self._get_candles("1D", 121))
+        # CLOSED CANDLE RULE: drop each forming candle before indicators run.
+        # Load only configured entry bot timeframes plus 4H/1D confirmation.
+        # This keeps broad stock scans from turning into unnecessary requests.
+        primary_timeframe = getattr(config, "DESK_ENTRY_TIMEFRAME", "1h")
+        bot_timeframes = {bot.timeframe for bot in self.bots}
+        entry_timeframes = [primary_timeframe] + sorted(
+            tf for tf in bot_timeframes if tf != primary_timeframe
+        )
+        confirm_timeframes = list(getattr(config, "DESK_CONFIRM_TIMEFRAMES", ["4h", "1D"]))
 
-        # Use primary entry timeframe for features (30m default)
-        primary_candles = candles_30m or candles_1h
-        features = build_feature_context(primary_candles, {"4h": candles_4h, "1D": candles_1d})
+        self._tf_candles = {}
+        for timeframe in entry_timeframes + confirm_timeframes:
+            if timeframe in self._tf_candles:
+                continue
+            self._tf_candles[timeframe] = _drop_incomplete_candle(
+                self._get_candles(timeframe, _candle_limit_for_timeframe(timeframe))
+            )
 
-        # Multi-timeframe candle map for bots at different timeframes
-        self._tf_candles = {
-            "15m": candles_15m,
-            "30m": candles_30m,
-            "1h": candles_1h,
-            "4h": candles_4h,
-            "1D": candles_1d,
-        }
-
-        # Track the candle key for duplicate signal prevention
-        entry_candle_key = _candle_key(primary_candles)
+        primary_candles = self._tf_candles.get(primary_timeframe) or []
+        if not primary_candles:
+            for timeframe in entry_timeframes:
+                primary_candles = self._tf_candles.get(timeframe) or []
+                if primary_candles:
+                    break
+        htf_candles = {tf: self._tf_candles.get(tf, []) for tf in confirm_timeframes}
+        features = build_feature_context(primary_candles, htf_candles)
+        features_by_bot_id = {}
 
         bot_rows = []
         for bot in self.bots:
             strategy = bot.create_strategy()
-            # Multi-timeframe: use candles matching the bot's timeframe
+            # Use candles matching the bot's actual timeframe.
             bot_candles = self._tf_candles.get(bot.timeframe, primary_candles)
             if bot_candles and len(bot_candles) >= 30:
-                bot_features = build_feature_context(bot_candles, {"4h": candles_4h, "1D": candles_1d})
+                bot_features = build_feature_context(bot_candles, htf_candles)
             else:
                 bot_features = features  # fallback to primary
+            features_by_bot_id[bot.bot_id] = bot_features
             try:
                 signal = strategy.evaluate(bot_features)
             except Exception as exc:
                 signal = strategy._hold(bot_features, 0.0, f"Strategy error: {exc}")
             score, score_parts = self._rank_signal(bot, signal, bot_features, ceo_state, cooldown_minutes, bool(open_position))
             signal_dict = signal.to_dict()
+            signal_dict["timeframe"] = bot.timeframe
             signal_dict["features"] = bot_features.latest_features()
             signal_dict["score_parts"] = score_parts
             bot_rows.append({
@@ -352,7 +367,10 @@ class AssetManager:
 
         bot_rows.sort(key=lambda row: row["score"], reverse=True)
         selected = bot_rows[0] if bot_rows else None
-        regime = ceo_state.market_regime
+        regime = (
+            getattr(ceo_state, f"{self.asset_class}_market_regime", None)
+            or ceo_state.market_regime
+        )
         buy_candidates = [
             row for row in bot_rows
             if row["action"] == "buy" and _regime_compatible(regime, row.get("works_best"))
@@ -384,8 +402,9 @@ class AssetManager:
             rejection = reason
         elif best_buy and best_buy["confidence"] >= threshold and best_buy["score"] >= 48:
             # TRADE QUALITY SCORE: composite 0-100 check
+            selected_features = features_by_bot_id.get(best_buy["bot_id"], features)
             quality_score, quality_breakdown = compute_trade_quality(
-                best_buy, features, ceo_state, regime,
+                best_buy, selected_features, ceo_state, regime,
                 learner=self.learner, symbol=self.symbol,
             )
             # Dynamic threshold from conservative_mode's daily P&L mode:
@@ -395,6 +414,8 @@ class AssetManager:
             _cm = ConservativeMode()
             quality_threshold = _cm.get_required_quality_score(ceo_posture=posture)
             current_daily_mode = _cm.get_daily_mode()
+            selected_candles = self._tf_candles.get(best_buy["timeframe"], primary_candles)
+            selected_candle_key = _candle_key(selected_candles)
 
             if quality_score < quality_threshold:
                 action = "wait"
@@ -408,7 +429,7 @@ class AssetManager:
                 rejection = reason
             # DUPLICATE SIGNAL PREVENTION: don't re-enter the same setup on
             # the same closed candle (prevents double entries within one hour).
-            elif _is_duplicate_signal(self.symbol, best_buy["strategy"], entry_candle_key):
+            elif _is_duplicate_signal(self.symbol, best_buy["strategy"], selected_candle_key):
                 action = "wait"
                 reason = (
                     f"Duplicate signal blocked: {best_buy['bot_name']} already signalled "
@@ -434,7 +455,7 @@ class AssetManager:
                     "quality_breakdown": quality_breakdown,
                     "quality_threshold": quality_threshold,
                     "daily_mode": current_daily_mode,
-                    "entry_price": features.close,
+                    "entry_price": selected_features.close,
                     "stop_loss": signal.get("recommended_stop_loss"),
                     "take_profit": signal.get("recommended_take_profit"),
                     "partial_profit": signal.get("partial_profit_level"),
@@ -442,17 +463,18 @@ class AssetManager:
                     "risk_reward": signal.get("risk_reward", 0),
                     "entry_reason": signal.get("entry_reason") or signal.get("reason"),
                     "invalidation_reason": signal.get("invalidation_reason"),
-                    "ceo_regime": ceo_state.market_regime,
+                    "ceo_regime": regime,
+                    "global_ceo_regime": ceo_state.market_regime,
                     "ceo_posture": posture,
                     "ceo_risk_multiplier": ceo_state.risk_multiplier,
                     "market_direction": ceo_state.market_direction,
-                    "features": features.latest_features(),
+                    "features": selected_features.latest_features(),
                 }
                 action = "enter"
                 reason = f"Selected {best_buy['bot_name']} as best ranked buy candidate."
                 rejection = ""
                 # Record the signal to prevent duplicate entries on same candle
-                _record_signal(self.symbol, best_buy["strategy"], entry_candle_key)
+                _record_signal(self.symbol, best_buy["strategy"], selected_candle_key)
         else:
             active = selected
             trade_request = None
@@ -482,7 +504,7 @@ class AssetManager:
             asset_class=self.asset_class,
             timestamp=now.isoformat(),
             ceo_posture=posture,
-            ceo_regime=ceo_state.market_regime,
+            ceo_regime=regime,
             action=action,
             active_bot=active.get("bot_name") if active else None,
             active_strategy=active.get("strategy") if active else None,
@@ -506,7 +528,8 @@ class AssetManager:
             "confidence": decision.confidence,
             "score": decision.score,
             "reason": decision.reason,
-            "ceo_regime": ceo_state.market_regime,
+            "ceo_regime": regime,
+            "global_ceo_regime": ceo_state.market_regime,
             "ceo_posture": posture,
         })
         return decision
@@ -521,7 +544,10 @@ class AssetManager:
         instruction = (ceo_state.instructions or {}).get(bot.asset_class, {})
         preferred = set(instruction.get("preferred_strategies", []))
         avoid = set(instruction.get("avoid_strategies", []))
-        regime = ceo_state.market_regime
+        regime = (
+            getattr(ceo_state, f"{bot.asset_class}_market_regime", None)
+            or ceo_state.market_regime
+        )
 
         base = signal.confidence * 100.0
         action_bonus = 18.0 if signal.action == "buy" else 0.0

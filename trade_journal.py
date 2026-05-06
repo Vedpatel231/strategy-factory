@@ -17,6 +17,7 @@ POSITION_STATE_FILE = os.path.join(config.DATA_DIR, "position_risk_state.json")
 TRADE_LEDGER_CSV = os.path.join(config.DATA_DIR, "alpaca_trade_ledger.csv")
 ALPACA_CRYPTO_MAKER_FEE_BPS = float(os.environ.get("ALPACA_CRYPTO_MAKER_FEE_BPS", "15"))
 ALPACA_CRYPTO_TAKER_FEE_BPS = float(os.environ.get("ALPACA_CRYPTO_TAKER_FEE_BPS", "25"))
+ALPACA_STOCK_SLIPPAGE_BPS = float(os.environ.get("ALPACA_STOCK_SLIPPAGE_BPS", "1"))
 
 TRADE_LEDGER_FIELDS = [
     "trade_id",
@@ -118,6 +119,7 @@ class PositionRiskBook:
         trailing_stop_logic=None,
         risk_reward=None,
         timeframe=None,
+        asset_class=None,
     ):
         existing = self.state.get(symbol, {})
         high_water = max(float(existing.get("high_water_price", 0) or 0), float(entry_price or 0))
@@ -126,6 +128,7 @@ class PositionRiskBook:
             "strategy": strategy,
             "regime": regime,
             "confidence": confidence,
+            "asset_class": asset_class,
             "entry_price": entry_price,
             "entry_notional": notional,
             "opened_at": existing.get("opened_at") or _utcnow(),
@@ -194,13 +197,23 @@ def alpaca_fee_config():
     return {
         "maker_bps": ALPACA_CRYPTO_MAKER_FEE_BPS,
         "taker_bps": ALPACA_CRYPTO_TAKER_FEE_BPS,
+        "stock_slippage_bps": ALPACA_STOCK_SLIPPAGE_BPS,
         "default_order_type": os.environ.get("ALPACA_FEE_ORDER_TYPE", "taker").lower(),
-        "source": "estimated_alpaca_crypto_fee_model",
+        "source": "estimated_alpaca_fee_and_slippage_model",
     }
 
 
-def estimate_alpaca_fee(notional, order_type=None):
+def estimate_alpaca_fee(notional, order_type=None, asset_class=None, symbol=None):
     cfg = alpaca_fee_config()
+    if asset_class == "stock":
+        return float(notional or 0) * cfg["stock_slippage_bps"] / 10000.0
+    if asset_class is None and symbol:
+        try:
+            from alpaca_client import is_equity_symbol
+            if is_equity_symbol(symbol):
+                return float(notional or 0) * cfg["stock_slippage_bps"] / 10000.0
+        except Exception:
+            pass
     fee_bps = cfg["maker_bps"] if (order_type or cfg["default_order_type"]) == "maker" else cfg["taker_bps"]
     return float(notional or 0) * fee_bps / 10000.0
 
@@ -235,6 +248,7 @@ def _closed_trade_row_from_event(event, fallback_entry=None):
     order_type = cfg["default_order_type"]
     entry = event.get("entry_state") or fallback_entry or {}
     order = event.get("order") or {}
+    asset_class = entry.get("asset_class") or event.get("asset_class")
 
     entry_notional = _as_float(entry.get("entry_notional") or entry.get("notional"))
     entry_price = _as_float(entry.get("entry_price") or order.get("entry_price"))
@@ -252,8 +266,8 @@ def _closed_trade_row_from_event(event, fallback_entry=None):
         return None
 
     gross_pl = exit_notional - entry_notional
-    entry_fee = estimate_alpaca_fee(entry_notional, order_type)
-    exit_fee = estimate_alpaca_fee(exit_notional, order_type)
+    entry_fee = estimate_alpaca_fee(entry_notional, order_type, asset_class=asset_class, symbol=symbol)
+    exit_fee = estimate_alpaca_fee(exit_notional, order_type, asset_class=asset_class, symbol=symbol)
     total_fees = entry_fee + exit_fee
     net_pl = gross_pl - total_fees
     bot_names = entry.get("bot_names") or event.get("bot_names") or []
@@ -336,6 +350,7 @@ def rebuild_trade_ledger_from_journal(limit=2000, path=TRADE_LEDGER_CSV):
                 "strategy": event.get("strategy"),
                 "regime": event.get("regime"),
                 "confidence": event.get("confidence"),
+                "asset_class": (event.get("signal") or {}).get("asset_class") or event.get("asset_class"),
                 "entry_price": order.get("filled_avg_price") or 0,
                 "entry_notional": event.get("notional") or order.get("notional") or 0,
                 "opened_at": event.get("timestamp"),
@@ -399,6 +414,7 @@ def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None):
 
         entry = event.get("entry_state") or fallback_entries.get(symbol) or {}
         order = event.get("order") or {}
+        asset_class = entry.get("asset_class") or event.get("asset_class")
         entry_notional = _as_float(entry.get("entry_notional") or entry.get("notional"))
         entry_price = _as_float(entry.get("entry_price") or order.get("entry_price"))
         exit_notional = _as_float(event.get("exit_notional") or order.get("notional"))
@@ -413,8 +429,8 @@ def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None):
             entry_notional = exit_notional / (1 + pl_pct / 100.0)
 
         gross_pl = exit_notional - entry_notional
-        entry_fee = estimate_alpaca_fee(entry_notional, order_type)
-        exit_fee = estimate_alpaca_fee(exit_notional, order_type)
+        entry_fee = estimate_alpaca_fee(entry_notional, order_type, asset_class=asset_class, symbol=symbol)
+        exit_fee = estimate_alpaca_fee(exit_notional, order_type, asset_class=asset_class, symbol=symbol)
         total_fees = entry_fee + exit_fee
         net_pl = gross_pl - total_fees
         bot_names = entry.get("bot_names") or event.get("bot_names") or []
@@ -454,8 +470,9 @@ def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None):
         entry_price = _as_float(pos.get("avg_entry_price") or state.get("entry_price"))
         current_price = _as_float(pos.get("current_price"))
         gross_pl = exit_notional - entry_notional
-        entry_fee = estimate_alpaca_fee(entry_notional, order_type)
-        exit_fee = estimate_alpaca_fee(exit_notional, order_type)
+        asset_class = state.get("asset_class")
+        entry_fee = estimate_alpaca_fee(entry_notional, order_type, asset_class=asset_class, symbol=symbol)
+        exit_fee = estimate_alpaca_fee(exit_notional, order_type, asset_class=asset_class, symbol=symbol)
         total_fees = entry_fee + exit_fee
         net_pl = gross_pl - total_fees
         open_rows.append({

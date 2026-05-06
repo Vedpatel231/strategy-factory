@@ -49,12 +49,12 @@ STOCK_ASSETS = [
 ]
 
 # === Professional Trading Desk Parameters ===
-# Multi-timeframe: 30m is the default entry timeframe (faster than 1H,
-# catches intraday moves). 15m and 1H candles are loaded for confirmation
-# but bots only run on the primary timeframe to keep scan fast.
-DESK_ENTRY_TIMEFRAMES = ["30m"]  # bot creation timeframes (primary only)
-DESK_ENTRY_TIMEFRAME = "30m"    # primary entry timeframe
-DESK_CONFIRMATION_TIMEFRAMES_INTRADAY = ["15m", "1h"]  # loaded for confirmation
+# Real-money safety default: 1H is the primary entry timeframe.  Shorter
+# intraday candles add noise and should only be enabled deliberately after
+# paper-trading review.
+DESK_ENTRY_TIMEFRAMES = ["1h"]  # bot creation timeframes
+DESK_ENTRY_TIMEFRAME = "1h"     # primary entry timeframe
+DESK_CONFIRMATION_TIMEFRAMES_INTRADAY = []  # optional future lower-TF context
 DESK_CONFIRM_TIMEFRAMES = ["4h", "1D"]
 DESK_CYCLE_INTERVAL_MIN = int(os.environ.get("DESK_CYCLE_INTERVAL_MIN", "15"))
 PROFESSIONAL_STRATEGIES = [

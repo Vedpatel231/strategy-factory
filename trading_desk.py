@@ -87,7 +87,14 @@ class TradingDeskEngine:
                 )
                 # Record estimated exit fees
                 if exit_notional > 0:
-                    est_exit_fee = self.conservative.estimate_fee_for_notional(exit_notional)
+                    try:
+                        from alpaca_client import is_equity_symbol
+                        asset_class = "stock" if is_equity_symbol(exit_action.get("symbol", "")) else "crypto"
+                    except Exception:
+                        asset_class = entry_state.get("asset_class")
+                    est_exit_fee = self.conservative.estimate_fee_for_notional(
+                        exit_notional, asset_class=asset_class
+                    )
                     self.conservative.record_fees(est_exit_fee)
                 # Release open risk budget for closed positions
                 if exit_action.get("event") == "position_closed":
@@ -177,7 +184,9 @@ class TradingDeskEngine:
                     # Record estimated fees for net P&L tracking
                     notional = float(approval.get("notional") or 0)
                     if notional > 0:
-                        est_fee = self.conservative.estimate_fee_for_notional(notional)
+                        est_fee = self.conservative.estimate_fee_for_notional(
+                            notional, asset_class=trade_req.get("asset_class")
+                        )
                         self.conservative.record_fees(est_fee)
                 if not order_result.get("error") and not dry_run:
                     try:
@@ -318,22 +327,43 @@ class TradingDeskEngine:
     def _build_state(self, ceo_state, managers, approvals, orders, exit_result, account,
                      positions, duration, dry_run, broker_note):
         symbols = {}
+        approval_by_symbol = {
+            _compact_symbol(a.get("symbol") or (a.get("trade_request") or {}).get("symbol")): a
+            for a in approvals or []
+        }
+        order_by_symbol = {
+            _compact_symbol(o.get("symbol")): o
+            for o in orders or []
+        }
         for manager in managers:
             selected = manager.get("selected_signal") or {}
             strategy_signal = dict(selected)
+            timeframe = strategy_signal.get("timeframe") or config.DESK_ENTRY_TIMEFRAME
             if strategy_signal:
                 strategy_signal.setdefault("strategy", manager.get("active_strategy"))
                 strategy_signal.setdefault("confidence", manager.get("confidence", 0))
-                strategy_signal.setdefault("timeframe", "1h")
+                strategy_signal.setdefault("timeframe", timeframe)
             symbol = manager.get("symbol")
+            approval = approval_by_symbol.get(_compact_symbol(symbol), {})
+            order = order_by_symbol.get(_compact_symbol(symbol), {})
+            order_status = str(order.get("status", "") or "").lower()
+            order_failed = order_status in {"rejected", "canceled", "cancelled", "expired", "error"} or bool(order.get("error"))
+            order_submitted = bool(order) and not order_failed
+            risk_approved = bool(approval.get("approved"))
+            manager_selected = manager.get("action") == "enter"
             symbols[symbol] = {
                 "symbol": symbol,
-                "accepted": manager.get("action") == "enter",
-                "action": "buy" if manager.get("action") == "enter" else "hold",
+                "accepted": order_submitted,
+                "manager_selected": manager_selected,
+                "risk_approved": risk_approved,
+                "order_submitted": order_submitted,
+                "action": "buy" if order_submitted else "hold",
                 "confidence": manager.get("confidence", 0),
                 "reason": manager.get("reason"),
+                "approval_reason": "; ".join(approval.get("reasons", [])) if approval else "",
+                "order_status": order_status or None,
                 "strategy_name": manager.get("active_strategy"),
-                "timeframe": "1h",
+                "timeframe": timeframe,
                 "strategy_signals": [strategy_signal] if strategy_signal else [],
                 "trade_regime": {
                     "label": ceo_state.market_regime,
@@ -353,6 +383,14 @@ class TradingDeskEngine:
                 "evaluated_at": manager.get("timestamp"),
             }
 
+        def _order_ok(order):
+            status = str(order.get("status", "") or "").lower()
+            failed = status in {"rejected", "canceled", "cancelled", "expired", "error"}
+            return bool(order) and not failed and not order.get("error")
+
+        manager_enter_count = sum(1 for row in managers if row.get("action") == "enter")
+        risk_approved_count = sum(1 for row in approvals if row.get("approved"))
+        order_submitted_count = len([o for o in orders if _order_ok(o)])
         return {
             "source": "professional_trading_desk",
             "updated_at": _utcnow(),
@@ -377,10 +415,13 @@ class TradingDeskEngine:
             "summary": {
                 "managers": len(managers),
                 "bots": self.registry.summary().get("bots", 0),
-                "enter_decisions": sum(1 for row in managers if row.get("action") == "enter"),
+                "enter_decisions": manager_enter_count,
+                "manager_enter_decisions": manager_enter_count,
+                "risk_approved_entries": risk_approved_count,
+                "blocked_after_manager": max(0, manager_enter_count - risk_approved_count),
                 "wait_decisions": sum(1 for row in managers if row.get("action") in ("wait", "cooldown")),
                 "manage_decisions": sum(1 for row in managers if row.get("action") == "manage"),
-                "orders_submitted": len([o for o in orders if not o.get("error")]),
+                "orders_submitted": order_submitted_count,
                 "orders_rejected": len([a for a in approvals if not a.get("approved")]),
                 "exits_triggered": len((exit_result or {}).get("actions", [])),
             },

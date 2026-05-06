@@ -1,8 +1,8 @@
 """Automatic professional bot registry.
 
-The registry creates one bot for every asset + strategy + timeframe
-combination.  Multi-timeframe: primary entry timeframe is 30m, with
-15m and 1H as secondary timeframes for additional signal coverage.
+The registry creates one bot for every asset + strategy + configured entry
+timeframe.  The production default is 1H entries; extra timeframes can be
+enabled deliberately through config after paper-trading review.
 """
 
 from dataclasses import asdict, dataclass
@@ -13,9 +13,8 @@ from alpaca_client import is_equity_symbol, normalize_crypto_symbol
 from strategies import STRATEGY_NAMES, create_strategy
 
 
-# Multi-timeframe: primary entry + secondary timeframes
-ENTRY_TIMEFRAME = getattr(config, "DESK_ENTRY_TIMEFRAME", "30m")
-ENTRY_TIMEFRAMES = getattr(config, "DESK_ENTRY_TIMEFRAMES", ["30m"])
+ENTRY_TIMEFRAME = getattr(config, "DESK_ENTRY_TIMEFRAME", "1h")
+ENTRY_TIMEFRAMES = getattr(config, "DESK_ENTRY_TIMEFRAMES", ["1h"])
 
 
 def canonical_asset_symbol(asset):

@@ -386,25 +386,43 @@ class MarketDataProvider:
             "15m": "15Min", "30m": "30Min", "1h": "1Hour",
             "4h": "4Hour", "1D": "1Day",
         }
-        params = {
+        preferred_feed = os.environ.get("ALPACA_STOCK_DATA_FEED", "iex").lower()
+        feeds = [preferred_feed]
+        if preferred_feed == "sip":
+            feeds.append("iex")
+        elif preferred_feed == "iex":
+            feeds.append("sip")
+
+        base_params = {
             "timeframe": tf_map.get(timeframe, "1Hour"),
             "start": (end - lookback).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "limit": min(limit, 10000),
             "adjustment": "split",
-            "feed": "sip",
             "sort": "asc",
         }
         headers = {
             "APCA-API-KEY-ID": _ALPACA_KEY,
             "APCA-API-SECRET-KEY": _ALPACA_SECRET,
         }
-        # Clean symbol for URL (remove dots for BRK.B → BRKB in URL if needed)
+        # Keep Alpaca's stock symbol form for REST URLs; only strip crypto separators.
         url_symbol = symbol.replace("/", "")
         url = f"https://data.alpaca.markets/v2/stocks/{url_symbol}/bars"
-        resp = requests.get(url, params=params, headers=headers, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        data = None
+        last_error = None
+        for feed in feeds:
+            params = dict(base_params)
+            params["feed"] = feed
+            try:
+                resp = requests.get(url, params=params, headers=headers, timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Stock REST feed %s failed for %s %s: %s", feed, symbol, timeframe, exc)
+        if data is None:
+            raise last_error or RuntimeError("Alpaca stock REST returned no data")
         raw = data.get("bars", []) or []
         candles = []
         for b in raw:

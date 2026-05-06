@@ -155,11 +155,15 @@ class MarketCEO:
             "paused": 0.0,
         }.get(posture, 0.65)
 
-        instructions = self._build_instructions(regime, direction, posture, risk_multiplier)
-
         # Compute separate stock and crypto regimes for managers
         stock_regime = self._compute_group_regime(stock_rows) if stock_rows else regime
         crypto_regime = self._compute_group_regime(crypto_rows) if crypto_rows else regime
+        stock_direction = self._compute_group_direction(stock_rows) if stock_rows else direction
+        crypto_direction = self._compute_group_direction(crypto_rows) if crypto_rows else direction
+        instructions = {
+            "crypto": self._build_instruction(crypto_regime, crypto_direction, posture, risk_multiplier),
+            "stock": self._build_instruction(stock_regime, stock_direction, posture, risk_multiplier),
+        }
 
         state = CEOState(
             timestamp=_utcnow(),
@@ -182,8 +186,8 @@ class MarketCEO:
         return state
 
     def _analyze_symbol(self, symbol):
-        # Use the primary entry timeframe for CEO analysis (30m by default)
-        entry_tf = getattr(config, "DESK_ENTRY_TIMEFRAME", "30m")
+        # Use the primary desk entry timeframe for CEO analysis.
+        entry_tf = getattr(config, "DESK_ENTRY_TIMEFRAME", "1h")
         try:
             candles = self.data.get_candles(symbol, entry_tf, limit=200)
         except Exception as exc:
@@ -288,7 +292,19 @@ class MarketCEO:
             return "breakout_ready"
         return "sideways"
 
-    def _build_instructions(self, regime, direction, posture, risk_multiplier):
+    def _compute_group_direction(self, rows):
+        if not rows:
+            return "sideways"
+        bullish = sum(1 for r in rows if r.get("direction") == "bullish")
+        bearish = sum(1 for r in rows if r.get("direction") == "bearish")
+        total = max(1, len(rows))
+        if bullish / total >= 0.55:
+            return "bullish"
+        if bearish / total >= 0.55:
+            return "bearish"
+        return "sideways"
+
+    def _build_instruction(self, regime, direction, posture, risk_multiplier):
         trend = ["trend_pullback", "ema_crossover", "macd_momentum", "breakout_retest",
                  "donchian_breakout", "atr_momentum_expansion", "supertrend_continuation"]
         mean = ["rsi_mean_reversion", "bollinger_reversion", "vwap_bounce"]
@@ -317,4 +333,9 @@ class MarketCEO:
             avoid_strategies=avoid,
             notes=notes,
         )
+        return instruction
+
+    def _build_instructions(self, regime, direction, posture, risk_multiplier):
+        """Backward-compatible wrapper for older callers."""
+        instruction = self._build_instruction(regime, direction, posture, risk_multiplier)
         return {"crypto": instruction, "stock": instruction}

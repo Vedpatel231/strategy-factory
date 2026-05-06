@@ -1,4 +1,4 @@
-"""Professional long-only 1H strategy library.
+"""Professional long-only strategy library.
 
 Each strategy returns a full decision object.  A hold is still informative:
 it includes the closest setup confidence, the blocker, and the condition the
@@ -18,9 +18,10 @@ from intraday_engine import (
     rsi,
     sma,
 )
+import config
 
 
-ENTRY_TIMEFRAME = "1h"
+ENTRY_TIMEFRAME = getattr(config, "DESK_ENTRY_TIMEFRAME", "1h")
 
 
 def _safe_float(value, default=0.0):
@@ -128,7 +129,7 @@ def _supertrend(candles, period=10, multiplier=3.0):
 
 
 class FeatureContext:
-    """Precomputed 1H features plus optional higher-timeframe confirmation."""
+    """Precomputed entry-timeframe features plus higher-timeframe confirmation."""
 
     def __init__(self, candles, higher_timeframes=None):
         self.candles = candles or []
@@ -228,10 +229,12 @@ class FeatureContext:
         return {
             "close": round(self.close, 6),
             "atr": round(self.atr_value, 6),
-            "atr_pct_1h": round(self.atr_pct, 3),
+            "atr_pct": round(self.atr_pct, 3),
+            f"atr_pct_{ENTRY_TIMEFRAME}": round(self.atr_pct, 3),
             "rsi_14": round(self.rsi_value, 2),
             "adx_14": round(self.adx_value, 2),
-            "volume_ratio_1h": round(self.volume_ratio, 3),
+            "volume_ratio": round(self.volume_ratio, 3),
+            f"volume_ratio_{ENTRY_TIMEFRAME}": round(self.volume_ratio, 3),
             "ema20": round(self.ema20[-1], 6) if self.ema20 else 0,
             "ema50": round(self.ema50[-1], 6) if self.ema50 else 0,
             "vwap20": round(self.vwap20, 6),
@@ -341,8 +344,8 @@ class BaseProfessionalStrategy:
         return self._hold(
             f,
             0.0,
-            f"Insufficient 1H candles ({len(f.candles)} loaded, need at least 60).",
-            "Need enough 1H history before this bot can evaluate safely.",
+            f"Insufficient {ENTRY_TIMEFRAME} candles ({len(f.candles)} loaded, need at least 60).",
+            f"Need enough {ENTRY_TIMEFRAME} history before this bot can evaluate safely.",
         )
 
 

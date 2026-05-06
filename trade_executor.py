@@ -104,6 +104,7 @@ class TradeExecutor:
                 strategy=request.get("strategy"),
                 regime=request.get("ceo_regime"),
                 confidence=request.get("confidence"),
+                asset_class=request.get("asset_class"),
                 entry_price=entry_price,
                 notional=entry_notional,
                 stop_loss_pct=self._pct_distance(entry_price, request.get("stop_loss"), "down"),

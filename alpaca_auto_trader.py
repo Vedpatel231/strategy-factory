@@ -7,7 +7,7 @@ Multi-schedule worker:
 
 Each main cycle:
   1. Run CEO market intelligence
-  2. Let each asset manager rank its 1H strategy bots
+  2. Let each asset manager rank its configured entry-timeframe strategy bots
   3. Send valid trade requests through risk and Alpaca paper execution
 
 Legacy 15m/30m stock cycles are disabled unless ENABLE_LEGACY_INTRADAY=true.
@@ -30,8 +30,8 @@ DATA_DIR = config.DATA_DIR
 REPORT_DIR = config.REPORT_DIR
 FLAG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.enabled")
 LOG_FILE = os.path.join(DATA_DIR, "alpaca_auto_trade.log.json")
-# Main professional desk cycle runs every 15 minutes. Entries are based on
-# 1H candles, with 4H/1D confirmation used only by managers.
+# Main professional desk cycle runs every 15 minutes. Entries use the
+# configured desk timeframe, with 4H/1D confirmation used by managers.
 DEFAULT_INTERVAL_MIN = int(
     os.environ.get("ALPACA_AUTO_TRADE_INTERVAL_MIN")
     or os.environ.get("AUTO_TRADE_INTERVAL_MIN")
@@ -140,7 +140,9 @@ class AlpacaAutoTrader:
                 "display_est": human_est,
                 "num_strategies": summary.get("bots") or registry.get("bots") or portfolio_summary.get("num_strategies", 0),
                 "num_managers": summary.get("managers", 0),
-                "entry_candidates": summary.get("enter_decisions", 0),
+                "entry_candidates": summary.get("manager_enter_decisions", summary.get("enter_decisions", 0)),
+                "risk_approved_entries": summary.get("risk_approved_entries", 0),
+                "blocked_after_manager": summary.get("blocked_after_manager", 0),
                 "submitted": summary.get("orders_submitted", 0),
                 "rejected": summary.get("orders_rejected", 0),
                 "expected_monthly_return_pct": portfolio_summary.get("expected_monthly_return_pct", 0),
