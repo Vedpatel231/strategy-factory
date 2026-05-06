@@ -762,21 +762,28 @@ def debug_candles(symbol):
     symbol = symbol.replace("-", "/")  # BTC-USD → BTC/USD
     try:
         from intraday_engine import MarketDataProvider
+        from alpaca_client import is_equity_symbol
         provider = MarketDataProvider()
         results = {}
-        for tf in ("15m", "4h", "1D"):
-            # Try each provider individually
-            alpaca_sdk = provider._get_alpaca_candles(symbol, tf, 160)
-            alpaca_rest = provider._get_alpaca_rest_candles(symbol, tf, 160)
-            binance = provider._get_binance_candles(symbol, tf, 160)
+        is_stock = is_equity_symbol(symbol)
+        for tf in ("15m", "30m", "1h", "4h", "1D"):
             combined = provider.get_candles(symbol, tf)
-            results[tf] = {
-                "alpaca_sdk": len(alpaca_sdk),
-                "alpaca_rest": len(alpaca_rest),
-                "binance": len(binance),
+            entry = {
                 "combined_clean": len(combined),
                 "sample": combined[:2] if combined else [],
+                "is_stock": is_stock,
             }
+            # Add provider-level detail for non-stock symbols
+            if not is_stock:
+                try:
+                    entry["alpaca_sdk"] = len(provider._get_alpaca_candles(symbol, tf, 160))
+                except Exception:
+                    entry["alpaca_sdk"] = 0
+                try:
+                    entry["alpaca_rest"] = len(provider._get_alpaca_rest_candles(symbol, tf, 160))
+                except Exception:
+                    entry["alpaca_rest"] = 0
+            results[tf] = entry
         return jsonify({"symbol": symbol, "results": results})
     except Exception as e:
         import traceback

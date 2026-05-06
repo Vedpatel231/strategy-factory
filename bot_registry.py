@@ -1,8 +1,8 @@
 """Automatic professional bot registry.
 
 The registry creates one bot for every asset + strategy + timeframe
-combination.  With the current 17 assets and 10 strategies, this produces
-170 1H bots without needing to hand-maintain database rows for each worker.
+combination.  Multi-timeframe: primary entry timeframe is 30m, with
+15m and 1H as secondary timeframes for additional signal coverage.
 """
 
 from dataclasses import asdict, dataclass
@@ -13,7 +13,9 @@ from alpaca_client import is_equity_symbol, normalize_crypto_symbol
 from strategies import STRATEGY_NAMES, create_strategy
 
 
-ENTRY_TIMEFRAME = getattr(config, "DESK_ENTRY_TIMEFRAME", "1h")
+# Multi-timeframe: primary entry + secondary timeframes
+ENTRY_TIMEFRAME = getattr(config, "DESK_ENTRY_TIMEFRAME", "30m")
+ENTRY_TIMEFRAMES = getattr(config, "DESK_ENTRY_TIMEFRAMES", ["30m"])
 
 
 def canonical_asset_symbol(asset):
@@ -58,11 +60,14 @@ class StrategyBot:
 
 
 class BotRegistry:
-    def __init__(self, assets: Optional[Iterable[str]] = None, strategy_names: Optional[Iterable[str]] = None):
+    def __init__(self, assets: Optional[Iterable[str]] = None,
+                 strategy_names: Optional[Iterable[str]] = None,
+                 timeframes: Optional[List[str]] = None):
         if assets is None:
             assets = list(config.CRYPTO_ASSETS) + list(config.STOCK_ASSETS)
         self.assets = [str(a).upper().replace(" ", "") for a in assets]
         self.strategy_names = list(strategy_names or STRATEGY_NAMES)
+        self.timeframes = timeframes or list(ENTRY_TIMEFRAMES)
         self._bots = self._build_bots()
 
     def _build_bots(self):
@@ -72,16 +77,17 @@ class BotRegistry:
             asset_class = asset_class_for_symbol(symbol)
             for strategy_name in self.strategy_names:
                 strategy = create_strategy(strategy_name)
-                display = f"{asset} {strategy.display_name} {ENTRY_TIMEFRAME.upper()} Bot"
-                bots.append(StrategyBot(
-                    bot_id=_bot_id(symbol, strategy_name),
-                    asset=asset,
-                    symbol=symbol,
-                    asset_class=asset_class,
-                    strategy_name=strategy_name,
-                    display_name=display,
-                    timeframe=ENTRY_TIMEFRAME,
-                ))
+                for tf in self.timeframes:
+                    display = f"{asset} {strategy.display_name} {tf.upper()} Bot"
+                    bots.append(StrategyBot(
+                        bot_id=_bot_id(symbol, strategy_name, tf),
+                        asset=asset,
+                        symbol=symbol,
+                        asset_class=asset_class,
+                        strategy_name=strategy_name,
+                        display_name=display,
+                        timeframe=tf,
+                    ))
         return bots
 
     def all_bots(self) -> List[StrategyBot]:
@@ -103,6 +109,7 @@ class BotRegistry:
             "assets": len(by_asset),
             "bots": len(self._bots),
             "strategies_per_asset": len(self.strategy_names),
+            "timeframes": self.timeframes,
             "timeframe": ENTRY_TIMEFRAME,
             "strategy_names": list(self.strategy_names),
             "assets_list": sorted(by_asset.keys()),

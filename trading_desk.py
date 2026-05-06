@@ -13,6 +13,7 @@ from exit_manager import ExitManager
 from intraday_engine import MarketDataProvider
 from learning_engine import LearningEngine
 from market_ceo import MarketCEO
+from missed_opportunity import MissedOpportunityAnalyzer
 from risk_manager import RiskManager
 from trade_executor import TradeExecutor
 
@@ -50,6 +51,7 @@ class TradingDeskEngine:
         self.conservative = ConservativeMode()
         self.executor = TradeExecutor(client=self.client, logger=self.logger)
         self.exit_manager = ExitManager(client=self.client, data_provider=self.data, logger=self.logger)
+        self.missed_analyzer = MissedOpportunityAnalyzer()
 
     def run_cycle(self, dry_run=None):
         dry_run = self.dry_run if dry_run is None else dry_run
@@ -189,6 +191,18 @@ class TradingDeskEngine:
         # Reconciliation: compare internal P&L with Alpaca account
         reconciliation = self._reconcile(account, positions)
 
+        # Missed Opportunity Analyzer: record why trades were skipped
+        try:
+            self.missed_analyzer.record_cycle(
+                managers=managers,
+                ceo_state=ceo_state.to_dict(),
+                approvals=approvals,
+                conservative_status=self.conservative.get_status(),
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger("trading_desk").warning("Missed opportunity analyzer error: %s", exc)
+
         duration = (datetime.now(timezone.utc) - start).total_seconds()
         state = self._build_state(
             ceo_state=ceo_state,
@@ -203,6 +217,10 @@ class TradingDeskEngine:
             broker_note=broker_note,
         )
         state["reconciliation"] = reconciliation
+        try:
+            state["missed_opportunities"] = self.missed_analyzer.get_status()
+        except Exception:
+            state["missed_opportunities"] = {}
         self.logger.save_cycle_state(state)
         return state
 

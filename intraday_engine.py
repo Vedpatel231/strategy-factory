@@ -308,46 +308,119 @@ class MarketDataProvider:
         return cleaned
 
     def _get_stock_candles(self, symbol, timeframe, limit):
-        """Fetch stock bars from Alpaca StockHistoricalDataClient."""
+        """Fetch stock bars from Alpaca — SDK first, then REST fallback."""
+        # Try SDK method first
         try:
-            from alpaca.data.historical.stock import StockHistoricalDataClient
-            from alpaca.data.requests import StockBarsRequest
-            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-            from alpaca_client import _ALPACA_KEY, _ALPACA_SECRET
-
-            amount, unit = {
-                "15m": (15, TimeFrameUnit.Minute),
-                "30m": (30, TimeFrameUnit.Minute),
-                "1h": (1, TimeFrameUnit.Hour),
-                "4h": (4, TimeFrameUnit.Hour),
-                "1D": (1, TimeFrameUnit.Day),
-            }.get(timeframe, (4, TimeFrameUnit.Hour))
-
-            data_client = StockHistoricalDataClient(
-                api_key=_ALPACA_KEY,
-                secret_key=_ALPACA_SECRET,
-            )
-            end = datetime.now(timezone.utc)
-            lookback = {
-                "15m": timedelta(days=4),
-                "30m": timedelta(days=8),
-                "1h": timedelta(days=14),
-                "4h": timedelta(days=90),
-                "1D": timedelta(days=365),
-            }.get(timeframe, timedelta(days=90))
-
-            req = StockBarsRequest(
-                symbol_or_symbols=symbol,
-                timeframe=TimeFrame(amount, unit),
-                start=end - lookback,
-                end=end,
-                limit=limit,
-            )
-            bars = data_client.get_stock_bars(req)
-            return self._parse_alpaca_bars(bars, symbol, limit)
+            candles = self._get_stock_candles_sdk(symbol, timeframe, limit)
+            if candles:
+                logger.info("Stock SDK returned %d candles for %s %s", len(candles), symbol, timeframe)
+                return candles
         except Exception as exc:
-            logger.warning("Stock candles unavailable for %s %s: %s", symbol, timeframe, exc)
-            return []
+            logger.warning("Stock SDK failed for %s %s: %s", symbol, timeframe, exc)
+
+        # REST API fallback — more reliable for stocks
+        try:
+            candles = self._get_stock_candles_rest(symbol, timeframe, limit)
+            if candles:
+                logger.info("Stock REST returned %d candles for %s %s", len(candles), symbol, timeframe)
+                return candles
+        except Exception as exc:
+            logger.warning("Stock REST also failed for %s %s: %s", symbol, timeframe, exc)
+
+        logger.error("ALL stock data sources failed for %s %s — 0 candles", symbol, timeframe)
+        return []
+
+    def _get_stock_candles_sdk(self, symbol, timeframe, limit):
+        """Fetch stock bars via Alpaca SDK (StockHistoricalDataClient)."""
+        from alpaca.data.historical.stock import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+        from alpaca_client import _ALPACA_KEY, _ALPACA_SECRET
+
+        amount, unit = {
+            "15m": (15, TimeFrameUnit.Minute),
+            "30m": (30, TimeFrameUnit.Minute),
+            "1h": (1, TimeFrameUnit.Hour),
+            "4h": (4, TimeFrameUnit.Hour),
+            "1D": (1, TimeFrameUnit.Day),
+        }.get(timeframe, (4, TimeFrameUnit.Hour))
+
+        data_client = StockHistoricalDataClient(
+            api_key=_ALPACA_KEY,
+            secret_key=_ALPACA_SECRET,
+        )
+        end = datetime.now(timezone.utc)
+        lookback = {
+            "15m": timedelta(days=7),
+            "30m": timedelta(days=14),
+            "1h": timedelta(days=30),
+            "4h": timedelta(days=120),
+            "1D": timedelta(days=500),
+        }.get(timeframe, timedelta(days=120))
+
+        req = StockBarsRequest(
+            symbol_or_symbols=symbol,
+            timeframe=TimeFrame(amount, unit),
+            start=end - lookback,
+            end=end,
+            limit=limit,
+        )
+        bars = data_client.get_stock_bars(req)
+        return self._parse_alpaca_bars(bars, symbol, limit)
+
+    def _get_stock_candles_rest(self, symbol, timeframe, limit):
+        """Fetch stock bars via Alpaca REST API v2 (reliable fallback)."""
+        import requests
+        from alpaca_client import _ALPACA_KEY, _ALPACA_SECRET
+
+        end = datetime.now(timezone.utc)
+        lookback = {
+            "15m": timedelta(days=7),
+            "30m": timedelta(days=14),
+            "1h": timedelta(days=30),
+            "4h": timedelta(days=120),
+            "1D": timedelta(days=500),
+        }.get(timeframe, timedelta(days=120))
+
+        tf_map = {
+            "15m": "15Min", "30m": "30Min", "1h": "1Hour",
+            "4h": "4Hour", "1D": "1Day",
+        }
+        params = {
+            "timeframe": tf_map.get(timeframe, "1Hour"),
+            "start": (end - lookback).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "limit": min(limit, 10000),
+            "adjustment": "split",
+            "feed": "sip",
+            "sort": "asc",
+        }
+        headers = {
+            "APCA-API-KEY-ID": _ALPACA_KEY,
+            "APCA-API-SECRET-KEY": _ALPACA_SECRET,
+        }
+        # Clean symbol for URL (remove dots for BRK.B → BRKB in URL if needed)
+        url_symbol = symbol.replace("/", "")
+        url = f"https://data.alpaca.markets/v2/stocks/{url_symbol}/bars"
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        raw = data.get("bars", []) or []
+        candles = []
+        for b in raw:
+            o, h, l, c = b.get("o"), b.get("h"), b.get("l"), b.get("c")
+            if o is None or h is None or l is None or c is None:
+                continue
+            candles.append({
+                "timestamp": b.get("t", ""),
+                "open": float(o),
+                "high": float(h),
+                "low": float(l),
+                "close": float(c),
+                "volume": float(b.get("v", 0) or 0),
+                "vwap": float(b.get("vw", 0) or 0),
+            })
+        return candles
 
     def _get_alpaca_candles(self, symbol, timeframe, limit):
         try:
@@ -369,12 +442,12 @@ class MarketDataProvider:
             )
             end = datetime.now(timezone.utc)
             lookback = {
-                "15m": timedelta(days=4),
-                "30m": timedelta(days=8),
-                "1h": timedelta(days=14),
-                "4h": timedelta(days=90),
-                "1D": timedelta(days=365),
-            }.get(timeframe, timedelta(days=90))
+                "15m": timedelta(days=7),
+                "30m": timedelta(days=14),
+                "1h": timedelta(days=30),
+                "4h": timedelta(days=120),
+                "1D": timedelta(days=500),
+            }.get(timeframe, timedelta(days=120))
             req = CryptoBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame(amount, unit),

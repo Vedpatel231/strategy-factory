@@ -20,14 +20,41 @@ BINANCE_BASE_URL = "https://api.binance.com"
 DB_PATH = os.environ.get("STRATEGY_FACTORY_DB", os.path.join(DATA_DIR, "strategy_factory.db"))
 
 # === Asset Universe ===
-# Conservative asset universe: focus on the most liquid assets.
-# More assets = more marginal trades = more bleeding.
-# Expand ONLY after the focused set is consistently green.
+# Crypto: top 3 by liquidity.
 CRYPTO_ASSETS = ["BTC", "ETH", "SOL"]
-STOCK_ASSETS = ["AAPL", "NVDA", "MSFT"]
+
+# Stocks: top 100 S&P 500 by market cap.
+# System scans all 100 but trades selectively based on signal quality.
+STOCK_ASSETS = [
+    # Mega-cap tech (1-10)
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "LLY", "BRK.B",
+    # Top 11-20
+    "JPM", "V", "UNH", "XOM", "MA", "COST", "HD", "PG", "JNJ", "ABBV",
+    # Top 21-30
+    "WMT", "NFLX", "BAC", "CRM", "ORCL", "CVX", "MRK", "KO", "AMD", "PEP",
+    # Top 31-40
+    "TMO", "LIN", "ACN", "MCD", "CSCO", "ABT", "ADBE", "WFC", "GE", "DHR",
+    # Top 41-50
+    "PM", "ISRG", "TXN", "INTU", "CAT", "IBM", "NOW", "QCOM", "VZ", "AMGN",
+    # Top 51-60
+    "AMAT", "PFE", "SPGI", "GS", "T", "AXP", "NEE", "RTX", "LOW", "SYK",
+    # Top 61-70
+    "BKNG", "UBER", "BLK", "LRCX", "HON", "UNP", "SCHW", "DE", "MDLZ", "BMY",
+    # Top 71-80
+    "VRTX", "GILD", "ADP", "PANW", "SBUX", "MMC", "ADI", "PLTR", "PLD", "BA",
+    # Top 81-90
+    "TMUS", "ETN", "MU", "CB", "FI", "KLAC", "SO", "CME", "SHW", "INTC",
+    # Top 91-100
+    "DUK", "ICE", "CL", "REGN", "SNPS", "CDNS", "BSX", "MCO", "PGR", "ZTS",
+]
 
 # === Professional Trading Desk Parameters ===
-DESK_ENTRY_TIMEFRAME = "1h"
+# Multi-timeframe: 30m is the default entry timeframe (faster than 1H,
+# catches intraday moves). 15m and 1H candles are loaded for confirmation
+# but bots only run on the primary timeframe to keep scan fast.
+DESK_ENTRY_TIMEFRAMES = ["30m"]  # bot creation timeframes (primary only)
+DESK_ENTRY_TIMEFRAME = "30m"    # primary entry timeframe
+DESK_CONFIRMATION_TIMEFRAMES_INTRADAY = ["15m", "1h"]  # loaded for confirmation
 DESK_CONFIRM_TIMEFRAMES = ["4h", "1D"]
 DESK_CYCLE_INTERVAL_MIN = int(os.environ.get("DESK_CYCLE_INTERVAL_MIN", "15"))
 PROFESSIONAL_STRATEGIES = [

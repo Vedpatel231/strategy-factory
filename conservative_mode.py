@@ -111,14 +111,22 @@ MAX_OPEN_RISK_BUDGET_PCT = _safe_float(
 )
 
 # --- Max open positions ---
+# With 100 stocks + 3 crypto, allow up to 5 concurrent positions
 MAX_OPEN_POSITIONS = int(
-    os.environ.get("CONSERVATIVE_MAX_OPEN_POSITIONS", "2")
+    os.environ.get("CONSERVATIVE_MAX_OPEN_POSITIONS", "5")
 )
 
 # --- Fee / slippage estimation ---
-# Estimated round-trip cost per trade as a percentage of notional.
-# Alpaca paper has zero commissions but real accounts have ~$0 for stocks
-# and ~0.15-0.25 % spread for crypto.  Default 0.10 % covers spread + slippage.
+# Different fee models for stocks vs crypto:
+#   Stocks: $0 commission on Alpaca, ~0.01% slippage estimate
+#   Crypto: ~0.15% maker / 0.25% taker spread + slippage
+EST_FEE_PCT_STOCK = _safe_float(
+    os.environ.get("CONSERVATIVE_EST_FEE_PCT_STOCK"), 0.01
+)
+EST_FEE_PCT_CRYPTO = _safe_float(
+    os.environ.get("CONSERVATIVE_EST_FEE_PCT_CRYPTO"), 0.20
+)
+# Legacy default (used if asset class unknown)
 EST_FEE_PCT_PER_TRADE = _safe_float(
     os.environ.get("CONSERVATIVE_EST_FEE_PCT"), 0.10
 )
@@ -149,6 +157,15 @@ QUALITY_SCORE_NORMAL = int(
 )
 QUALITY_SCORE_PROTECTION = int(
     os.environ.get("CONSERVATIVE_QUALITY_PROTECTION", "90")
+)
+
+# Adaptive quality thresholds based on CEO posture.
+# These override QUALITY_SCORE_NORMAL when the market is clear.
+QUALITY_SCORE_RISK_ON = int(
+    os.environ.get("CONSERVATIVE_QUALITY_RISK_ON", "72")
+)
+QUALITY_SCORE_CHOPPY = int(
+    os.environ.get("CONSERVATIVE_QUALITY_CHOPPY", "85")
 )
 
 # When in green protection, require this higher confidence boost.
@@ -281,9 +298,19 @@ class ConservativeMode:
         self._recompute_daily_mode()
         self._persist()
 
-    def estimate_fee_for_notional(self, notional):
-        """Return estimated round-trip fee for a given notional amount."""
-        return round(_safe_float(notional) * EST_FEE_PCT_PER_TRADE / 100.0, 2)
+    def estimate_fee_for_notional(self, notional, asset_class=None):
+        """Return estimated round-trip fee for a given notional amount.
+
+        Uses different rates for stocks ($0 commission, minimal slippage)
+        vs crypto (0.20% spread + slippage).
+        """
+        if asset_class == "stock":
+            fee_pct = EST_FEE_PCT_STOCK
+        elif asset_class == "crypto":
+            fee_pct = EST_FEE_PCT_CRYPTO
+        else:
+            fee_pct = EST_FEE_PCT_PER_TRADE
+        return round(_safe_float(notional) * fee_pct / 100.0, 2)
 
     # ── Open risk budget ─────────────────────────────────────────────
 
@@ -435,11 +462,23 @@ class ConservativeMode:
         self._maybe_reset()
         return self._state.get("daily_mode", MODE_SAFE_TEST)
 
-    def get_required_quality_score(self):
-        """Return the minimum trade quality score for the current mode."""
+    def get_required_quality_score(self, ceo_posture=None):
+        """Return the minimum trade quality score for the current mode.
+
+        Adaptive thresholds:
+          - Protection modes (profit/loss threshold hit): 90
+          - Normal + aggressive CEO posture (strong risk-on): 72
+          - Normal + defensive CEO posture (choppy market): 85
+          - Normal + normal CEO posture: 75
+        """
         mode = self.get_daily_mode()
         if mode in (MODE_PROFIT_PROTECTION, MODE_LOSS_RECOVERY):
             return QUALITY_SCORE_PROTECTION
+        # Adaptive based on CEO posture
+        if ceo_posture == "aggressive":
+            return QUALITY_SCORE_RISK_ON
+        if ceo_posture == "defensive":
+            return QUALITY_SCORE_CHOPPY
         return QUALITY_SCORE_NORMAL
 
     def get_min_risk_reward(self):

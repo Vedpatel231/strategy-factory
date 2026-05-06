@@ -57,11 +57,42 @@ def _get_stock_data_client():
     )
 
 
-EQUITY_SYMBOLS = {"TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"}
+# Build equity symbol set dynamically from config + known tickers.
+# This ensures is_equity_symbol works for all 100 S&P 500 stocks.
+try:
+    import config as _cfg
+    EQUITY_SYMBOLS = set(str(s).upper().replace(" ", "") for s in getattr(_cfg, "STOCK_ASSETS", []))
+except Exception:
+    EQUITY_SYMBOLS = set()
+# Always include a baseline set in case config import fails
+EQUITY_SYMBOLS |= {"TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"}
+
+
+# Known crypto base tickers to exclude from equity heuristic
+_CRYPTO_TICKERS = set()
+try:
+    _CRYPTO_TICKERS = set(str(a).upper() for a in getattr(_cfg, "CRYPTO_ASSETS", []))
+except Exception:
+    pass
+_CRYPTO_TICKERS |= {"BTC", "ETH", "SOL", "DOGE", "ADA", "XRP", "DOT", "AVAX", "LINK", "MATIC", "SHIB", "UNI"}
 
 
 def is_equity_symbol(symbol):
-    return bool(symbol) and str(symbol).upper().replace(" ", "") in EQUITY_SYMBOLS
+    """Check if a symbol is a stock/equity (not crypto).
+    Uses config.STOCK_ASSETS dynamically + heuristic."""
+    if not symbol:
+        return False
+    s = str(symbol).upper().replace(" ", "")
+    # Explicit crypto markers
+    if "/" in s or s.endswith("USD") or s.endswith("USDT"):
+        return False
+    # Known crypto tickers
+    if s in _CRYPTO_TICKERS:
+        return False
+    # Explicit stock list
+    if s in EQUITY_SYMBOLS:
+        return True
+    return False
 
 
 def is_us_market_open():

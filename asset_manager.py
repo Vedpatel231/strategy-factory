@@ -188,21 +188,24 @@ def compute_trade_quality(signal_row, features, ceo_state, regime, learner=None,
     total += regime_score
 
     # 2. HTF confirmation (0-20)
+    # FIXED: "sideways" no longer gives 0 — it gets a moderate score.
+    # This prevents the bottleneck where sideways direction made it
+    # impossible to reach quality threshold 75.
     htf_score = 0.0
     trend_bias = getattr(features, "trend_bias", None) or ""
     ceo_direction = ceo_state.market_direction if ceo_state else ""
     # 4H trend alignment
     if trend_bias == "bullish":
         htf_score += 10.0
-    elif trend_bias == "neutral":
-        htf_score += 5.0
+    elif trend_bias in ("neutral", "sideways", ""):
+        htf_score += 6.0  # was 5.0 / 0.0 — now gives fair credit
     # CEO direction alignment
     if ceo_direction == "bullish":
         htf_score += 10.0
-    elif ceo_direction == "neutral":
-        htf_score += 5.0
+    elif ceo_direction in ("sideways", "neutral", ""):
+        htf_score += 6.0  # was 5.0 / 0.0 — sideways is NOT bearish
     elif ceo_direction == "bearish":
-        htf_score -= 5.0
+        htf_score -= 3.0  # less harsh penalty
     htf_score = max(0.0, min(20.0, htf_score))
     breakdown["htf_confirmation"] = round(htf_score, 1)
     total += htf_score
@@ -288,25 +291,47 @@ class AssetManager:
         open_position = open_position or None
 
         # CLOSED CANDLE RULE: drop the last (potentially incomplete) candle
-        # from the entry timeframe so strategies only see fully closed data.
+        # from each timeframe so strategies only see fully closed data.
+        # Multi-timeframe: load candles for the bot's own timeframe.
+        # Default candles for features are loaded at 30m (primary entry tf).
+        candles_30m = _drop_incomplete_candle(self._get_candles("30m", 300))
+        candles_15m = _drop_incomplete_candle(self._get_candles("15m", 300))
         candles_1h = _drop_incomplete_candle(self._get_candles("1h", 221))
         candles_4h = _drop_incomplete_candle(self._get_candles("4h", 141))
         candles_1d = _drop_incomplete_candle(self._get_candles("1D", 121))
-        features = build_feature_context(candles_1h, {"4h": candles_4h, "1D": candles_1d})
+
+        # Use primary entry timeframe for features (30m default)
+        primary_candles = candles_30m or candles_1h
+        features = build_feature_context(primary_candles, {"4h": candles_4h, "1D": candles_1d})
+
+        # Multi-timeframe candle map for bots at different timeframes
+        self._tf_candles = {
+            "15m": candles_15m,
+            "30m": candles_30m,
+            "1h": candles_1h,
+            "4h": candles_4h,
+            "1D": candles_1d,
+        }
 
         # Track the candle key for duplicate signal prevention
-        entry_candle_key = _candle_key(candles_1h)
+        entry_candle_key = _candle_key(primary_candles)
 
         bot_rows = []
         for bot in self.bots:
             strategy = bot.create_strategy()
+            # Multi-timeframe: use candles matching the bot's timeframe
+            bot_candles = self._tf_candles.get(bot.timeframe, primary_candles)
+            if bot_candles and len(bot_candles) >= 30:
+                bot_features = build_feature_context(bot_candles, {"4h": candles_4h, "1D": candles_1d})
+            else:
+                bot_features = features  # fallback to primary
             try:
-                signal = strategy.evaluate(features)
+                signal = strategy.evaluate(bot_features)
             except Exception as exc:
-                signal = strategy._hold(features, 0.0, f"Strategy error: {exc}")
-            score, score_parts = self._rank_signal(bot, signal, features, ceo_state, cooldown_minutes, bool(open_position))
+                signal = strategy._hold(bot_features, 0.0, f"Strategy error: {exc}")
+            score, score_parts = self._rank_signal(bot, signal, bot_features, ceo_state, cooldown_minutes, bool(open_position))
             signal_dict = signal.to_dict()
-            signal_dict["features"] = features.latest_features()
+            signal_dict["features"] = bot_features.latest_features()
             signal_dict["score_parts"] = score_parts
             bot_rows.append({
                 "bot_id": bot.bot_id,
@@ -364,10 +389,11 @@ class AssetManager:
                 learner=self.learner, symbol=self.symbol,
             )
             # Dynamic threshold from conservative_mode's daily P&L mode:
-            #   SAFE_TEST_MODE → 75,  protection modes → 90
+            #   SAFE_TEST_MODE + aggressive → 72,  normal → 75,
+            #   defensive → 85,  protection modes → 90
             from conservative_mode import ConservativeMode
             _cm = ConservativeMode()
-            quality_threshold = _cm.get_required_quality_score()
+            quality_threshold = _cm.get_required_quality_score(ceo_posture=posture)
             current_daily_mode = _cm.get_daily_mode()
 
             if quality_score < quality_threshold:
