@@ -358,13 +358,22 @@ class MarketDataProvider:
             "1D": timedelta(days=500),
         }.get(timeframe, timedelta(days=120))
 
-        req = StockBarsRequest(
+        # Use IEX feed (free) — SIP requires a paid subscription
+        try:
+            from alpaca.data.enums import DataFeed
+            feed = DataFeed.IEX
+        except (ImportError, AttributeError):
+            feed = None
+        req_kwargs = dict(
             symbol_or_symbols=symbol,
             timeframe=TimeFrame(amount, unit),
             start=end - lookback,
             end=end,
             limit=limit,
         )
+        if feed is not None:
+            req_kwargs["feed"] = feed
+        req = StockBarsRequest(**req_kwargs)
         bars = data_client.get_stock_bars(req)
         return self._parse_alpaca_bars(bars, symbol, limit)
 
@@ -386,12 +395,9 @@ class MarketDataProvider:
             "15m": "15Min", "30m": "30Min", "1h": "1Hour",
             "4h": "4Hour", "1D": "1Day",
         }
+        # Use IEX feed (free) — SIP requires a paid Alpaca subscription
         preferred_feed = os.environ.get("ALPACA_STOCK_DATA_FEED", "iex").lower()
         feeds = [preferred_feed]
-        if preferred_feed == "sip":
-            feeds.append("iex")
-        elif preferred_feed == "iex":
-            feeds.append("sip")
 
         base_params = {
             "timeframe": tf_map.get(timeframe, "1Hour"),

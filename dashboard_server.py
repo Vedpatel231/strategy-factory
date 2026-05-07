@@ -773,8 +773,19 @@ def debug_candles(symbol):
                 "sample": combined[:2] if combined else [],
                 "is_stock": is_stock,
             }
-            # Add provider-level detail for non-stock symbols
-            if not is_stock:
+            # Add provider-level detail
+            if is_stock:
+                try:
+                    entry["stock_sdk"] = len(provider._get_stock_candles_sdk(symbol, tf, 160))
+                except Exception as sdk_err:
+                    entry["stock_sdk"] = 0
+                    entry["stock_sdk_error"] = str(sdk_err)[:200]
+                try:
+                    entry["stock_rest"] = len(provider._get_stock_candles_rest(symbol, tf, 160))
+                except Exception as rest_err:
+                    entry["stock_rest"] = 0
+                    entry["stock_rest_error"] = str(rest_err)[:200]
+            else:
                 try:
                     entry["alpaca_sdk"] = len(provider._get_alpaca_candles(symbol, tf, 160))
                 except Exception:
