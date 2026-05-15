@@ -530,7 +530,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 <div class="sidebar">
   <div class="sidebar-header">
     <h1>Strategy Factory</h1>
-    <p>Strategy Scorecard</p>
+    <p>Command Center</p>
   </div>
   <nav class="sidebar-nav">{items}</nav>
   <div class="sidebar-footer">v3.0<br>Adaptive Intelligence</div>
@@ -593,8 +593,8 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>
     <div class="card">
       <div class="card-label">Market Regime</div>
-      <div class="card-value" style="font-size:1.2em;">{regime.replace('_',' ').title()}</div>
-      <div class="card-sub">{regime_conf:.0f}% confidence</div>
+      <div id="ovRegime" class="card-value" style="font-size:1.2em;">—</div>
+      <div id="ovRegimeSub" class="card-sub">Loading live regime...</div>
     </div>
   </div>
 
@@ -602,6 +602,10 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   <h3 style="color:var(--cyan);margin-top:12px;margin-bottom:14px;font-size:1em;text-transform:uppercase;letter-spacing:1px;">📈 Your Positions</h3>
   <div id="ovPositionsTable" style="margin-bottom:20px;">
     <div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">Loading positions...</div>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+    <div class="chart-box"><h3>Seed P&amp;L by Strategy</h3><canvas id="overviewPnlChart"></canvas></div>
+    <div class="chart-box"><h3>Verdict Distribution</h3><canvas id="verdictPieChart"></canvas></div>
   </div>
   <!-- P&L CALENDAR -->
   <div class="pnl-calendar" id="pnlCalendarSection">
@@ -669,7 +673,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   </div>
 
   <div class="footer">
-    Strategy Factory v3.0 — Generated {ts}<br>
+    Strategy Factory v3.0 — HTML generated {ts} · Data refreshes live<br>
     <span style="font-size:0.85em;">For informational and educational purposes only. Not financial advice.</span>
   </div>
 </div>"""
@@ -718,170 +722,6 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   </div>
 
   <div class="disclaimer">⚠️ Alpaca paper trading account — no real money. Past performance does not guarantee future results.</div>
-</div>"""
-
-    # ── PAGE: PAPER TRADING ──────────────────────────────────────────────
-    def _page_alpaca(self):
-        return """<div class="page" id="alpaca">
-  <div class="page-title"><span class="accent">🔗</span> Alpaca Trading</div>
-
-  <!-- Connection Status -->
-  <div id="alpacaConnCard" class="card" style="margin-bottom:24px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
-      <div>
-        <div class="card-label">Alpaca Connection</div>
-        <div id="alpacaConnStatus" class="card-value" style="font-size:1.3em;color:var(--gray);" data-fontsize="1.3em">⚪ Not Connected</div>
-        <div id="alpacaConnMsg" class="card-sub">Connect to your Alpaca paper trading account</div>
-      </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button class="filter-btn" style="padding:12px 22px;font-weight:600;" onclick="alpacaConnect()">🔌 Connect</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Account Info (hidden until connected) -->
-  <div id="alpacaAccountSection" style="display:none;">
-    <div class="cards-row">
-      <div class="card">
-        <div class="card-label">Equity</div>
-        <div id="alpEquity" class="card-value">$—</div>
-        <div class="card-sub">Cash + market value</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Cash</div>
-        <div id="alpCash" class="card-value">$—</div>
-        <div class="card-sub">Available to trade</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Buying Power</div>
-        <div id="alpBP" class="card-value">$—</div>
-        <div class="card-sub">Same as cash (no margin)</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Unrealized P&L</div>
-        <div id="alpPL" class="card-value">$—</div>
-        <div class="card-sub">Open positions vs cost</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Positions</div>
-        <div id="alpPosCount" class="card-value">—</div>
-        <div class="card-sub">Currently open</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Account #</div>
-        <div id="alpAcctNum" class="card-value" style="font-size:0.95em;" data-fontsize="0.95em">—</div>
-        <div class="card-sub">Local simulator</div>
-      </div>
-    </div>
-
-    <!-- Action Buttons -->
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px;">
-      <h3 style="margin-bottom:16px;">Portfolio Actions</h3>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;">
-        <button class="filter-btn" style="padding:12px 22px;font-weight:600;" onclick="alpacaRefreshDailyRun()">🔄 Refresh Analysis</button>
-        <button class="filter-btn" style="padding:12px 22px;font-weight:600;" onclick="alpacaPreview()">👁️ Preview Orders</button>
-        <button class="filter-btn" style="padding:12px 22px;font-weight:600;background:rgba(57,255,20,0.15);color:var(--lime);border-color:var(--lime);" onclick="alpacaConfirmExecute()">▶️ Execute Paper Orders</button>
-        <button class="filter-btn" style="padding:12px 22px;font-weight:600;background:rgba(255,68,68,0.1);color:var(--red);border-color:var(--red);" onclick="alpacaConfirmCloseAll()">⛔ Close All Positions</button>
-      </div>
-      <div id="alpActionMsg" style="margin-top:14px;padding:12px;background:rgba(0,212,255,0.05);border-radius:8px;font-size:0.88em;color:var(--text-dim);display:none;"></div>
-    </div>
-
-    <!-- Auto-Trading Control -->
-    <div style="background:linear-gradient(135deg,rgba(57,255,20,0.05) 0%,rgba(0,212,255,0.05) 100%);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;">
-        <div style="flex:1;min-width:280px;">
-          <h3 style="margin-bottom:8px;display:flex;align-items:center;gap:10px;">🤖 Auto-Trading <span id="autoStateBadge" class="badge" style="background:rgba(107,115,148,0.15);color:var(--gray);">OFF</span></h3>
-          <div style="color:var(--text-dim);font-size:0.9em;line-height:1.5;" id="autoDescription">
-            When enabled, the system re-analyzes all bots every 15 minutes and automatically rebalances your paper portfolio. No clicks needed — just check the dashboard each morning.
-          </div>
-        </div>
-        <div style="display:flex;gap:10px;flex-direction:column;align-items:flex-end;">
-          <button id="autoToggleBtn" class="filter-btn" style="padding:14px 28px;font-weight:700;font-size:1em;" onclick="autoToggle()">▶️ Enable Auto-Trading</button>
-          <button class="filter-btn" style="padding:8px 18px;font-size:0.85em;" onclick="autoRunNow()">⚡ Run Cycle Now</button>
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
-        <div>
-          <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Interval</div>
-          <div id="autoInterval" style="font-family:'Courier New',monospace;color:var(--cyan);font-weight:600;">15 min</div>
-        </div>
-        <div>
-          <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Last Run</div>
-          <div id="autoLastRun" style="font-family:'Courier New',monospace;color:var(--cyan);font-weight:600;">—</div>
-        </div>
-        <div>
-          <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Next Run</div>
-          <div id="autoNextRun" style="font-family:'Courier New',monospace;color:var(--cyan);font-weight:600;">—</div>
-        </div>
-        <div>
-          <div style="font-size:0.72em;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;">Recent Result</div>
-          <div id="autoLastResult" style="font-family:'Courier New',monospace;font-weight:600;">—</div>
-        </div>
-      </div>
-      <div id="autoRunsLog" style="margin-top:14px;"></div>
-    </div>
-
-    <!-- Order Preview -->
-    <div id="alpPreviewSection" style="display:none;margin-bottom:24px;">
-      <h3 style="margin-bottom:16px;">Order Preview</h3>
-      <div id="alpPreviewSummary" style="margin-bottom:12px;color:var(--text-dim);"></div>
-      <div class="table-wrap"><table class="data-table compact" id="alpPreviewTable">
-        <thead><tr>
-          <th>Bot</th><th>Symbol</th><th>Side</th><th>Notional</th>
-          <th>Target</th><th>Current</th><th>Status</th>
-        </tr></thead>
-        <tbody id="alpPreviewBody"></tbody>
-      </table></div>
-      <div id="alpPreviewSkipped" style="margin-top:12px;"></div>
-    </div>
-
-    <!-- Positions -->
-    <div style="margin-bottom:24px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h3>Current Positions</h3>
-        <button class="filter-btn" onclick="alpacaLoadPositions()">🔄 Refresh</button>
-      </div>
-      <div id="alpPositionsBody">
-        <div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">
-          No positions yet. Click "Preview Orders" then "Execute Paper Orders" to open positions.
-        </div>
-      </div>
-    </div>
-
-    <!-- Recent Orders -->
-    <div style="margin-bottom:24px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h3>Recent Orders</h3>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <button class="filter-btn active" id="orderFilterAll" onclick="filterOrders('all')">All</button>
-          <button class="filter-btn" id="orderFilterBuy" onclick="filterOrders('buy')">Buy</button>
-          <button class="filter-btn" id="orderFilterSell" onclick="filterOrders('sell')">Sell</button>
-          <button class="filter-btn" onclick="alpacaLoadOrders()">🔄 Refresh</button>
-        </div>
-      </div>
-      <div id="alpOrdersBody">
-        <div style="padding:24px;text-align:center;color:var(--text-dim);background:var(--card);border:1px solid var(--border);border-radius:12px;">
-          No orders yet.
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="disclaimer">
-    ⚠️ Alpaca paper trading — no real money is involved. Orders are executed via the Alpaca API. Past performance does not guarantee future results.
-  </div>
-</div>
-
-<!-- Confirmation Modal -->
-<div id="alpModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(10,14,39,0.85);z-index:10000;align-items:center;justify-content:center;">
-  <div style="background:var(--card);border:1px solid var(--cyan);border-radius:14px;padding:32px;max-width:500px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
-    <h3 id="alpModalTitle" style="color:var(--cyan);margin-bottom:16px;font-size:1.3em;">Confirm Action</h3>
-    <p id="alpModalBody" style="color:var(--text-dim);line-height:1.6;margin-bottom:24px;"></p>
-    <div style="display:flex;gap:12px;justify-content:flex-end;">
-      <button class="filter-btn" style="padding:10px 20px;" onclick="alpModalCancel()">Cancel</button>
-      <button id="alpModalConfirmBtn" class="filter-btn" style="padding:10px 20px;background:rgba(57,255,20,0.15);color:var(--lime);border-color:var(--lime);font-weight:600;">Confirm</button>
-    </div>
-  </div>
 </div>"""
 
     # ── PAGE: ALPACA LIVE ────────────────────────────────────────────────
@@ -1285,6 +1125,15 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <tbody id="perfSymbolBody"></tbody>
     </table></div>
   </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Seed Performance Charts</div><div class="section-sub">Visual baseline from seed evaluations. Not from real paper trades.</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div class="chart-box"><h3>P&amp;L by Strategy</h3><canvas id="pnlChart"></canvas></div>
+      <div class="chart-box"><h3>Win Rate</h3><canvas id="winrateChart"></canvas></div>
+      <div class="chart-box"><h3>Risk vs Return</h3><canvas id="riskreturnChart"></canvas></div>
+      <div class="chart-box"><h3>Top Strategy Radar</h3><canvas id="radarChart"></canvas></div>
+    </div>
+  </div>
 </div>"""
 
     # ── PAGE: LEARNING ENGINE ────────────────────────────────────────────
@@ -1344,6 +1193,13 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="section-header"><div><div class="section-title">Seed Baseline</div><div class="section-sub">Initial ranking only. Never treat this as real trading performance.</div></div></div>
     <div class="table-wrap"><table class="data-table compact"><thead><tr><th>Bot</th><th class="num">Real Score</th><th class="num">Closed</th><th class="num">Win Rate</th><th class="num">Avg P&L</th><th class="num">Seed Fit</th></tr></thead><tbody>{rows}</tbody></table></div>
   </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Seed Adaptation Charts</div><div class="section-sub">Visual baseline from seed adaptation scores.</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div class="chart-box"><h3>Adaptation Scores</h3><canvas id="adaptationChart"></canvas></div>
+      <div class="chart-box"><h3>Adaptation vs Win Rate</h3><canvas id="adaptWinrateChart"></canvas></div>
+    </div>
+  </div>
 </div>"""
 
     # ── PAGE: MARKET REGIME ──────────────────────────────────────────────
@@ -1379,6 +1235,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   </div>
   <div class="cards-row">
     <div class="card"><div class="card-label">Live Regimes</div><div class="card-value" id="regimeLiveCount" style="font-size:1.2em;" data-fontsize="1.2em">—</div><div class="card-sub">Symbols classified</div></div>
+    <div class="card"><div class="card-label">Sideways</div><div class="card-value" id="regimeSideways" style="font-size:1.2em;color:var(--cyan);" data-fontsize="1.2em">—</div><div class="card-sub">Normal / neutral regime</div></div>
     <div class="card"><div class="card-label">Trending</div><div class="card-value" id="regimeTrending" style="font-size:1.2em;color:var(--lime);" data-fontsize="1.2em">—</div><div class="card-sub">Trend-friendly symbols</div></div>
     <div class="card"><div class="card-label">Choppy / Range</div><div class="card-value" id="regimeChoppy" style="font-size:1.2em;color:var(--amber);" data-fontsize="1.2em">—</div><div class="card-sub">Avoid trend entries or use range logic</div></div>
     <div class="card"><div class="card-label">High Vol Risk</div><div class="card-value" id="regimeHighVol" style="font-size:1.2em;color:var(--red);" data-fontsize="1.2em">—</div><div class="card-sub">Needs smaller size or no-trade gate</div></div>
@@ -1398,6 +1255,13 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
       <div class="card"><div class="card-label">Trend Direction</div><div class="card-value" style="font-size:1.2em;">{trend}</div><div class="card-sub">Generated baseline</div></div>
       <div class="card"><div class="card-label">Autocorrelation</div><div class="card-value" style="font-size:1.2em;">{autocorr}</div><div class="card-sub">Generated baseline</div></div>
       <div class="card"><div class="card-label">Vol Ratio</div><div class="card-value" style="font-size:1.2em;">{vol_ratio}</div><div class="card-sub">Generated baseline</div></div>
+    </div>
+  </div>
+  <div class="section-card">
+    <div class="section-header"><div><div class="section-title">Seed Regime Charts</div><div class="section-sub">Visual baseline from seed regime analysis.</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div class="chart-box"><h3>Regime Performance</h3><canvas id="regimeChart"></canvas></div>
+      <div class="chart-box"><h3>Confidence Radar</h3><canvas id="confidenceChart"></canvas></div>
     </div>
   </div>
 </div>"""
@@ -1861,6 +1725,21 @@ async function loadOverviewAccount(opts) {{
 }}
 loadOverviewAccount({{forceAccount:true}});
 
+// ── Overview: live regime from CEO desk state ───────────────────
+async function loadOverviewRegime() {{
+  try {{
+    var desk = await apiGet('/api/trading-desk/state').catch(function() {{ return {{}}; }});
+    var ceo = (desk && desk.ceo) || {{}};
+    if (ceo) {{
+      var regimeText = (ceo.regime || ceo.market_regime || ceo.direction || '—').replace(/_/g, ' ');
+      regimeText = regimeText.charAt(0).toUpperCase() + regimeText.slice(1);
+      setCardText('ovRegime', regimeText);
+      setCardText('ovRegimeSub', 'Live CEO · ' + (ceo.posture || 'unknown') + ' posture');
+    }}
+  }} catch(e) {{}}
+}}
+loadOverviewRegime();
+
 // ── Portfolio page data from Alpaca ─────────────────────────────
 async function loadPortfolioData(opts) {{
   opts = opts || {{}};
@@ -1900,6 +1779,7 @@ function showPage(name) {{
 function refreshPageData(page) {{
   if (page === 'overview') {{
     loadOverviewAccount();
+    loadOverviewRegime();
     loadLastRefresh();
     calLoadData();
   }} else if (page === 'alpaca-live') {{
@@ -2380,15 +2260,17 @@ async function renderRegimePage(force) {{
   setCardText('regimeCeoRegime', ceo.market_regime ? String(ceo.market_regime).replace(/_/g, ' ').toUpperCase() : '—');
   setCardText('regimeCeoPosture', ceo.posture ? String(ceo.posture).toUpperCase() : '—');
   setCardText('regimeCeoRisk', ceo.risk_multiplier !== undefined ? Number(ceo.risk_multiplier).toFixed(2) + 'x' : '—');
-  var trending = 0, choppy = 0, highVol = 0;
+  var trending = 0, choppy = 0, highVol = 0, sideways = 0;
   symbols.forEach(function(s) {{
     var rg = (s.setup_regime && s.setup_regime.label) || (s.trade_regime && s.trade_regime.label) || 'unknown';
     if (rg.indexOf('trending') >= 0) trending++;
-    if (rg.indexOf('choppy') >= 0 || rg.indexOf('range') >= 0 || rg.indexOf('mean_revert') >= 0) choppy++;
+    else if (rg.indexOf('choppy') >= 0 || rg.indexOf('range') >= 0 || rg.indexOf('mean_revert') >= 0) choppy++;
+    else if (rg.indexOf('sideways') >= 0 || rg.indexOf('normal') >= 0 || rg.indexOf('neutral') >= 0 || rg === 'unknown') sideways++;
     var atr = Number((s.features && s.features.atr_pct_15m) || (s.trade_regime && s.trade_regime.atr_pct) || 0);
     if (rg.indexOf('high_vol') >= 0 || atr >= 8) highVol++;
   }});
   setCardText('regimeLiveCount', String(symbols.length));
+  setCardText('regimeSideways', String(sideways));
   setCardText('regimeTrending', String(trending));
   setCardText('regimeChoppy', String(choppy));
   setCardText('regimeHighVol', String(highVol));
