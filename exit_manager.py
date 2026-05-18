@@ -158,12 +158,13 @@ class ExitManager:
 
         # For partial profit events, the entry_state should reflect only the
         # half being sold so P&L is computed correctly.
+        # NOTE: state is a direct reference to the risk book dict, and
+        # update_fields() above already halved entry_notional in-place.
+        # So state.entry_notional is ALREADY the half-position cost —
+        # do NOT halve it again (that caused a double-halving bug where
+        # entry_notional became 1/4 of original, inflating P&L reports).
         if partial:
-            partial_entry_state = dict(state)
-            partial_entry_state["entry_notional"] = round(
-                _safe_float(state.get("entry_notional")) * 0.50, 2
-            )
-            event_entry_state = partial_entry_state
+            event_entry_state = dict(state)
         else:
             event_entry_state = state
 
