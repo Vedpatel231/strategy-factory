@@ -569,7 +569,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     <div class="card">
       <div class="card-label">Equity</div>
       <div id="ovEquity" class="card-value">$—</div>
-      <div class="card-sub">Cash + positions market value</div>
+      <div class="card-sub">Alpaca account equity</div>
     </div>
     <div class="card">
       <div class="card-label">Today's P&L</div>
@@ -756,7 +756,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   <!-- Account Summary (hidden until connected) -->
   <div id="alpLiveAccountSection" style="display:none;">
     <div class="metric-grid">
-      <div class="metric-card"><div class="metric-label">Equity</div><div id="alpLiveEquity" class="metric-value">—</div><div class="metric-sub">Cash plus live positions</div></div>
+      <div class="metric-card"><div class="metric-label">Equity</div><div id="alpLiveEquity" class="metric-value">—</div><div class="metric-sub">Alpaca account equity</div></div>
       <div class="metric-card"><div class="metric-label">Cash / Buying Power</div><div id="alpLiveCash" class="metric-value">—</div><div class="metric-sub">Available to deploy</div></div>
       <div class="metric-card"><div class="metric-label">Today's P&L</div><div id="alpLivePL" class="metric-value">—</div><div class="metric-sub">Live equity vs last close</div></div>
       <div class="metric-card"><div class="metric-label">Account</div><div id="alpLiveAccNum" class="metric-value" style="font-size:1.05em;" data-fontsize="1.05em">—</div><div class="metric-sub">Paper trading</div></div>
@@ -1592,17 +1592,24 @@ function liveAccountMetrics(acct, pd) {{
   var s = pd.summary || {{}};
   var cash = Number(acct.buying_power !== undefined ? acct.buying_power : acct.cash || 0);
   var positionValue = Number(s.total_market_value || 0);
-  var liveEquity = positionValue > 0 ? cash + positionValue : Number(acct.equity || cash);
+  // Always prefer Alpaca's reported equity — it uses authoritative pricing.
+  // Live-quote equity can be wildly wrong pre-market due to stale IEX data.
+  var alpacaEquity = Number(acct.equity || 0);
+  var liveEquity = alpacaEquity > 0 ? alpacaEquity : (positionValue > 0 ? cash + positionValue : cash);
   var lastEquity = Number(acct.last_equity || liveEquity);
-  var dayPL = liveEquity - lastEquity;
+  // Use Alpaca's total_pl if available — otherwise compute from equity delta.
+  var dayPL = (acct.total_pl !== undefined && acct.total_pl !== null) ? Number(acct.total_pl) : (liveEquity - lastEquity);
   var dayPLPct = lastEquity > 0 ? dayPL / lastEquity * 100 : 0;
+  // Use Alpaca's unrealized P&L from positions when available, otherwise
+  // fall back to live-quote computed value.
+  var alpacaOpenPL = Number(s.total_unrealized_pl || 0);
   return {{
     cash: cash,
     liveEquity: liveEquity,
     lastEquity: lastEquity,
     dayPL: dayPL,
     dayPLPct: dayPLPct,
-    openPL: Number(s.total_unrealized_pl || 0),
+    openPL: alpacaOpenPL,
     openValue: positionValue,
     count: Number(s.count || (pd.positions || []).length || 0),
   }};
@@ -1675,7 +1682,7 @@ function applyLiveSnapshotToOverview(acct, pd) {{
   setCardText('ovTotalPL', (m.dayPL >= 0 ? '+' : '') + money(m.dayPL), plColor);
   var plSub = document.getElementById('ovTotalPLsub');
   if (plSub) {{
-    plSub.textContent = (m.dayPLPct >= 0 ? '+' : '') + m.dayPLPct.toFixed(2) + '% today · live quotes';
+    plSub.textContent = (m.dayPLPct >= 0 ? '+' : '') + m.dayPLPct.toFixed(2) + '% today · Alpaca';
     plSub.style.color = plColor;
   }}
   renderOverviewPositions(pd.positions || []);
@@ -1690,7 +1697,7 @@ function applyLiveSnapshotToPortfolio(acct, pd) {{
   setCardText('pfDayPL', (m.dayPL >= 0 ? '+' : '') + money(m.dayPL), m.dayPL >= 0 ? 'var(--lime)' : 'var(--red)');
   var plSub = document.getElementById('pfPLsub');
   if (plSub) {{
-    plSub.textContent = (m.dayPL >= 0 ? '+' : '') + money(m.dayPL) + ' (' + (m.dayPLPct >= 0 ? '+' : '') + m.dayPLPct.toFixed(2) + '%) today · live quotes';
+    plSub.textContent = (m.dayPL >= 0 ? '+' : '') + money(m.dayPL) + ' (' + (m.dayPLPct >= 0 ? '+' : '') + m.dayPLPct.toFixed(2) + '%) today · Alpaca';
     plSub.style.color = m.dayPL >= 0 ? 'var(--lime)' : 'var(--red)';
   }}
   renderPortfolioPositions(pd.positions || []);

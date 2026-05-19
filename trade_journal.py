@@ -375,7 +375,7 @@ def load_trade_ledger(limit=500):
     return rows
 
 
-def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None):
+def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None, since="2026-05-05"):
     """
     Return fee-aware realized and open-trade performance.
 
@@ -411,6 +411,12 @@ def summarize_fee_analysis(limit=2000, open_positions=None, risk_state=None):
 
         if event_type != "position_closed":
             continue
+
+        # Skip corrupted pre-reset trades if a since filter is set
+        if since:
+            event_ts = (event.get("timestamp") or "")[:10]
+            if event_ts and event_ts < since:
+                continue
 
         entry = event.get("entry_state") or fallback_entries.get(symbol) or {}
         order = event.get("order") or {}

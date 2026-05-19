@@ -209,8 +209,16 @@ class AlpacaPaperClient:
             price_source = "alpaca_position"
             live_price = live_price_map.get(symbol)
             if live_price and live_price > 0:
-                current_price = live_price
-                price_source = "alpaca_live_quote"
+                # Sanity check: reject IEX quotes that differ by >5% from
+                # Alpaca's position price — likely stale pre-market data.
+                alpaca_price = current_price
+                pct_diff = abs(live_price - alpaca_price) / alpaca_price * 100 if alpaca_price > 0 else 0
+                if pct_diff <= 5.0:
+                    current_price = live_price
+                    price_source = "alpaca_live_quote"
+                else:
+                    logger.info(f"{symbol}: IEX quote ${live_price:.2f} rejected — "
+                                f"{pct_diff:.1f}% off Alpaca price ${alpaca_price:.2f}")
 
             if price_source == "alpaca_live_quote":
                 market_value = qty * current_price

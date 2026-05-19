@@ -925,9 +925,11 @@ def alpaca_fee_analysis():
                 positions = client.get_positions(live_prices=live_prices)
         except Exception:
             positions = []
+        since = request.args.get("since", "2026-05-05")
         analysis = summarize_fee_analysis(
             open_positions=positions,
             risk_state=load_position_risk_state(),
+            since=since,
         )
         try:
             rebuild_trade_ledger_from_journal()
@@ -957,7 +959,12 @@ def alpaca_trade_ledger():
                     rebuild_trade_ledger_from_journal()
                     _ledger_rebuild_cache["ts"] = _time.time()
         limit = int(request.args.get("limit", 500))
+        # Allow ?since=YYYY-MM-DD to exclude corrupted pre-reset trades.
+        # Default: exclude trades before 2026-05-05 (system was reset then).
+        since = request.args.get("since", "2026-05-05")
         rows = load_trade_ledger(limit=limit)
+        if since:
+            rows = [r for r in rows if (r.get("closed_at") or r.get("opened_at") or "") >= since]
         net_values = []
         for row in rows:
             try:
