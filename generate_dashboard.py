@@ -3255,7 +3255,7 @@ var calYear = new Date().getFullYear();
 var calMonth = new Date().getMonth(); // 0-indexed
 
 async function calLoadData() {{
-  // Load P&L snapshots
+  // Load Alpaca equity snapshots (fallback for non-trade days)
   try {{
     if (await isAlpacaConfigured()) {{
       var json = await apiGet('/api/alpaca/daily-pnl');
@@ -3271,22 +3271,20 @@ async function calLoadData() {{
       calData = {{}};
     }}
   }}
-  // Load trade journal for per-day trade counts
+  // Load trade ledger for per-day realized P&L (primary source)
   try {{
-    var journal = await apiGet('/api/trade-journal?limit=2000');
-    var events = journal.events || [];
+    var ledger = await apiGet('/api/alpaca/trade-ledger?limit=2000');
+    var rows = ledger.rows || [];
     calTradeData = {{}};
-    events.forEach(function(ev) {{
-      if (ev.event === 'position_closed') {{
-        var ts = ev.timestamp || '';
-        var dateKey = ts.substring(0, 10);
-        if (!dateKey) return;
-        if (!calTradeData[dateKey]) calTradeData[dateKey] = {{ count: 0, wins: 0 }};
-        calTradeData[dateKey].count++;
-        var plPct = Number(ev.unrealized_pl_pct || ev.net_pl_pct || 0);
-        var pl = Number(ev.net_pl || ev.realized_pl || 0);
-        if (plPct > 0 || pl > 0) calTradeData[dateKey].wins++;
-      }}
+    rows.forEach(function(row) {{
+      var closedAt = row.closed_at || row.opened_at || '';
+      var dateKey = closedAt.substring(0, 10);
+      if (!dateKey) return;
+      if (!calTradeData[dateKey]) calTradeData[dateKey] = {{ count: 0, wins: 0, totalPL: 0 }};
+      calTradeData[dateKey].count++;
+      var pl = Number(row.net_pl || 0);
+      calTradeData[dateKey].totalPL += pl;
+      if (pl > 0) calTradeData[dateKey].wins++;
     }});
   }} catch (e3) {{
     calTradeData = {{}};
@@ -3342,13 +3340,47 @@ function calRender() {{
   var today = new Date();
   var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
 
+  // Build daily P&L from trade ledger (primary) + Alpaca snapshots (fallback)
   var sortedDates = Object.keys(calData).sort();
   var dailyChanges = {{}};
+  // First, add Alpaca snapshot data as fallback
   for (var i = 0; i < sortedDates.length; i++) {{
     var d = sortedDates[i];
     var snap = calData[d];
     var prevSnap = i > 0 ? calData[sortedDates[i-1]] : null;
     dailyChanges[d] = calExtractChange(snap, prevSnap);
+    dailyChanges[d].source = 'snapshot';
+  }}
+  // Override with trade ledger realized P&L for days that have trades
+  // For days without a snapshot (weekends), use closest prior equity
+  if (calTradeData) {{
+    var lastKnownEquity = 0;
+    if (sortedDates.length > 0) {{
+      var lastSnap = calData[sortedDates[sortedDates.length - 1]];
+      lastKnownEquity = Number((lastSnap && lastSnap.equity) || 0);
+    }}
+    Object.keys(calTradeData).forEach(function(dateKey) {{
+      var td = calTradeData[dateKey];
+      if (td.count > 0) {{
+        var snapEquity = dailyChanges[dateKey] ? dailyChanges[dateKey].equity : 0;
+        // For weekend/non-market days, find closest prior snapshot equity
+        if (snapEquity === 0) {{
+          for (var si = sortedDates.length - 1; si >= 0; si--) {{
+            if (sortedDates[si] < dateKey) {{
+              snapEquity = Number((calData[sortedDates[si]] && calData[sortedDates[si]].equity) || 0);
+              break;
+            }}
+          }}
+          if (snapEquity === 0) snapEquity = lastKnownEquity;
+        }}
+        dailyChanges[dateKey] = {{
+          pnl: td.totalPL,
+          pct: snapEquity > 0 ? (td.totalPL / snapEquity * 100) : 0,
+          equity: snapEquity,
+          source: 'trades'
+        }};
+      }}
+    }});
   }}
 
   for (var e = 0; e < firstDay; e++) {{
