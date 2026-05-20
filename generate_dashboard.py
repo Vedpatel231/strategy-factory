@@ -3602,10 +3602,22 @@ function alpLiveUpdateAccount(acct) {{
 }}
 
 var _alpLivePositionsInFlight = false;
-var _alpFeeConfig = {{maker_bps:15, taker_bps:25, default_order_type:'taker'}};
+var _alpFeeConfig = {{maker_bps:15, taker_bps:25, stock_slippage_bps:1, default_order_type:'taker'}};
 
-function alpFeeEstimate(notional) {{
-  var bps = (_alpFeeConfig.default_order_type || 'taker') === 'maker' ? Number(_alpFeeConfig.maker_bps || 15) : Number(_alpFeeConfig.taker_bps || 25);
+function alpIsStock(symbol) {{
+  // Crypto symbols contain / or end with USD (BTCUSD, ETH/USD, etc.)
+  if (!symbol) return true; // default to stock (lower fees)
+  var s = String(symbol).toUpperCase();
+  return s.indexOf('/') === -1 && !s.match(/USD$/) && !s.match(/USDT$/);
+}}
+
+function alpFeeEstimate(notional, symbol) {{
+  var bps;
+  if (alpIsStock(symbol)) {{
+    bps = Number(_alpFeeConfig.stock_slippage_bps || 1);
+  }} else {{
+    bps = (_alpFeeConfig.default_order_type || 'taker') === 'maker' ? Number(_alpFeeConfig.maker_bps || 15) : Number(_alpFeeConfig.taker_bps || 25);
+  }}
   return Number(notional || 0) * bps / 10000;
 }}
 
@@ -3638,7 +3650,7 @@ function alpLiveRenderOpenFeePreview(positions, riskMap) {{
     var entryPrice = Number(p.avg_entry_price || 0);
     var markPrice = Number(p.current_price || 0);
     var gross = markNotional - entryNotional;
-    var fees = alpFeeEstimate(entryNotional) + alpFeeEstimate(markNotional);
+    var fees = alpFeeEstimate(entryNotional, sym) + alpFeeEstimate(markNotional, sym);
     var net = gross - fees;
     totalNet += net;
     totalFees += fees;
