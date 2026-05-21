@@ -995,8 +995,14 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
     </div>
     <div id="scoreRealEmpty" class="read-only-note">No closed Alpaca paper trades yet. Seed scorecard remains visible below, but it is not proof of live edge.</div>
     <div id="scoreRealTable" class="table-wrap" style="display:none;"><table class="data-table compact">
-      <thead><tr><th>Strategy</th><th class="num">Closed</th><th class="num">Net P&L</th><th class="num">Win Rate</th><th class="num">Avg Net</th><th>Action</th><th>Evidence</th></tr></thead>
+      <thead><tr><th>Strategy</th><th class="num">Closed</th><th class="num">Net P&L</th><th class="num">Win %</th><th class="num">Avg Net</th><th class="num">PF</th><th class="num">Avg Win</th><th class="num">Avg Loss</th><th class="num">Max DD</th><th class="num">Lose Streak</th><th>Best Asset</th><th>Action</th></tr></thead>
       <tbody id="scoreRealBody"></tbody>
+    </table></div>
+    <h3 style="margin:1.5rem 0 0.5rem;color:var(--text-primary,#e8e8e8);">Strategy × Asset Breakdown</h3>
+    <div id="scoreAssetEmpty" class="read-only-note">Waiting for trade data…</div>
+    <div id="scoreAssetTable" class="table-wrap" style="display:none;"><table class="data-table compact">
+      <thead><tr><th>Strategy</th><th>Asset</th><th class="num">Trades</th><th class="num">Net P&L</th><th class="num">Win %</th><th class="num">Avg Net</th></tr></thead>
+      <tbody id="scoreAssetBody"></tbody>
     </table></div>
   </div>
   <div class="filter-buttons">
@@ -2001,16 +2007,38 @@ function groupLedger(rows, key) {{
   var out = {{}};
   (rows || []).forEach(function(r) {{
     var k = r[key] || 'unknown';
-    if (!out[k]) out[k] = {{key:k, trades:0, wins:0, losses:0, net:0, fees:0}};
+    if (!out[k]) out[k] = {{key:k, trades:0, wins:0, losses:0, net:0, fees:0, gross:0, grossWins:0, grossLosses:0, avgWin:0, avgLoss:0, profitFactor:0, maxDD:0, runningPL:0, peakPL:0, exitTypes:{{}}, assets:{{}}, bestTrade:0, worstTrade:0, streak:0, maxLoseStreak:0, curLoseStreak:0}};
     var row = out[k];
     var net = Number(r.net_pl || 0);
+    var gross = Number(r.gross_pl || net);
     row.trades += 1;
     row.net += net;
+    row.gross += gross;
     row.fees += Number(r.total_fees || 0);
-    if (net > 0) row.wins += 1;
-    if (net < 0) row.losses += 1;
+    if (net > 0) {{ row.wins += 1; row.grossWins += net; row.curLoseStreak = 0; }}
+    if (net < 0) {{ row.losses += 1; row.grossLosses += Math.abs(net); row.curLoseStreak += 1; if (row.curLoseStreak > row.maxLoseStreak) row.maxLoseStreak = row.curLoseStreak; }}
+    if (net > row.bestTrade) row.bestTrade = net;
+    if (net < row.worstTrade) row.worstTrade = net;
+    row.runningPL += net;
+    if (row.runningPL > row.peakPL) row.peakPL = row.runningPL;
+    var dd = row.peakPL - row.runningPL;
+    if (dd > row.maxDD) row.maxDD = dd;
+    var exit = r.exit_type || r.exit_reason || 'unknown';
+    row.exitTypes[exit] = (row.exitTypes[exit] || 0) + 1;
+    var asset = r.symbol || 'unknown';
+    if (!row.assets[asset]) row.assets[asset] = 0;
+    row.assets[asset] += net;
   }});
-  return Object.values(out).sort(function(a,b) {{ return b.net - a.net; }});
+  var result = Object.values(out);
+  result.forEach(function(g) {{
+    g.avgWin = g.wins ? g.grossWins / g.wins : 0;
+    g.avgLoss = g.losses ? g.grossLosses / g.losses : 0;
+    g.profitFactor = g.grossLosses > 0 ? g.grossWins / g.grossLosses : (g.grossWins > 0 ? 99 : 0);
+    var assetEntries = Object.entries(g.assets).sort(function(a,b) {{ return b[1] - a[1]; }});
+    g.bestAsset = assetEntries.length ? assetEntries[0] : ['—', 0];
+    g.worstAsset = assetEntries.length ? assetEntries[assetEntries.length - 1] : ['—', 0];
+  }});
+  return result.sort(function(a,b) {{ return b.net - a.net; }});
 }}
 
 function actionForGroup(g) {{
@@ -2047,21 +2075,55 @@ async function renderStrategyScorecard(force) {{
   var best = groups[0];
   setCardText('scoreBestStrategy', best.key || 'unknown');
   var bestSub = document.getElementById('scoreBestStrategySub');
-  if (bestSub) bestSub.textContent = signedMoney(best.net) + ' net after fees';
+  if (bestSub) bestSub.textContent = signedMoney(best.net) + ' net · PF ' + best.profitFactor.toFixed(2);
   body.innerHTML = groups.map(function(g) {{
     var wr = g.trades ? g.wins / g.trades * 100 : 0;
     var avg = g.trades ? g.net / g.trades : 0;
     var a = actionForGroup(g);
+    var pfColor = g.profitFactor >= 1.5 ? 'var(--green)' : (g.profitFactor >= 1.0 ? 'var(--amber,orange)' : 'var(--red)');
     return '<tr>' +
       '<td><strong>' + escHtml(g.key) + '</strong></td>' +
       '<td class="num">' + g.trades + '</td>' +
       '<td class="num" style="color:' + plColor(g.net) + ';font-weight:800;">' + signedMoney(g.net) + '</td>' +
       '<td class="num">' + pct(wr) + '</td>' +
       '<td class="num" style="color:' + plColor(avg) + ';">' + signedMoney(avg) + '</td>' +
+      '<td class="num" style="color:' + pfColor + ';font-weight:700;">' + g.profitFactor.toFixed(2) + '</td>' +
+      '<td class="num" style="color:var(--green);">' + signedMoney(g.avgWin) + '</td>' +
+      '<td class="num" style="color:var(--red);">' + signedMoney(-g.avgLoss) + '</td>' +
+      '<td class="num" style="color:var(--red);">' + signedMoney(-g.maxDD) + '</td>' +
+      '<td class="num">' + g.maxLoseStreak + '</td>' +
+      '<td>' + escHtml(g.bestAsset[0]) + ' <span style="color:' + plColor(g.bestAsset[1]) + ';">' + signedMoney(g.bestAsset[1]) + '</span></td>' +
       '<td><span class="status-pill ' + a.cls + '">' + a.label + '</span></td>' +
-      '<td>' + escHtml(a.reason) + '</td>' +
       '</tr>';
   }}).join('');
+  // Strategy × Asset breakdown
+  var assetBody = document.getElementById('scoreAssetBody');
+  var assetTable = document.getElementById('scoreAssetTable');
+  var assetEmpty = document.getElementById('scoreAssetEmpty');
+  if (assetBody && assetTable && assetEmpty) {{
+    var pairs = {{}};
+    (rows || []).forEach(function(r) {{
+      var sk = (r.strategy || 'unknown') + '|' + (r.symbol || 'unknown');
+      if (!pairs[sk]) pairs[sk] = {{strategy: r.strategy || 'unknown', symbol: r.symbol || 'unknown', trades:0, wins:0, net:0}};
+      var p = pairs[sk];
+      var net = Number(r.net_pl || 0);
+      p.trades += 1; p.net += net; if (net > 0) p.wins += 1;
+    }});
+    var pairList = Object.values(pairs).sort(function(a,b) {{ return b.net - a.net; }});
+    if (pairList.length) {{
+      assetEmpty.style.display = 'none';
+      assetTable.style.display = 'block';
+      assetBody.innerHTML = pairList.map(function(p) {{
+        var wr = p.trades ? p.wins / p.trades * 100 : 0;
+        var avg = p.trades ? p.net / p.trades : 0;
+        return '<tr><td>' + escHtml(p.strategy) + '</td><td>' + escHtml(p.symbol) + '</td>' +
+          '<td class="num">' + p.trades + '</td>' +
+          '<td class="num" style="color:' + plColor(p.net) + ';font-weight:700;">' + signedMoney(p.net) + '</td>' +
+          '<td class="num">' + pct(wr) + '</td>' +
+          '<td class="num" style="color:' + plColor(avg) + ';">' + signedMoney(avg) + '</td></tr>';
+      }}).join('');
+    }}
+  }}
 }}
 
 async function renderSignalBoard(force) {{

@@ -375,7 +375,7 @@ class TrendPullbackStrategy(BaseProfessionalStrategy):
                 f, conf,
                 f"Trend pullback confirmed: price reclaimed EMA20/EMA50 zone, RSI {f.rsi_value:.1f}, ADX {f.adx_value:.1f}.",
                 "Close below EMA50 or loss of pullback low.",
-                stop_mult=2.0, tp_mult=3.2, partial_mult=1.5, trail_mult=2.0,
+                stop_mult=2.0, tp_mult=2.5, partial_mult=1.3, trail_mult=1.8,
             )
         blockers = []
         if not trend_ok:
@@ -403,19 +403,20 @@ class EMACrossoverStrategy(BaseProfessionalStrategy):
         slow = f.ema21[-1]
         ema50 = f.ema50[-1]
         bullish_stack = fast > slow and f.close > ema50
-        recent_cross = _crossed_above(f.ema9, f.ema21, lookback=6)
+        recent_cross = _crossed_above(f.ema9, f.ema21, lookback=3)
         # REQUIRE a fresh cross — just having EMAs stacked is not a signal.
         # ADX confirms trend strength but cannot substitute for the actual cross event.
-        if bullish_stack and recent_cross and f.adx_value >= 18:
+        # Tightened: ADX >= 25 (was 18) and lookback=3 (was 6) to filter weak/stale crosses
+        if bullish_stack and recent_cross and f.adx_value >= 25:
             sep = (fast - slow) / slow * 100 if slow else 0.0
-            conf = 0.52 + min(0.15, sep * 0.08) + min(0.14, max(0, f.adx_value - 18) / 100)
+            conf = 0.52 + min(0.15, sep * 0.08) + min(0.14, max(0, f.adx_value - 25) / 100)
             if f.htf_bullish is True:
                 conf += 0.06
             return self._buy(
                 f, conf,
                 f"EMA crossover confirmed: EMA9 {fast:.2f} crossed above EMA21 {slow:.2f}, price above EMA50, ADX {f.adx_value:.1f}.",
                 "EMA9 crosses back below EMA21 or price loses EMA50.",
-                stop_mult=2.0, tp_mult=3.2, partial_mult=1.5, trail_mult=2.0,
+                stop_mult=2.0, tp_mult=2.5, partial_mult=1.3, trail_mult=1.8,
             )
         return self._hold(
             f,
@@ -450,7 +451,7 @@ class MACDMomentumStrategy(BaseProfessionalStrategy):
                 f, conf,
                 f"MACD fresh momentum: MACD {macd_now:.4f} > signal {signal_now:.4f}, histogram freshly positive and rising, close above EMA20.",
                 "MACD histogram turns negative or price closes below EMA20.",
-                stop_mult=2.0, tp_mult=3.2, partial_mult=1.5, trail_mult=2.0,
+                stop_mult=2.0, tp_mult=2.5, partial_mult=1.3, trail_mult=1.8,
             )
         return self._hold(
             f,
@@ -483,7 +484,7 @@ class RSIMeanReversionStrategy(BaseProfessionalStrategy):
                 f, conf,
                 f"RSI reversion setup: RSI washed out to {min_rsi:.1f} and is recovering to {f.rsi_value:.1f}.",
                 "RSI rolls back under the oversold low or price closes below recent swing low.",
-                stop_mult=2.0, tp_mult=2.8, partial_mult=1.4, trail_mult=1.8,
+                stop_mult=2.0, tp_mult=2.2, partial_mult=1.2, trail_mult=1.6,
             )
         return self._hold(
             f,
@@ -511,7 +512,7 @@ class BollingerBandReversionStrategy(BaseProfessionalStrategy):
                 f, conf,
                 f"Bollinger reversion: price tagged lower band {lower:.2f}, RSI {f.rsi_value:.1f}, band width {band_width:.2f}%.",
                 "Close below lower band continuation or failure to reclaim band midline.",
-                stop_mult=2.0, tp_mult=2.8, partial_mult=1.4, trail_mult=1.8,
+                stop_mult=2.0, tp_mult=2.2, partial_mult=1.2, trail_mult=1.6,
             )
         return self._hold(
             f,
@@ -541,7 +542,7 @@ class BreakoutRetestStrategy(BaseProfessionalStrategy):
             level = max(lookback_highs)
         broke_recently = any(c > level for c in f.closes[-4:])
         retested = f.low <= level * 1.006 and f.close >= level
-        if broke_recently and retested and f.volume_ratio >= 1.0:
+        if broke_recently and retested and f.volume_ratio >= 1.2 and f.adx_value >= 22:
             conf = 0.53 + min(0.14, max(0, f.volume_ratio - 1) * 0.10) + min(0.11, max(0, f.adx_value - 18) / 100)
             if f.htf_bullish is True:
                 conf += 0.06
@@ -567,8 +568,8 @@ class DonchianChannelBreakoutStrategy(BaseProfessionalStrategy):
         if not f.enough:
             return self._insufficient(f)
         upper = f.donchian_high20[-2] if len(f.donchian_high20) >= 2 else f.donchian_high20[-1]
-        if f.close > upper and f.plus_di14[-1] > f.minus_di14[-1] and f.atr_pct >= 0.25 and f.adx_value >= 20:
-            conf = 0.54 + min(0.15, max(0, f.adx_value - 20) / 80) + min(0.10, max(0, f.volume_ratio - 1) * 0.08)
+        if f.close > upper and f.plus_di14[-1] > f.minus_di14[-1] and f.atr_pct >= 0.25 and f.adx_value >= 25:
+            conf = 0.54 + min(0.15, max(0, f.adx_value - 25) / 80) + min(0.10, max(0, f.volume_ratio - 1) * 0.08)
             return self._buy(
                 f, conf,
                 f"Donchian breakout: close {f.close:.2f} cleared 20-bar high {upper:.2f}, +DI leads -DI, ADX {f.adx_value:.1f}.",
@@ -599,7 +600,7 @@ class VWAPBounceStrategy(BaseProfessionalStrategy):
                 f, conf,
                 f"VWAP bounce: price tested VWAP {vwap:.2f}, closed above it with volume {f.volume_ratio:.2f}x.",
                 "Close below rolling VWAP after entry.",
-                stop_mult=2.0, tp_mult=2.8, partial_mult=1.4, trail_mult=1.8,
+                stop_mult=1.8, tp_mult=2.0, partial_mult=1.2, trail_mult=1.5,
             )
         return self._hold(
             f,
