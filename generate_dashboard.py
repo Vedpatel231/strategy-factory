@@ -961,6 +961,15 @@ refreshData('overview');
 </html>"""
 
 
+    def save(self, html, path=None):
+        """Write HTML to disk and return the output path."""
+        out = path or DASHBOARD_OUTPUT
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(html)
+        return out
+
+
 # ── Standalone mock data for testing ──────────────────────────────────
 def generate_mock_data(n=10):
     """Generate mock data for preview/testing."""
