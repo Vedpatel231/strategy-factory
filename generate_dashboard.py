@@ -189,6 +189,38 @@ tr:hover td{{background:var(--bg-hover)}}
 
 /* ── COPY BUTTON ── */
 .copy-area{{background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:16px;font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow-y:auto;color:var(--text-secondary)}}
+
+/* ── P&L CALENDAR ── */
+.pnl-calendar{{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:20px}}
+.cal-stats-bar{{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)}}
+.cal-stat-box{{text-align:center}}
+.cal-stat-value{{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--blue)}}
+.cal-stat-label{{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px;font-weight:600}}
+.pnl-calendar-header{{display:flex;justify-content:center;align-items:center;margin-bottom:14px}}
+.pnl-calendar-nav{{display:flex;align-items:center;gap:14px}}
+.pnl-calendar-nav button{{background:transparent;border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;color:var(--text-muted);font-size:13px;font-weight:600;transition:all .15s}}
+.pnl-calendar-nav button:hover{{border-color:var(--blue);color:var(--blue)}}
+.cal-month-label{{font-size:15px;font-weight:700;color:var(--text-primary);min-width:160px;text-align:center}}
+.pnl-calendar-grid{{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}}
+.pnl-cal-dayheader{{text-align:center;font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;padding:6px 0;font-weight:600}}
+.pnl-cal-cell{{background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:8px 4px 6px;min-height:68px;text-align:center;transition:all .15s;position:relative}}
+.pnl-cal-cell:hover{{border-color:var(--blue);background:var(--bg-hover)}}
+.pnl-cal-cell.empty{{background:transparent;border-color:transparent;min-height:0}}
+.pnl-cal-cell .cal-day{{font-size:11px;color:var(--text-muted);margin-bottom:4px;font-weight:600}}
+.pnl-cal-cell .cal-pnl-usd{{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}}
+.pnl-cal-cell .cal-pnl-pct{{font-size:10px;font-variant-numeric:tabular-nums;margin-top:2px;opacity:.8}}
+.pnl-cal-cell .cal-trades{{font-size:10px;color:var(--text-muted);margin-top:2px;font-weight:500}}
+.pnl-cal-cell.positive{{background:rgba(34,197,94,.06);border-color:rgba(34,197,94,.2)}}
+.pnl-cal-cell.positive .cal-pnl-usd{{color:var(--green)}}.pnl-cal-cell.positive .cal-pnl-pct{{color:var(--green)}}
+.pnl-cal-cell.negative{{background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2)}}
+.pnl-cal-cell.negative .cal-pnl-usd{{color:var(--red)}}.pnl-cal-cell.negative .cal-pnl-pct{{color:var(--red)}}
+.pnl-cal-cell.zero .cal-pnl-usd{{color:var(--text-muted)}}.pnl-cal-cell.zero .cal-pnl-pct{{color:var(--text-muted)}}
+.pnl-cal-cell.today{{border-color:var(--blue);box-shadow:0 0 8px rgba(59,130,246,.2)}}
+.pnl-cal-summary{{display:flex;gap:20px;margin-top:14px;padding:12px 16px;background:var(--bg-hover);border:1px solid var(--border);border-radius:6px;flex-wrap:wrap}}
+.pnl-cal-summary-item{{display:flex;flex-direction:column;gap:2px}}
+.pnl-cal-summary-label{{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}}
+.pnl-cal-summary-value{{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--blue)}}
+@media(max-width:768px){{.cal-stats-bar{{grid-template-columns:repeat(3,1fr);gap:8px}}.pnl-calendar{{padding:14px}}}}
 </style>
 </head>
 <body>
@@ -274,6 +306,35 @@ tr:hover td{{background:var(--bg-hover)}}
       </table>
     </div>
     <div id="ovOppsEmpty" class="empty-state">No opportunities this cycle</div>
+  </div>
+
+  <div class="section-title">Daily P&L Calendar</div>
+  <div class="pnl-calendar" id="pnlCalendarSection">
+    <div class="cal-stats-bar" id="calStatsBar" style="display:none;">
+      <div class="cal-stat-box"><div class="cal-stat-value" id="calStatPnl">$0.00</div><div class="cal-stat-label">Month P&L</div></div>
+      <div class="cal-stat-box"><div class="cal-stat-value" id="calStatPct">0.00%</div><div class="cal-stat-label">Month %</div></div>
+      <div class="cal-stat-box"><div class="cal-stat-value" id="calStatTrades">0</div><div class="cal-stat-label">Trades</div></div>
+      <div class="cal-stat-box"><div class="cal-stat-value" id="calStatWinRate">—</div><div class="cal-stat-label">Win Rate</div></div>
+      <div class="cal-stat-box"><div class="cal-stat-value" id="calStatGreen">0</div><div class="cal-stat-label">Green Days</div></div>
+      <div class="cal-stat-box"><div class="cal-stat-value" id="calStatRed">0</div><div class="cal-stat-label">Red Days</div></div>
+    </div>
+    <div class="pnl-calendar-header">
+      <div class="pnl-calendar-nav">
+        <button onclick="calPrev()">&#9664;</button>
+        <span class="cal-month-label" id="calMonthLabel">—</span>
+        <button onclick="calNext()">&#9654;</button>
+      </div>
+    </div>
+    <div class="pnl-calendar-grid" id="calGrid">
+      <div class="pnl-cal-dayheader">Sun</div><div class="pnl-cal-dayheader">Mon</div><div class="pnl-cal-dayheader">Tue</div>
+      <div class="pnl-cal-dayheader">Wed</div><div class="pnl-cal-dayheader">Thu</div><div class="pnl-cal-dayheader">Fri</div><div class="pnl-cal-dayheader">Sat</div>
+    </div>
+    <div class="pnl-cal-summary" id="calSummary" style="display:none;">
+      <div class="pnl-cal-summary-item"><span class="pnl-cal-summary-label">Best Day</span><span class="pnl-cal-summary-value" id="calSumBest">—</span></div>
+      <div class="pnl-cal-summary-item"><span class="pnl-cal-summary-label">Worst Day</span><span class="pnl-cal-summary-value" id="calSumWorst">—</span></div>
+      <div class="pnl-cal-summary-item"><span class="pnl-cal-summary-label">Avg Day</span><span class="pnl-cal-summary-value" id="calSumAvg">—</span></div>
+      <div class="pnl-cal-summary-item"><span class="pnl-cal-summary-label">Days Tracked</span><span class="pnl-cal-summary-value" id="calSumDays">—</span></div>
+    </div>
   </div>
 </div>
 
@@ -944,6 +1005,164 @@ async function alpKillAll() {{
   await fetch('/api/alpaca/close-all', {{method:'POST'}});
   setTimeout(function() {{ refreshData('alpaca-live'); }}, 2000);
 }}
+
+/* ══ P&L CALENDAR ══ */
+var calData = {{}};
+var calTradeData = {{}};
+var calYear = new Date().getFullYear();
+var calMonth = new Date().getMonth();
+
+async function calLoadData() {{
+  try {{
+    var json = await fetchJSON('/api/alpaca/daily-pnl');
+    calData = (json && json.snapshots) || {{}};
+  }} catch(e) {{ calData = {{}}; }}
+  try {{
+    var ledger = await fetchJSON('/api/alpaca/trade-ledger?limit=2000');
+    var rows = (ledger && ledger.rows) || [];
+    calTradeData = {{}};
+    rows.forEach(function(row) {{
+      var closedAt = row.closed_at || row.opened_at || '';
+      var dateKey = closedAt.substring(0, 10);
+      if (!dateKey) return;
+      if (!calTradeData[dateKey]) calTradeData[dateKey] = {{ count: 0, wins: 0, totalPL: 0 }};
+      calTradeData[dateKey].count++;
+      var pl = Number(row.net_pl || 0);
+      calTradeData[dateKey].totalPL += pl;
+      if (pl > 0) calTradeData[dateKey].wins++;
+    }});
+  }} catch(e) {{ calTradeData = {{}}; }}
+  calRender();
+}}
+
+function calPrev() {{ calMonth--; if (calMonth < 0) {{ calMonth = 11; calYear--; }} calRender(); }}
+function calNext() {{ calMonth++; if (calMonth > 11) {{ calMonth = 0; calYear++; }} calRender(); }}
+
+function calRender() {{
+  var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  $('calMonthLabel').textContent = monthNames[calMonth] + ' ' + calYear;
+
+  var grid = $('calGrid');
+  var headers = [];
+  for (var h = 0; h < 7 && h < grid.children.length; h++) headers.push(grid.children[h]);
+  grid.innerHTML = '';
+  headers.forEach(function(hdr) {{ grid.appendChild(hdr); }});
+
+  var firstDay = new Date(calYear, calMonth, 1).getDay();
+  var daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  var today = new Date();
+  var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+
+  var sortedDates = Object.keys(calData).sort();
+  var dailyChanges = {{}};
+  for (var i = 0; i < sortedDates.length; i++) {{
+    var d = sortedDates[i];
+    var snap = calData[d];
+    var prevSnap = i > 0 ? calData[sortedDates[i-1]] : null;
+    var prevEq = (prevSnap && prevSnap.equity !== undefined) ? Number(prevSnap.equity || 0) : Number((snap && snap.starting_balance) || 1000);
+    var eq = Number((snap && snap.equity) || 0);
+    var dayPnl = (snap && snap.day_pl !== undefined) ? Number(snap.day_pl) : eq - prevEq;
+    var dayPct = (snap && snap.day_pl_pct !== undefined) ? Number(snap.day_pl_pct) : (prevEq > 0 ? dayPnl / prevEq * 100 : 0);
+    dailyChanges[d] = {{ pnl: dayPnl, pct: dayPct, equity: eq }};
+  }}
+  if (calTradeData) {{
+    var lastKnownEquity = 0;
+    if (sortedDates.length > 0) {{ var ls = calData[sortedDates[sortedDates.length - 1]]; lastKnownEquity = Number((ls && ls.equity) || 0); }}
+    Object.keys(calTradeData).forEach(function(dateKey) {{
+      var td = calTradeData[dateKey];
+      if (td.count > 0) {{
+        var snapEq = dailyChanges[dateKey] ? dailyChanges[dateKey].equity : 0;
+        if (snapEq === 0) {{
+          for (var si = sortedDates.length - 1; si >= 0; si--) {{ if (sortedDates[si] < dateKey) {{ snapEq = Number((calData[sortedDates[si]] && calData[sortedDates[si]].equity) || 0); break; }} }}
+          if (snapEq === 0) snapEq = lastKnownEquity;
+        }}
+        dailyChanges[dateKey] = {{ pnl: td.totalPL, pct: snapEq > 0 ? td.totalPL / snapEq * 100 : 0, equity: snapEq, source: 'trades' }};
+      }}
+    }});
+  }}
+
+  for (var e = 0; e < firstDay; e++) {{ var emp = document.createElement('div'); emp.className = 'pnl-cal-cell empty'; grid.appendChild(emp); }}
+
+  var monthPnl = 0, bestDay = null, worstDay = null, daysTracked = 0, greenDays = 0, redDays = 0;
+  var firstEquity = null, lastEquity = null, totalTrades = 0, winningTrades = 0;
+
+  for (var day = 1; day <= daysInMonth; day++) {{
+    var dateStr = calYear + '-' + String(calMonth+1).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+    var cell = document.createElement('div');
+    cell.className = 'pnl-cal-cell';
+    var dayLabel = document.createElement('div'); dayLabel.className = 'cal-day'; dayLabel.textContent = day; cell.appendChild(dayLabel);
+    if (dateStr === todayStr) cell.classList.add('today');
+
+    var change = dailyChanges[dateStr];
+    if (change) {{
+      daysTracked++;
+      if (firstEquity === null) firstEquity = change.equity - change.pnl;
+      lastEquity = change.equity;
+      monthPnl += change.pnl;
+
+      var dayTrades = (calTradeData && calTradeData[dateStr]) || {{}};
+      var dayTradeCount = dayTrades.count || 0;
+      totalTrades += dayTradeCount;
+      winningTrades += (dayTrades.wins || 0);
+
+      var pnlEl = document.createElement('div'); pnlEl.className = 'cal-pnl-usd';
+      var absPnl = Math.abs(change.pnl);
+      pnlEl.textContent = (change.pnl >= 0 ? '+$' : '-$') + (absPnl >= 1000 ? (absPnl/1000).toFixed(1) + 'K' : absPnl.toFixed(2));
+      cell.appendChild(pnlEl);
+
+      var pctEl = document.createElement('div'); pctEl.className = 'cal-pnl-pct';
+      pctEl.textContent = (change.pct >= 0 ? '+' : '') + change.pct.toFixed(2) + '%';
+      cell.appendChild(pctEl);
+
+      if (dayTradeCount > 0) {{
+        var tradeEl = document.createElement('div'); tradeEl.className = 'cal-trades';
+        tradeEl.textContent = dayTradeCount + ' trade' + (dayTradeCount !== 1 ? 's' : '');
+        cell.appendChild(tradeEl);
+      }}
+
+      if (change.pnl > 0) {{ cell.classList.add('positive'); greenDays++; }}
+      else if (change.pnl < 0) {{ cell.classList.add('negative'); redDays++; }}
+      else cell.classList.add('zero');
+
+      if (bestDay === null || change.pnl > bestDay.pnl) bestDay = {{ pnl: change.pnl, date: dateStr }};
+      if (worstDay === null || change.pnl < worstDay.pnl) worstDay = {{ pnl: change.pnl, date: dateStr }};
+    }}
+    grid.appendChild(cell);
+  }}
+
+  var statsBar = $('calStatsBar');
+  if (daysTracked > 0) {{
+    statsBar.style.display = 'grid';
+    var pnlColor = monthPnl >= 0 ? 'var(--green)' : 'var(--red)';
+    var monthPct = firstEquity > 0 ? monthPnl / firstEquity * 100 : 0;
+    var sp = $('calStatPnl'); sp.textContent = (monthPnl >= 0 ? '+$' : '-$') + (Math.abs(monthPnl) >= 1000 ? (Math.abs(monthPnl)/1000).toFixed(2) + 'K' : Math.abs(monthPnl).toFixed(2)); sp.style.color = pnlColor;
+    var spct = $('calStatPct'); spct.textContent = (monthPct >= 0 ? '+' : '') + monthPct.toFixed(2) + '%'; spct.style.color = pnlColor;
+    $('calStatTrades').textContent = totalTrades;
+    $('calStatWinRate').textContent = totalTrades > 0 ? ((winningTrades / totalTrades) * 100).toFixed(1) + '%' : '—';
+    var ge = $('calStatGreen'); ge.textContent = greenDays; ge.style.color = 'var(--green)';
+    var re = $('calStatRed'); re.textContent = redDays; re.style.color = 'var(--red)';
+  }} else {{ statsBar.style.display = 'none'; }}
+
+  var summaryEl = $('calSummary');
+  if (daysTracked > 0) {{
+    summaryEl.style.display = 'flex';
+    var bestEl = $('calSumBest'); bestEl.textContent = bestDay ? signedMoney(bestDay.pnl) : '—'; bestEl.style.color = bestDay && bestDay.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    var worstEl = $('calSumWorst'); worstEl.textContent = worstDay ? signedMoney(worstDay.pnl) : '—'; worstEl.style.color = worstDay && worstDay.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    var avgDay = monthPnl / daysTracked;
+    var avgEl = $('calSumAvg'); avgEl.textContent = signedMoney(avgDay); avgEl.style.color = avgDay >= 0 ? 'var(--green)' : 'var(--red)';
+    $('calSumDays').textContent = daysTracked;
+  }} else {{
+    summaryEl.style.display = 'none';
+    if (!document.getElementById('calNoDataMsg')) {{
+      var nd = document.createElement('div'); nd.id = 'calNoDataMsg';
+      nd.style.cssText = 'text-align:center;padding:16px;color:var(--text-muted);font-size:13px;margin-top:8px;background:var(--bg-hover);border:1px solid var(--border);border-radius:6px;';
+      nd.textContent = 'No daily P&L data yet. Alpaca needs at least one full trading day to generate history.';
+      var cs = $('pnlCalendarSection'); if (cs) cs.appendChild(nd);
+    }}
+  }}
+}}
+
+calLoadData();
 
 /* ══ AUTO REFRESH ══ */
 setInterval(function() {{
