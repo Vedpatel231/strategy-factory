@@ -335,6 +335,7 @@ class ExposureLimits:
     """
 
     MAX_SINGLE_PCT = 12.0
+    MAX_LEVERAGED_SINGLE_PCT = 6.0  # Leveraged ETFs get half the single-symbol cap
     MAX_EQUITY_INDEX_ETF_PCT = 20.0
     MAX_TOTAL_PCT = 90.0
     EQUITY_INDEX_ETFS = {"SPY", "VOO"}
@@ -360,17 +361,22 @@ class ExposureLimits:
             return target_by_symbol
 
         max_single = total_equity * self.MAX_SINGLE_PCT / 100.0
+        max_leveraged = total_equity * self.MAX_LEVERAGED_SINGLE_PCT / 100.0
         max_total = total_equity * self.MAX_TOTAL_PCT / 100.0
+        leveraged_etfs = getattr(config, "LEVERAGED_ETFS", set())
 
-        # Cap individual positions
+        # Cap individual positions (tighter cap for leveraged ETFs)
         for sym in list(target_by_symbol.keys()):
             target_usd = self._get_target_usd(target_by_symbol[sym])
-            if target_usd > max_single:
+            cap = max_leveraged if sym.upper() in leveraged_etfs else max_single
+            cap_pct = self.MAX_LEVERAGED_SINGLE_PCT if sym.upper() in leveraged_etfs else self.MAX_SINGLE_PCT
+            if target_usd > cap:
                 logger.info(
-                    "ExposureLimits: capping %s from $%.2f to $%.2f (%.0f%% of equity)",
-                    sym, target_usd, max_single, self.MAX_SINGLE_PCT,
+                    "ExposureLimits: capping %s from $%.2f to $%.2f (%.0f%% of equity%s)",
+                    sym, target_usd, cap, cap_pct,
+                    " — leveraged ETF" if sym.upper() in leveraged_etfs else "",
                 )
-                self._set_target_usd(target_by_symbol, sym, max_single)
+                self._set_target_usd(target_by_symbol, sym, cap)
 
         # SPY and VOO are highly overlapping S&P 500 exposure. Treat them as
         # one sleeve so they cannot bypass the per-symbol cap by splitting.
@@ -890,6 +896,12 @@ class RiskManager:
         max_position_notional = equity * max_position_pct / 100.0
         notional = min(notional_by_risk, max_position_notional, buying_power * 0.90)
         notional *= max(0.0, regime_mult) * confidence_mult * cooldown_mult
+
+        # Leveraged/inverse ETFs: 50% position size to account for amplified moves
+        leveraged_etfs = getattr(config, "LEVERAGED_ETFS", set())
+        if symbol.upper() in leveraged_etfs:
+            notional *= 0.50
+            reasons.append(f"Leveraged ETF {symbol}: position halved for risk control.")
 
         min_notional = float(os.environ.get("DESK_MIN_ORDER_NOTIONAL", "5.0"))
         if notional < min_notional:

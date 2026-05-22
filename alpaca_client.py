@@ -64,8 +64,8 @@ try:
     EQUITY_SYMBOLS = set(str(s).upper().replace(" ", "") for s in getattr(_cfg, "STOCK_ASSETS", []))
 except Exception:
     EQUITY_SYMBOLS = set()
-# Always include a baseline set in case config import fails
-EQUITY_SYMBOLS |= {"TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"}
+# Always include baseline ETFs in case config import fails
+EQUITY_SYMBOLS |= {"QQQ", "SPY", "SOXL", "IWM", "TQQQ", "SOXX", "SMH", "RSP", "SOXS", "VOO"}
 
 
 # Known crypto base tickers to exclude from equity heuristic

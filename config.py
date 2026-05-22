@@ -20,33 +20,37 @@ BINANCE_BASE_URL = "https://api.binance.com"
 DB_PATH = os.environ.get("STRATEGY_FACTORY_DB", os.path.join(DATA_DIR, "strategy_factory.db"))
 
 # === Asset Universe ===
-# Crypto: top 3 by liquidity.
-CRYPTO_ASSETS = ["BTC", "ETH", "SOL"]
+# DISABLED: No crypto trading.
+CRYPTO_ASSETS = []
 
-# Stocks: top 100 S&P 500 by market cap.
-# System scans all 100 but trades selectively based on signal quality.
+# Top 10 ETFs — the active trading universe.
+# Leveraged/inverse ETFs (SOXL, TQQQ, SOXS) get 50% position sizing.
 STOCK_ASSETS = [
-    # Mega-cap tech (1-10)
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "LLY", "BRK.B",
-    # Top 11-20
-    "JPM", "V", "UNH", "XOM", "MA", "COST", "HD", "PG", "JNJ", "ABBV",
-    # Top 21-30
-    "WMT", "NFLX", "BAC", "CRM", "ORCL", "CVX", "MRK", "KO", "AMD", "PEP",
-    # Top 31-40
-    "TMO", "LIN", "ACN", "MCD", "CSCO", "ABT", "ADBE", "WFC", "GE", "DHR",
-    # Top 41-50
-    "PM", "ISRG", "TXN", "INTU", "CAT", "IBM", "NOW", "QCOM", "VZ", "AMGN",
-    # Top 51-60
-    "AMAT", "PFE", "SPGI", "GS", "T", "AXP", "NEE", "RTX", "LOW", "SYK",
-    # Top 61-70
-    "BKNG", "UBER", "BLK", "LRCX", "HON", "UNP", "SCHW", "DE", "MDLZ", "BMY",
-    # Top 71-80
-    "VRTX", "GILD", "ADP", "PANW", "SBUX", "MMC", "ADI", "PLTR", "PLD", "BA",
-    # Top 81-90
-    "TMUS", "ETN", "MU", "CB", "FI", "KLAC", "SO", "CME", "SHW", "INTC",
-    # Top 91-100
-    "DUK", "ICE", "CL", "REGN", "SNPS", "CDNS", "BSX", "MCO", "PGR", "ZTS",
+    "QQQ",    # Nasdaq 100
+    "SPY",    # S&P 500
+    "SOXL",   # Semiconductors 3x Bull (LEVERAGED)
+    "IWM",    # Russell 2000 Small Cap
+    "TQQQ",   # Nasdaq 100 3x Bull (LEVERAGED)
+    "SOXX",   # Semiconductors
+    "SMH",    # Semiconductors (VanEck)
+    "RSP",    # S&P 500 Equal Weight
+    "SOXS",   # Semiconductors 3x Bear (LEVERAGED/INVERSE)
+    "VOO",    # S&P 500 (Vanguard)
 ]
+
+# Leveraged/inverse ETFs that need stricter risk controls:
+# - 50% of normal position size
+# - Tighter open-risk budget
+# - Dashboard warning labels
+LEVERAGED_ETFS = {"SOXL", "TQQQ", "SOXS"}
+
+# Legacy lists kept for reference (old universe archived)
+_ARCHIVED_STOCK_ASSETS = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "LLY", "BRK.B",
+    "JPM", "V", "UNH", "XOM", "MA", "COST", "HD", "PG", "JNJ", "ABBV",
+    "WMT", "NFLX", "BAC", "CRM", "ORCL", "CVX", "MRK", "KO", "AMD", "PEP",
+]
+_ARCHIVED_CRYPTO_ASSETS = ["BTC", "ETH", "SOL"]
 
 # === Professional Trading Desk Parameters ===
 # Real-money safety default: 1H is the primary entry timeframe.  Shorter
@@ -83,8 +87,8 @@ CRYPTO_MIN_ATR_PCT = 0.5      # Min volatility for crypto entries
 STOCK_MIN_ATR_PCT = 0.3       # Min volatility for stock entries
 
 # === Concurrency Limits (conservative) ===
-MAX_CONCURRENT_CRYPTO = 2     # Max 2 crypto positions at once
-MAX_CONCURRENT_STOCKS = 2     # Max 2 stock positions at once
+MAX_CONCURRENT_CRYPTO = 0     # No crypto trading
+MAX_CONCURRENT_STOCKS = 4     # Max 4 ETF positions at once (out of 10 ETFs)
 
 # === Cooldown ===
 POST_LOSS_COOLDOWN_BARS = 2   # 2 bars = 8 hours cooldown after a loss
