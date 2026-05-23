@@ -629,6 +629,22 @@ def alpaca_auto_execute():
         return jsonify({"error": str(e)}), 500
 
 
+# ── CONSERVATIVE MODE STATUS ─────────────────────────────────────────
+@app.route("/api/alpaca/conservative-status")
+@require_auth
+def alpaca_conservative_status():
+    """Return conservative mode daily P&L and risk status."""
+    try:
+        from conservative_mode import ConservativeMode
+        conservative = ConservativeMode()
+        return jsonify(conservative.get_status())
+    except Exception as e:
+        logger.error(f"Conservative status failed: {e}")
+        return jsonify({"error": str(e), "daily_mode": "SAFE_TEST_MODE",
+                        "realized_pl": 0, "unrealized_pl": 0,
+                        "estimated_fees": 0, "total_fees_today": 0}), 500
+
+
 # ── EMERGENCY KILL SWITCH & RISK ──────────────────────────────────────
 @app.route("/api/emergency/kill", methods=["POST"])
 @require_auth

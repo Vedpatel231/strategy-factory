@@ -600,8 +600,8 @@ function renderOverview(alp, insight) {{
   $('ovNet').textContent = signedMoney(netPL);
   $('ovNet').className = 'card-value ' + plClass(netPL);
 
-  var profitTarget = equity * 0.01;
-  var lossLimit = equity * 0.005;
+  var profitTarget = Number(conserv.profit_threshold_usd || 0) || equity * 0.01;
+  var lossLimit = Math.abs(Number(conserv.loss_threshold_usd || 0)) || equity * 0.005;
   $('ovTarget').textContent = '+$' + profitTarget.toFixed(0);
   $('ovLimit').textContent = '-$' + lossLimit.toFixed(0);
 

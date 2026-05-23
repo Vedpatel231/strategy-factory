@@ -791,7 +791,10 @@ class AlpacaTrader:
                 exit_notional = float(pos.get("market_value", 0) or 0)
                 gross_pl = exit_notional - entry_notional
                 if is_equity_symbol(sym):
-                    total_fees = 0.0
+                    from trade_journal import estimate_alpaca_fee
+                    entry_fee = estimate_alpaca_fee(entry_notional, asset_class="stock", symbol=sym)
+                    exit_fee = estimate_alpaca_fee(exit_notional, asset_class="stock", symbol=sym)
+                    total_fees = entry_fee + exit_fee
                 else:
                     from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
                     fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 10000.0
