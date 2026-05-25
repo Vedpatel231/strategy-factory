@@ -1,27 +1,23 @@
 """
 Strategy Factory — Dashboard Server
 
-Serves the static dashboard HTML AND exposes local paper-trading actions
-as JSON endpoints that the dashboard UI calls via fetch().
+Serves the static dashboard HTML and exposes Alpaca paper-trading
+endpoints that the dashboard UI calls via fetch().
 
 Launch:
     python dashboard_server.py
 
 Then open http://127.0.0.1:8765 in your browser.
 
-Endpoints:
-    GET  /                      → serves dashboard.html
-    GET  /api/status            → health + config
-    GET  /api/last-refresh      → timestamp of last daily_runner run
-    GET  /api/broker/connect    → initialise broker, return account info
-    GET  /api/broker/account    → account snapshot
-    GET  /api/broker/positions  → open positions with simulated P&L
-    GET  /api/broker/orders     → recent orders
-    GET  /api/broker/preview    → dry-run preview of orders to place
-    POST /api/broker/execute    → places paper orders, returns results
-    POST /api/broker/close-all  → closes every open position
-    POST /api/broker/reset      → resets the simulator to $1000
-    POST /api/daily-run         → refresh portfolio + regenerate dashboard
+Key Endpoints:
+    GET  /                              → serves dashboard.html
+    GET  /api/status                    → health + config
+    GET  /api/last-refresh              → timestamp of last daily_runner run
+    GET  /api/alpaca/auto/status        → Alpaca auto-trader status
+    POST /api/alpaca/auto/toggle        → enable/disable Alpaca auto-trading
+    GET  /api/alpaca/conservative-status → daily P&L mode + thresholds
+    GET  /api/insight-data              → trading desk state for dashboard
+    POST /api/daily-run                 → refresh portfolio + regenerate dashboard
 """
 
 import os
@@ -48,7 +44,6 @@ except ImportError:
 
 import threading
 import config
-from auto_trader import AutoTrader
 from alpaca_auto_trader import AlpacaAutoTrader
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -98,21 +93,7 @@ def require_auth(func):
         return func(*args, **kwargs)
     return wrapper
 
-# Lazy-init singleton
-_paper_trader = None
-
-
-def get_paper_trader():
-    global _paper_trader
-    if _paper_trader is not None:
-        return _paper_trader, None
-    try:
-        from paper_trader import PaperTrader
-        _paper_trader = PaperTrader(starting_balance=1000.0)
-        return _paper_trader, None
-    except Exception as e:
-        logger.error(f"PaperTrader init failed: {e}\n{traceback.format_exc()}")
-        return None, f"PaperTrader init failed: {e}"
+# (Paper broker removed — system uses Alpaca paper trading exclusively)
 
 
 def load_portfolio():
@@ -174,154 +155,7 @@ def last_refresh():
         return jsonify({"refreshed": False, "error": str(e)})
 
 
-# ── BROKER ENDPOINTS ────────────────────────────────────────────────────
-@app.route("/api/broker/connect")
-@require_auth
-def broker_connect():
-    trader, err = get_paper_trader()
-    if err:
-        return jsonify({"connected": False, "error": err}), 500
-    try:
-        return jsonify({"connected": True, "account": trader.client.get_account()})
-    except Exception as e:
-        logger.error(f"Connect failed: {e}\n{traceback.format_exc()}")
-        return jsonify({"connected": False, "error": str(e)}), 500
-
-
-@app.route("/api/broker/account")
-@require_auth
-def broker_account():
-    trader, err = get_paper_trader()
-    if err:
-        return jsonify({"error": err}), 500
-    return jsonify(trader.client.get_account())
-
-
-@app.route("/api/broker/positions")
-@require_auth
-def broker_positions():
-    trader, err = get_paper_trader()
-    if err:
-        return jsonify({"error": err}), 500
-    try:
-        positions = trader.client.get_positions()
-        total_pl = sum(p["unrealized_pl"] for p in positions)
-        total_value = sum(p["market_value"] for p in positions)
-        total_cost = sum(p["cost_basis"] for p in positions)
-        return jsonify({
-            "positions": positions,
-            "summary": {
-                "count": len(positions),
-                "total_market_value": round(total_value, 2),
-                "total_cost_basis": round(total_cost, 2),
-                "total_unrealized_pl": round(total_pl, 2),
-                "total_unrealized_plpc": round(total_pl / total_cost * 100, 2) if total_cost > 0 else 0,
-            }
-        })
-    except Exception as e:
-        logger.error(f"Positions failed: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/broker/orders")
-@require_auth
-def broker_orders():
-    trader, err = get_paper_trader()
-    if err:
-        return jsonify({"error": err}), 500
-    try:
-        limit = int(request.args.get("limit", 25))
-        status = request.args.get("status", "all")
-        return jsonify({"orders": trader.client.get_orders(limit=limit, status=status)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/broker/preview")
-@require_auth
-def broker_preview():
-    trader, err = get_paper_trader()
-    if err:
-        return jsonify({"error": err}), 500
-    portfolio = load_portfolio()
-    if not portfolio:
-        return jsonify({"error": "No portfolio found. Run a daily analysis first."}), 400
-    try:
-        return jsonify(trader.execute_portfolio(portfolio, dry_run=True))
-    except Exception as e:
-        logger.error(f"Preview failed: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/broker/execute", methods=["POST"])
-@require_auth
-def broker_execute():
-    trader, err = get_paper_trader()
-    if err:
-        return jsonify({"error": err}), 500
-    portfolio = load_portfolio()
-    if not portfolio:
-        return jsonify({"error": "No portfolio found. Run a daily analysis first."}), 400
-    data = request.get_json(silent=True) or {}
-    if not data.get("confirm"):
-        return jsonify({"error": "Missing 'confirm: true' in request body"}), 400
-    try:
-        results = trader.execute_portfolio(portfolio, dry_run=False)
-        logger.info(f"Executed: {results.get('summary', {})}")
-        return jsonify(results)
-    except Exception as e:
-        logger.error(f"Execute failed: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/broker/close-all", methods=["POST"])
-@require_auth
-def broker_close_all():
-    trader, err = get_paper_trader()
-    if err:
-        return jsonify({"error": err}), 500
-    data = request.get_json(silent=True) or {}
-    if not data.get("confirm"):
-        return jsonify({"error": "Missing 'confirm: true' in request body"}), 400
-    try:
-        return jsonify({"closed": trader.client.close_all_positions()})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/broker/reset", methods=["POST"])
-@require_auth
-def broker_reset():
-    trader, err = get_paper_trader()
-    if err:
-        return jsonify({"error": err}), 500
-    data = request.get_json(silent=True) or {}
-    if not data.get("confirm"):
-        return jsonify({"error": "Missing 'confirm: true' in request body"}), 400
-    try:
-        balance = float(data.get("starting_balance", 1000.0))
-        acct = trader.client.reset_account(starting_balance=balance)
-        return jsonify({"reset": True, "account": acct})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ── DAILY P&L CALENDAR DATA ────────────────────────────────────────────
-@app.route("/api/broker/daily-pnl")
-@require_auth
-def broker_daily_pnl():
-    """Return all daily P&L snapshots for the calendar view."""
-    from paper_broker import get_daily_pnl
-    data = get_daily_pnl()
-    # Also record today's snapshot if broker is available
-    trader, err = get_paper_trader()
-    if not err:
-        try:
-            today_snap = trader.client.record_daily_snapshot()
-            data[today_snap["date"]] = today_snap
-        except Exception:
-            pass
-    return jsonify({"snapshots": data})
+# (Paper broker /api/broker/* routes removed — using Alpaca exclusively)
 
 
 # ── ALPACA PAPER TRADING ENDPOINTS ─────────────────────────────────────
@@ -627,6 +461,20 @@ def alpaca_auto_execute():
     except Exception as e:
         logger.error(f"Alpaca execute failed: {e}\n{traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
+
+
+# ── INSIGHT DATA (trading desk state for dashboard) ──────────────────
+@app.route("/api/insight-data")
+@require_auth
+def insight_data():
+    """Return trading desk state for Overview and Claude Analysis pages."""
+    try:
+        from decision_logger import load_trading_desk_state
+        state = load_trading_desk_state()
+        return jsonify({"desk": state or {}, "state": state or {}})
+    except Exception as e:
+        logger.error(f"Insight data failed: {e}")
+        return jsonify({"desk": {}, "state": {}, "error": str(e)})
 
 
 # ── CONSERVATIVE MODE STATUS ─────────────────────────────────────────
@@ -1005,32 +853,6 @@ def alpaca_trade_ledger():
         return jsonify({"error": str(e), "path": "", "rows": [], "summary": {}})
 
 
-# ── AUTO-TRADER ENDPOINTS ──────────────────────────────────────────────
-@app.route("/api/auto/status")
-@require_auth
-def auto_status():
-    return jsonify(AutoTrader.get().status())
-
-
-@app.route("/api/auto/toggle", methods=["POST"])
-@require_auth
-def auto_toggle():
-    data = request.get_json(silent=True) or {}
-    if "enabled" not in data:
-        return jsonify({"error": "Missing 'enabled' in request body"}), 400
-    AutoTrader.set_enabled(bool(data["enabled"]))
-    return jsonify({"enabled": AutoTrader.is_enabled(), "status": AutoTrader.get().status()})
-
-
-@app.route("/api/auto/run-now", methods=["POST"])
-@require_auth
-def auto_run_now():
-    data = request.get_json(silent=True) or {}
-    if not data.get("confirm"):
-        return jsonify({"error": "Missing 'confirm: true'"}), 400
-    return jsonify(AutoTrader.get().trigger_now())
-
-
 # ── DAILY RUN ──────────────────────────────────────────────────────────
 @app.route("/api/daily-run", methods=["POST"])
 @require_auth
@@ -1060,15 +882,11 @@ def banner():
     print(f"  📊 Strategy Factory — Dashboard Server — {env}")
     print("=" * 64)
     print(f"  Bind:         http://{HOST}:{PORT}/")
-    print(f"  Simulator:    local paper broker, $1,000 starting balance")
-    print(f"  Price model:  synthetic math-based paper simulation")
+    print(f"  Trading:      Alpaca paper trading (ETF-only)")
     if DASHBOARD_PASSWORD:
         print(f"  🔒 Auth:      ON (user='{DASHBOARD_USERNAME}')")
     else:
         print(f"  🔓 Auth:      OFF (set DASHBOARD_PASSWORD env var to enable)")
-    at = AutoTrader.get()
-    at_on = AutoTrader.is_enabled()
-    print(f"  🤖 Auto-trade: {'ON' if at_on else 'OFF'} (interval {at.interval_min}min)")
     aat = AlpacaAutoTrader.get()
     aat_on = AlpacaAutoTrader.is_enabled()
     print(f"  🦙 Alpaca auto: {'ON' if aat_on else 'OFF'} (interval {aat.interval_min}min)")
@@ -1205,7 +1023,6 @@ _auto_reset_if_needed()
 
 # Start the auto-trader thread as soon as this module loads so it also runs
 # under WSGI/gunicorn on Railway (not only when __main__).
-AutoTrader.get().start()
 AlpacaAutoTrader.get().start()
 DailyAnalysisScheduler.get().start()
 

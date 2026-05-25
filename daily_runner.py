@@ -295,7 +295,7 @@ def run_analysis(args, logger):
     if len(portfolio["allocations"]) > 5:
         print(f"      ... and {len(portfolio['allocations']) - 5} more")
 
-    # Save portfolio so paper_trader.py can pick it up later
+    # Save portfolio for Alpaca auto-trader to pick up later
     portfolio_path = os.path.join(config.REPORT_DIR, "latest_portfolio.json")
     os.makedirs(config.REPORT_DIR, exist_ok=True)
     with open(portfolio_path, "w") as f:
@@ -341,24 +341,7 @@ def run_analysis(args, logger):
     print(f"    Dashboard saved to: {C.CYAN}{path}{C.RESET}")
     logger.info(f"Dashboard saved to {path}")
 
-    # ── Step 8.5: Paper trading (optional) ───────────────────────────
-    if args.paper_trade:
-        print_step("8b", "Executing paper trades on Alpaca...")
-        try:
-            from paper_trader import PaperTrader, format_report
-            trader = PaperTrader()
-            acct = trader.client.get_account()
-            print(f"    Alpaca paper account — Equity: ${acct['equity']:,.2f}, "
-                  f"Cash: ${acct['cash']:,.2f}")
-            results = trader.execute_portfolio(portfolio, dry_run=not args.execute)
-            print(format_report(results))
-        except (ValueError, ImportError) as e:
-            print(f"    {C.RED}Paper trading unavailable: {e}{C.RESET}")
-            print(f"    {C.YELLOW}Run: pip install alpaca-py{C.RESET}")
-            print(f"    {C.YELLOW}Then set ALPACA_API_KEY and ALPACA_SECRET_KEY env vars.{C.RESET}")
-        except Exception as e:
-            print(f"    {C.RED}Paper trading error: {e}{C.RESET}")
-            logger.error(f"Paper trading failed: {e}", exc_info=True)
+    # (Paper trading now handled by AlpacaAutoTrader in dashboard_server.py)
 
     # ── Step 9: Print summary ────────────────────────────────────────
     print(f"\n{C.CYAN}{C.BOLD}" + "─" * 64 + C.RESET)
@@ -424,8 +407,6 @@ def main():
 Examples:
   python daily_runner.py                          Dry run — analyze and report only
   python daily_runner.py --execute                Live mode — pause/reactivate bots
-  python daily_runner.py --paper-trade            Preview Alpaca orders (dry run)
-  python daily_runner.py --paper-trade --execute  Place real paper orders on Alpaca
   python daily_runner.py --dump-raw               Debug mode — dump raw API/DB data
   python daily_runner.py -v                       Verbose logging
         """
@@ -434,8 +415,6 @@ Examples:
                         help="Live mode: actually pause/reactivate bots and place paper orders")
     parser.add_argument("--dump-raw", action="store_true",
                         help="Debug mode: dump raw data and exit")
-    parser.add_argument("--paper-trade", action="store_true",
-                        help="After analysis, place paper orders on Alpaca to match portfolio")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable verbose/debug logging")
     args = parser.parse_args()

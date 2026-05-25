@@ -1,9 +1,9 @@
 """
-Strategy Factory — legacy Alpaca portfolio trader.
+Strategy Factory — Alpaca portfolio trader (ETF-only).
 
-The professional trading desk now handles live 1H entries through
-trading_desk.py.  This module remains for older dashboard/backtest/rebalance
-paths and for compatibility with existing helper endpoints.
+The professional trading desk handles live 1H entries through
+trading_desk.py.  This module handles portfolio rebalancing, position
+management, and trade execution via Alpaca paper trading API.
 """
 
 import os
@@ -22,17 +22,11 @@ ALPACA_TRADE_HISTORY = os.path.join(config.DATA_DIR, "alpaca_trade_runs.json")
 REBALANCE_THRESHOLD_PCT = 20.0
 INTRADAY_GATE_ENABLED = os.environ.get("INTRADAY_GATE_ENABLED", "true").lower() != "false"
 
-# Alpaca-supported crypto pairs
-ALPACA_SUPPORTED_CRYPTO = {
-    "BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD",
-    "SHIB/USD", "UNI/USD", "LINK/USD", "LTC/USD",
-    "BCH/USD", "AAVE/USD", "XRP/USD", "ADA/USD", "ALGO/USD",
-    "ATOM/USD", "CRV/USD", "NEAR/USD", "MKR/USD", "GRT/USD",
-    "SUSHI/USD", "YFI/USD", "BAT/USD", "XTZ/USD", "USDT/USD",
-    "USDC/USD", "DAI/USD",
-}
+# Crypto trading disabled — ETF-only system.
+ALPACA_SUPPORTED_CRYPTO = set()
 
-ALPACA_SUPPORTED_EQUITIES = {"TSLA", "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META"}
+# Equities supported via Alpaca (ETFs always supported by default)
+ALPACA_SUPPORTED_EQUITIES = set(config.STOCK_ASSETS)
 
 
 def _normalize_alpaca_symbol(pair):
@@ -93,15 +87,9 @@ class AlpacaTrader:
             json.dump(self.runs[-60:], f, indent=2, default=str)
 
     def _count_open_positions(self, positions):
-        """Count current crypto vs stock positions for concurrency limits."""
-        crypto_count = 0
-        stock_count = 0
-        for sym in positions:
-            if is_equity_symbol(sym):
-                stock_count += 1
-            else:
-                crypto_count += 1
-        return crypto_count, stock_count
+        """Count open ETF/stock positions for concurrency limits."""
+        stock_count = len(positions)  # ETF-only system — all positions are stocks
+        return 0, stock_count
 
     def _backfill_risk_book(self, positions):
         """Auto-populate risk book for positions missing after redeploy."""
@@ -309,8 +297,8 @@ class AlpacaTrader:
             except Exception:
                 pass
 
-        # ── CONCURRENCY CHECK: max 3 crypto + max 3 stocks ──
-        crypto_count, stock_count = self._count_open_positions(positions)
+        # ── CONCURRENCY CHECK: max N ETF positions ──
+        _, stock_count = self._count_open_positions(positions)
 
         for sym, target in target_by_symbol.items():
             dollar_alloc = target["target_usd"]
@@ -359,12 +347,7 @@ class AlpacaTrader:
                         "reason": f"Max {config.MAX_CONCURRENT_STOCKS} stock positions reached"
                     })
                     continue
-                if not is_stock and crypto_count >= config.MAX_CONCURRENT_CRYPTO:
-                    results["skipped"].append({
-                        "bot": label, "pair": sym,
-                        "reason": f"Max {config.MAX_CONCURRENT_CRYPTO} crypto positions reached"
-                    })
-                    continue
+                # Crypto trading disabled — ETF-only system
 
             if side == "buy":
                 order_usd = min(order_usd, remaining_cash)
@@ -403,11 +386,7 @@ class AlpacaTrader:
                     self._record_trade_event(order_result, target, side, order_usd)
                     if side == "buy":
                         remaining_cash -= order_usd
-                        # Update concurrency count
-                        if is_equity_symbol(sym):
-                            stock_count += 1
-                        else:
-                            crypto_count += 1
+                        stock_count += 1
                     if rm:
                         try:
                             rm.record_order(sym)
@@ -790,15 +769,11 @@ class AlpacaTrader:
                 entry_notional = float(close_entry_state.get("entry_notional", 0) or 0)
                 exit_notional = float(pos.get("market_value", 0) or 0)
                 gross_pl = exit_notional - entry_notional
-                if is_equity_symbol(sym):
-                    from trade_journal import estimate_alpaca_fee
-                    entry_fee = estimate_alpaca_fee(entry_notional, asset_class="stock", symbol=sym)
-                    exit_fee = estimate_alpaca_fee(exit_notional, asset_class="stock", symbol=sym)
-                    total_fees = entry_fee + exit_fee
-                else:
-                    from trade_journal import ALPACA_CRYPTO_TAKER_FEE_BPS
-                    fee_pct = (ALPACA_CRYPTO_TAKER_FEE_BPS * 2) / 10000.0
-                    total_fees = (entry_notional + exit_notional) * fee_pct / 2
+                # ETF-only system — all positions use stock fee model (1 bps/side)
+                from trade_journal import estimate_alpaca_fee
+                entry_fee = estimate_alpaca_fee(entry_notional, asset_class="stock", symbol=sym)
+                exit_fee = estimate_alpaca_fee(exit_notional, asset_class="stock", symbol=sym)
+                total_fees = entry_fee + exit_fee
                 net_pl = gross_pl - total_fees
                 strategy = (entry_state or {}).get("strategy", "adaptive_breakout")
                 regime = (entry_state or {}).get("regime", "unknown")

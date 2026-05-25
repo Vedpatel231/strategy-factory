@@ -232,17 +232,6 @@ tr:hover td{{background:var(--bg-hover)}}
     <div class="nav-link active" onclick="showPage('overview')">Overview</div>
     <div class="nav-link" onclick="showPage('alpaca-live')">Alpaca</div>
     <div class="nav-link" onclick="showPage('claude-analysis')">Claude Analysis</div>
-    <div class="nav-dropdown" id="advDropdown">
-      <div class="nav-link" onclick="toggleAdvanced(event)">Advanced ▾</div>
-      <div class="nav-dropdown-menu">
-        <div class="nav-dropdown-item" onclick="showPage('quantum')">Strategy Scorecard</div>
-        <div class="nav-dropdown-item" onclick="showPage('bots')">Bot Signals</div>
-        <div class="nav-dropdown-item" onclick="showPage('performance')">Performance</div>
-        <div class="nav-dropdown-item" onclick="showPage('regime')">Market Regime</div>
-        <div class="nav-dropdown-item" onclick="showPage('decisions')">Decision Log</div>
-        <div class="nav-dropdown-item" onclick="showPage('portfolio')">Portfolio</div>
-      </div>
-    </div>
   </div>
   <div class="nav-right">
     <span class="nav-badge">10 ETFs Active</span>
@@ -433,39 +422,12 @@ tr:hover td{{background:var(--bg-hover)}}
     <div class="card"><div class="card-label">Net P&L (All Time)</div><div class="card-value" id="clFeeNet">—</div></div>
   </div>
 
+  <div class="section-title">Decision Log</div>
+  <div class="log-container" id="clDecisionLog"><div class="log-entry info">No decisions logged yet</div></div>
+
   <div class="section-title">Claude-Ready Export</div>
   <button class="btn btn-blue" onclick="copyClaudeExport()" style="margin-bottom:12px">Copy System Summary for Claude</button>
   <div class="copy-area" id="clExportArea">Click "Copy System Summary" to generate...</div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════ -->
-<!-- ADVANCED PAGES (legacy — kept for reference)                  -->
-<!-- ══════════════════════════════════════════════════════════════ -->
-<div class="page" id="page-quantum"><div class="page-header"><div class="page-title">Strategy Scorecard (Advanced)</div></div>
-  <div class="table-section"><div class="table-wrap"><table><thead><tr><th>Strategy</th><th class="num">Trades</th><th class="num">Net P&L</th><th class="num">Win %</th><th class="num">PF</th><th>Action</th></tr></thead><tbody id="advScoreBody"></tbody></table></div>
-  <div id="advScoreEmpty" class="empty-state">No data yet</div></div>
-</div>
-<div class="page" id="page-bots"><div class="page-header"><div class="page-title">Bot Signals (Advanced)</div></div>
-  <div class="table-section"><div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Action</th><th>Strategy</th><th class="num">Confidence</th><th class="num">Score</th><th>Reason</th></tr></thead><tbody id="advBotsBody"></tbody></table></div>
-  <div id="advBotsEmpty" class="empty-state">No signals</div></div>
-</div>
-<div class="page" id="page-performance"><div class="page-header"><div class="page-title">Performance (Advanced)</div></div>
-  <div class="table-section"><div class="table-wrap"><table><thead><tr><th>Strategy</th><th class="num">Trades</th><th class="num">Net P&L</th><th class="num">Win %</th><th class="num">Fees</th><th>Action</th></tr></thead><tbody id="advPerfBody"></tbody></table></div>
-  <div id="advPerfEmpty" class="empty-state">No data</div></div>
-</div>
-<div class="page" id="page-regime"><div class="page-header"><div class="page-title">Market Regime (Advanced)</div></div>
-  <div class="card-grid"><div class="card"><div class="card-label">Current Regime</div><div class="card-value" id="advRegime">—</div></div>
-  <div class="card"><div class="card-label">Direction</div><div class="card-value" id="advDirection">—</div></div>
-  <div class="card"><div class="card-label">Posture</div><div class="card-value" id="advPosture">—</div></div></div>
-</div>
-<div class="page" id="page-decisions"><div class="page-header"><div class="page-title">Decision Log (Advanced)</div></div>
-  <div class="log-container" id="advDecLog"><div class="log-entry info">No decisions logged yet</div></div>
-</div>
-<div class="page" id="page-portfolio"><div class="page-header"><div class="page-title">Portfolio (Advanced)</div></div>
-  <div class="empty-state">Portfolio view — see Claude Analysis for current data.</div>
-</div>
-<div class="page" id="page-learning"><div class="page-header"><div class="page-title">Learning Engine (Advanced)</div></div>
-  <div class="empty-state">Learning engine data — see Claude Analysis for strategy performance.</div>
 </div>
 
 </div><!-- /main-content -->
@@ -489,11 +451,7 @@ function getPageLabel(id) {{
   var map = {{'overview':'Overview','alpaca-live':'Alpaca','claude-analysis':'Claude Analysis'}};
   return map[id] || 'Advanced';
 }}
-function toggleAdvanced(e) {{
-  e.stopPropagation();
-  document.getElementById('advDropdown').classList.toggle('open');
-}}
-document.addEventListener('click', function() {{ document.getElementById('advDropdown').classList.remove('open'); }});
+/* (Advanced dropdown removed — 3-page layout) */
 
 /* ══ HELPERS ══ */
 function $(id) {{ return document.getElementById(id); }}
@@ -556,9 +514,7 @@ async function refreshData(pageId) {{
   if (pageId === 'overview' || !pageId) renderOverview(alp, insight);
   if (pageId === 'alpaca-live') renderAlpaca(alp);
   if (pageId === 'claude-analysis') renderClaude(alp, insight);
-  if (pageId === 'quantum' || pageId === 'performance') renderAdvScorecard(alp);
-  if (pageId === 'bots') renderAdvBots(insight);
-  if (pageId === 'regime') renderAdvRegime(insight);
+  /* (Advanced pages removed) */
 }}
 
 /* ══ RENDER: OVERVIEW ══ */
@@ -886,6 +842,28 @@ function renderClaude(alp, insight) {{
   $('clFeeFees').textContent = '-$' + Math.abs(totalFees).toFixed(2);
   $('clFeeNet').textContent = signedMoney(totalNet);
   $('clFeeNet').className = 'card-value ' + plClass(totalNet);
+
+  // Decision log from managers
+  var logEl = $('clDecisionLog');
+  if (managers.length) {{
+    logEl.innerHTML = managers.map(function(m) {{
+      var sym = m.symbol || '?';
+      var action = m.action || 'wait';
+      var cls = action === 'enter' ? 'buy' : (action === 'cooldown' ? 'reject' : 'info');
+      var strat = m.active_strategy || '—';
+      var score = Number(m.score || 0).toFixed(0);
+      var conf = Number(m.confidence || 0).toFixed(2);
+      var reason = m.reason || m.rejection_reason || '';
+      return '<div class="log-entry ' + cls + '">' +
+        '<strong>' + escHtml(sym) + '</strong> ' +
+        '<span class="pill pill-' + (action === 'enter' ? 'green' : 'amber') + '">' + action.toUpperCase() + '</span> ' +
+        strat + ' | Score: ' + score + ' | Conf: ' + conf +
+        (reason ? ' | ' + escHtml(reason.substring(0, 200)) : '') +
+        '</div>';
+    }}).join('');
+  }} else {{
+    logEl.innerHTML = '<div class="log-entry info">No decisions logged yet. Run a desk cycle to see results.</div>';
+  }}
 }}
 
 /* ══ CLAUDE EXPORT ══ */
@@ -944,57 +922,7 @@ function copyClaudeExport() {{
   }} catch(e) {{}}
 }}
 
-/* ══ ADVANCED PAGES ══ */
-function renderAdvScorecard(alp) {{
-  var rows = ((alp && alp.ledger || {{}}).rows) || [];
-  var body = $('advScoreBody') || $('advPerfBody');
-  var empty = $('advScoreEmpty') || $('advPerfEmpty');
-  if (!body) return;
-  if (!rows.length) {{ if (empty) empty.style.display = 'block'; body.innerHTML = ''; return; }}
-  if (empty) empty.style.display = 'none';
-  var groups = {{}};
-  rows.forEach(function(r) {{
-    var k = r.strategy || 'unknown';
-    if (!groups[k]) groups[k] = {{trades:0, wins:0, net:0}};
-    groups[k].trades++; groups[k].net += Number(r.net_pl || 0);
-    if (Number(r.net_pl || 0) > 0) groups[k].wins++;
-  }});
-  var list = Object.entries(groups).sort(function(a,b) {{ return b[1].net - a[1].net; }});
-  body.innerHTML = list.map(function(kv) {{
-    var s = kv[0], g = kv[1];
-    var wr = g.trades ? g.wins / g.trades * 100 : 0;
-    var pf = g.net > 0 ? '1.0+' : '<1.0';
-    var action = g.net > 0 ? '<span class="pill pill-green">Keep</span>' : '<span class="pill pill-red">Tune</span>';
-    return '<tr><td><strong>' + escHtml(s) + '</strong></td>' +
-      '<td class="num">' + g.trades + '</td><td class="num" style="color:' + plColor(g.net) + '">' + signedMoney(g.net) + '</td>' +
-      '<td class="num">' + pct(wr) + '</td><td class="num">' + pf + '</td><td>' + action + '</td></tr>';
-  }}).join('');
-}}
-function renderAdvBots(insight) {{
-  var desk = (insight && insight.desk) || (insight && insight.state) || {{}};
-  var managers = (desk && desk.managers) || [];
-  var body = $('advBotsBody');
-  var empty = $('advBotsEmpty');
-  if (!body) return;
-  if (!managers.length) {{ if (empty) empty.style.display = 'block'; body.innerHTML = ''; return; }}
-  if (empty) empty.style.display = 'none';
-  body.innerHTML = managers.map(function(m) {{
-    var cls = m.action === 'enter' ? 'pill-green' : 'pill-amber';
-    return '<tr><td><strong>' + escHtml(m.symbol || '?') + '</strong></td>' +
-      '<td><span class="pill ' + cls + '">' + escHtml(String(m.action || 'wait').toUpperCase()) + '</span></td>' +
-      '<td>' + escHtml(m.active_strategy || '') + '</td>' +
-      '<td class="num">' + Number(m.confidence || 0).toFixed(2) + '</td>' +
-      '<td class="num">' + Number(m.score || 0).toFixed(0) + '</td>' +
-      '<td style="max-width:300px;white-space:normal;font-size:12px">' + escHtml((m.reason || '').substring(0, 200)) + '</td></tr>';
-  }}).join('');
-}}
-function renderAdvRegime(insight) {{
-  var desk = (insight && insight.desk) || (insight && insight.state) || {{}};
-  var ceo = (desk && desk.ceo) || {{}};
-  $('advRegime').textContent = (ceo.market_regime || '—').replace(/_/g, ' ').toUpperCase();
-  $('advDirection').textContent = (ceo.market_direction || '—').toUpperCase();
-  $('advPosture').textContent = (ceo.posture || '—').toUpperCase();
-}}
+/* (Advanced page render functions removed — data merged into Claude Analysis) */
 
 /* ══ ALPACA CONTROLS ══ */
 async function alpAutoStart() {{ await fetch('/api/alpaca/auto/start', {{method:'POST'}}); setTimeout(function() {{ refreshData('alpaca-live'); }}, 1000); }}

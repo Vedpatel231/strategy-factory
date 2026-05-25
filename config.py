@@ -1,7 +1,7 @@
 """
-Strategy Factory Bot Manager — Configuration
-All tunable settings live here. Paths respect STRATEGY_FACTORY_DATA_DIR env var
-so Railway / cloud deployments can point at a persistent volume.
+Strategy Factory — Configuration
+ETF-only trading system. All tunable settings live here.
+Paths respect STRATEGY_FACTORY_DATA_DIR env var for Railway persistent volume.
 """
 import os
 
@@ -44,13 +44,7 @@ STOCK_ASSETS = [
 # - Dashboard warning labels
 LEVERAGED_ETFS = {"SOXL", "TQQQ", "SOXS"}
 
-# Legacy lists kept for reference (old universe archived)
-_ARCHIVED_STOCK_ASSETS = [
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "LLY", "BRK.B",
-    "JPM", "V", "UNH", "XOM", "MA", "COST", "HD", "PG", "JNJ", "ABBV",
-    "WMT", "NFLX", "BAC", "CRM", "ORCL", "CVX", "MRK", "KO", "AMD", "PEP",
-]
-_ARCHIVED_CRYPTO_ASSETS = ["BTC", "ETH", "SOL"]
+# (Old stock/crypto asset lists moved to archive/)
 
 # === Professional Trading Desk Parameters ===
 # Real-money safety default: 1H is the primary entry timeframe.  Shorter
@@ -93,16 +87,7 @@ MAX_CONCURRENT_STOCKS = 4     # Max 4 ETF positions at once (out of 10 ETFs)
 # === Cooldown ===
 POST_LOSS_COOLDOWN_BARS = 2   # 2 bars = 8 hours cooldown after a loss
 
-# === Legacy Check Intervals ===
-CRYPTO_CHECK_INTERVAL_HOURS = 4
-STOCK_CHECK_INTERVAL_HOURS = 4
-
-# ═══════════════════════════════════════════════════════════════════
-# Legacy Intraday Stock Strategies
-# Disabled by default in alpaca_auto_trader unless ENABLE_LEGACY_INTRADAY=true.
-# ═══════════════════════════════════════════════════════════════════
-
-INTRADAY_STRATEGIES = ["rsi_mean_reversion", "macd_crossover", "vwap_bounce", "ema_crossover"]
+# === Strategy Parameters (used by professional_strategies.py) ===
 INTRADAY_TIMEFRAMES = ["15m", "30m"]
 
 # --- RSI Mean Reversion ---
@@ -134,9 +119,8 @@ EMA_CROSS_CONFIRMATION_BARS = 2   # Fast must stay above slow for 2 bars
 EMA_CROSS_STOP_LOSS_PCT = 2.5
 EMA_CROSS_TAKE_PROFIT_PCT = 4.0
 
-# --- Intraday Concurrency & Cooldown ---
+# --- Intraday Concurrency ---
 MAX_CONCURRENT_INTRADAY_STOCKS = 5
-INTRADAY_POST_LOSS_COOLDOWN_BARS = 4  # 4 bars = 1h on 15m, 2h on 30m
 
 # === Pause Thresholds ===
 PAUSE_WIN_RATE = 45.0

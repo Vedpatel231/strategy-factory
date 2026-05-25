@@ -63,7 +63,7 @@ class BotRegistry:
                  strategy_names: Optional[Iterable[str]] = None,
                  timeframes: Optional[List[str]] = None):
         if assets is None:
-            assets = list(config.CRYPTO_ASSETS) + list(config.STOCK_ASSETS)
+            assets = list(config.STOCK_ASSETS)  # ETF-only universe
         self.assets = [str(a).upper().replace(" ", "") for a in assets]
         self.strategy_names = list(strategy_names or STRATEGY_NAMES)
         self.timeframes = timeframes or list(ENTRY_TIMEFRAMES)
