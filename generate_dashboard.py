@@ -1048,23 +1048,51 @@ function calRender() {{
   var today = new Date();
   var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
 
-  /* Build daily P&L from Alpaca equity history (authoritative source).
-     This uses the actual day-over-day equity change, which captures
-     EVERYTHING: realized trade P&L + unrealized position changes.
-     Trade count from the ledger is shown as supplementary info only. */
+  /* Build daily P&L using Alpaca equity history.
+     - Use day_pl from Alpaca when available (most accurate).
+     - Fall back to equity diff when day_pl not provided.
+     - Skip zero-change days (weekends / holidays).
+     - For days missing from Alpaca but present in trade ledger, use trade P&L.
+     - For today, use live conservative mode data. */
   var sortedDates = Object.keys(calData).sort();
   var dailyChanges = {{}};
   for (var i = 0; i < sortedDates.length; i++) {{
     var d = sortedDates[i];
     var snap = calData[d];
     var prevSnap = i > 0 ? calData[sortedDates[i-1]] : null;
-    var prevEq = (prevSnap && prevSnap.equity !== undefined) ? Number(prevSnap.equity || 0) : Number((snap && snap.starting_balance) || 0);
     var eq = Number((snap && snap.equity) || 0);
-    var dayPnl = eq - prevEq;
-    var dayPct = prevEq > 0 ? dayPnl / prevEq * 100 : 0;
-    // Skip days with zero equity change and no previous equity (e.g. first snapshot)
-    if (prevEq > 0 || dayPnl !== 0) {{
+    var prevEq = prevSnap ? Number(prevSnap.equity || 0) : 0;
+    // Use Alpaca day_pl if available, otherwise compute from equity diff
+    var dayPnl = (snap && snap.day_pl !== undefined && snap.day_pl !== 0) ? Number(snap.day_pl) : (prevEq > 0 ? eq - prevEq : 0);
+    var dayPct = (snap && snap.day_pl_pct !== undefined && snap.day_pl_pct !== 0) ? Number(snap.day_pl_pct) : (prevEq > 0 ? dayPnl / prevEq * 100 : 0);
+    // Only include days with actual change (skip weekends/holidays with 0 change)
+    if (Math.abs(dayPnl) >= 0.01) {{
       dailyChanges[d] = {{ pnl: dayPnl, pct: dayPct, equity: eq }};
+    }}
+  }}
+  // Fill in days missing from Alpaca but present in trade ledger
+  if (calTradeData) {{
+    var lastKnownEquity = 0;
+    if (sortedDates.length > 0) {{ var ls = calData[sortedDates[sortedDates.length - 1]]; lastKnownEquity = Number((ls && ls.equity) || 0); }}
+    Object.keys(calTradeData).forEach(function(dateKey) {{
+      if (!dailyChanges[dateKey] && calTradeData[dateKey].count > 0) {{
+        var td = calTradeData[dateKey];
+        var snapEq = 0;
+        for (var si = sortedDates.length - 1; si >= 0; si--) {{ if (sortedDates[si] < dateKey) {{ snapEq = Number((calData[sortedDates[si]] && calData[sortedDates[si]].equity) || 0); break; }} }}
+        if (snapEq === 0) snapEq = lastKnownEquity;
+        dailyChanges[dateKey] = {{ pnl: td.totalPL, pct: snapEq > 0 ? td.totalPL / snapEq * 100 : 0, equity: snapEq, source: 'trades' }};
+      }}
+    }});
+  }}
+  // Add today's live P&L from conservative mode (Alpaca won't have today's snapshot yet)
+  if (!dailyChanges[todayStr] && _cache.alpaca && _cache.alpaca.conservative) {{
+    var cm = _cache.alpaca.conservative;
+    var todayPnl = Number(cm.realized_pl || 0) + Number(cm.unrealized_pl || 0);
+    var todayFees = Number(cm.total_fees_today || cm.estimated_fees || 0);
+    var netPnl = todayPnl - todayFees;
+    var todayEquity = Number((_cache.alpaca.account && _cache.alpaca.account.equity) || 0);
+    if (Math.abs(netPnl) >= 0.01 || todayEquity > 0) {{
+      dailyChanges[todayStr] = {{ pnl: netPnl, pct: todayEquity > 0 ? netPnl / todayEquity * 100 : 0, equity: todayEquity, source: 'live' }};
     }}
   }}
 
