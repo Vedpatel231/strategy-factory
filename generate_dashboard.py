@@ -444,7 +444,8 @@ function showPage(id) {{
   links.forEach(function(l) {{
     if (l.textContent.trim().replace(' ▾','') === getPageLabel(id)) l.classList.add('active');
   }});
-  document.getElementById('advDropdown').classList.remove('open');
+  var advDD = document.getElementById('advDropdown');
+  if (advDD) advDD.classList.remove('open');
   refreshData(id);
 }}
 function getPageLabel(id) {{
