@@ -500,7 +500,8 @@ async function loadAlpacaData(force) {{
       fetchJSON('/api/alpaca/auto/status'),
       fetchJSON('/api/alpaca/conservative-status'),
     ]);
-    _cache.alpaca = {{account: acct, positions: pos, orders: orders, ledger: ledger, status: status, conservative: conserv}};
+    var posList = Array.isArray(pos) ? pos : (pos && Array.isArray(pos.positions) ? pos.positions : []);
+    _cache.alpaca = {{account: acct, positions: posList, orders: orders, ledger: ledger, status: status, conservative: conserv}};
   }} catch(e) {{}}
   _loading.alpaca = false;
   return _cache.alpaca || {{}};
@@ -598,12 +599,23 @@ function renderOverview(alp, insight) {{
       var score = Number(m.score || 0);
       var conf = Number(m.confidence || 0);
       var reason = m.reason || m.rejection_reason || '';
-      // Find position P&L
+      // Find matching position for this ETF
+      var posMatch = null;
       var posPL = 0;
-      (Array.isArray(pos) ? pos : []).forEach(function(p) {{ if (p.symbol === sym) posPL = Number(p.unrealized_pl || 0); }});
-      var posStatus = (Array.isArray(pos) ? pos : []).some(function(p) {{ return p.symbol === sym; }}) ? '<span class="pill pill-green">OPEN</span>' : '<span class="pill pill-amber">—</span>';
+      (Array.isArray(pos) ? pos : []).forEach(function(p) {{
+        if (p.symbol === sym) {{
+          posMatch = p;
+          posPL = Number(p.unrealized_pl || 0);
+        }}
+      }});
+      var priceStr = posMatch ? '$' + Number(posMatch.current_price || 0).toFixed(2) : '—';
+      var dayPct = posMatch ? Number(posMatch.unrealized_plpc || posMatch.change_today || 0) : 0;
+      var dayPctStr = posMatch ? (dayPct >= 0 ? '+' : '') + dayPct.toFixed(2) + '%' : '—';
+      var dayPctColor = posMatch ? plColor(dayPct) : 'var(--text-secondary)';
+      var posStatus = posMatch ? '<span class="pill pill-green">OPEN</span>' : '<span class="pill pill-amber">—</span>';
       return '<tr><td><strong>' + escHtml(sym) + '</strong>' + leveragedBadge(sym) + '</td>' +
-        '<td class="num">—</td><td class="num">—</td>' +
+        '<td class="num">' + priceStr + '</td>' +
+        '<td class="num" style="color:' + dayPctColor + '">' + dayPctStr + '</td>' +
         '<td>' + posStatus + '</td>' +
         '<td><span class="pill ' + actionCls + '">' + escHtml(String(action).toUpperCase()) + '</span></td>' +
         '<td class="num">' + (score > 0 ? score.toFixed(0) : '—') + '</td>' +
