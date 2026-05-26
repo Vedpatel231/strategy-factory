@@ -460,7 +460,7 @@ function getPageLabel(id) {{
 /* ══ HELPERS ══ */
 function $(id) {{ return document.getElementById(id); }}
 function escHtml(s) {{ var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }}
-function signedMoney(v) {{ v = Number(v || 0); return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2); }}
+function signedMoney(v) {{ v = Number(v || 0); return (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2); }}
 function pct(v) {{ return Number(v || 0).toFixed(1) + '%'; }}
 function plColor(v) {{ return Number(v || 0) >= 0 ? 'var(--green)' : 'var(--red)'; }}
 function plClass(v) {{ return Number(v || 0) >= 0 ? 'positive' : 'negative'; }}
@@ -1048,32 +1048,24 @@ function calRender() {{
   var today = new Date();
   var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
 
+  /* Build daily P&L from Alpaca equity history (authoritative source).
+     This uses the actual day-over-day equity change, which captures
+     EVERYTHING: realized trade P&L + unrealized position changes.
+     Trade count from the ledger is shown as supplementary info only. */
   var sortedDates = Object.keys(calData).sort();
   var dailyChanges = {{}};
   for (var i = 0; i < sortedDates.length; i++) {{
     var d = sortedDates[i];
     var snap = calData[d];
     var prevSnap = i > 0 ? calData[sortedDates[i-1]] : null;
-    var prevEq = (prevSnap && prevSnap.equity !== undefined) ? Number(prevSnap.equity || 0) : Number((snap && snap.starting_balance) || 1000);
+    var prevEq = (prevSnap && prevSnap.equity !== undefined) ? Number(prevSnap.equity || 0) : Number((snap && snap.starting_balance) || 0);
     var eq = Number((snap && snap.equity) || 0);
-    var dayPnl = (snap && snap.day_pl !== undefined) ? Number(snap.day_pl) : eq - prevEq;
-    var dayPct = (snap && snap.day_pl_pct !== undefined) ? Number(snap.day_pl_pct) : (prevEq > 0 ? dayPnl / prevEq * 100 : 0);
-    dailyChanges[d] = {{ pnl: dayPnl, pct: dayPct, equity: eq }};
-  }}
-  if (calTradeData) {{
-    var lastKnownEquity = 0;
-    if (sortedDates.length > 0) {{ var ls = calData[sortedDates[sortedDates.length - 1]]; lastKnownEquity = Number((ls && ls.equity) || 0); }}
-    Object.keys(calTradeData).forEach(function(dateKey) {{
-      var td = calTradeData[dateKey];
-      if (td.count > 0) {{
-        var snapEq = dailyChanges[dateKey] ? dailyChanges[dateKey].equity : 0;
-        if (snapEq === 0) {{
-          for (var si = sortedDates.length - 1; si >= 0; si--) {{ if (sortedDates[si] < dateKey) {{ snapEq = Number((calData[sortedDates[si]] && calData[sortedDates[si]].equity) || 0); break; }} }}
-          if (snapEq === 0) snapEq = lastKnownEquity;
-        }}
-        dailyChanges[dateKey] = {{ pnl: td.totalPL, pct: snapEq > 0 ? td.totalPL / snapEq * 100 : 0, equity: snapEq, source: 'trades' }};
-      }}
-    }});
+    var dayPnl = eq - prevEq;
+    var dayPct = prevEq > 0 ? dayPnl / prevEq * 100 : 0;
+    // Skip days with zero equity change and no previous equity (e.g. first snapshot)
+    if (prevEq > 0 || dayPnl !== 0) {{
+      dailyChanges[d] = {{ pnl: dayPnl, pct: dayPct, equity: eq }};
+    }}
   }}
 
   for (var e = 0; e < firstDay; e++) {{ var emp = document.createElement('div'); emp.className = 'pnl-cal-cell empty'; grid.appendChild(emp); }}
