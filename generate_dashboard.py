@@ -221,6 +221,7 @@ tr:hover td{{background:var(--bg-hover)}}
 .pnl-cal-summary-label{{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}}
 .pnl-cal-summary-value{{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--blue)}}
 @media(max-width:768px){{.cal-stats-bar{{grid-template-columns:repeat(3,1fr);gap:8px}}.pnl-calendar{{padding:14px}}}}
+@keyframes livePulse{{0%,100%{{opacity:1}}50%{{opacity:0.3}}}}
 </style>
 </head>
 <body>
@@ -342,11 +343,11 @@ tr:hover td{{background:var(--bg-hover)}}
     <span class="pill pill-blue" id="alpAutoStatus">Loading...</span>
   </div>
 
-  <div class="section-title">Open Positions</div>
+  <div class="section-title">Open Positions <span id="liveIndicator" style="display:none;font-size:11px;color:var(--green);margin-left:8px;animation:livePulse 2s infinite">&#9679; LIVE</span></div>
   <div class="table-section">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Current</th><th class="num">Gross P&L</th><th class="num">Est Fee</th><th class="num">Net P&L</th><th class="num">SL</th><th class="num">TP</th></tr></thead>
+        <thead><tr><th>Symbol</th><th>Strategy</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Current</th><th class="num">Gross P&L</th><th class="num">Est Fee</th><th class="num">Net P&L</th><th class="num">SL</th><th class="num">TP</th></tr></thead>
         <tbody id="alpPosBody"></tbody>
       </table>
     </div>
@@ -446,6 +447,8 @@ function showPage(id) {{
   }});
   var advDD = document.getElementById('advDropdown');
   if (advDD) advDD.classList.remove('open');
+  // Live price ticker: start on Alpaca page, stop on others
+  if (id === 'alpaca-live') {{ startLivePrices(); }} else {{ stopLivePrices(); }}
   refreshData(id);
 }}
 function getPageLabel(id) {{
@@ -492,19 +495,47 @@ async function loadAlpacaData(force) {{
   if (!force && _cache.alpaca) return _cache.alpaca;
   _loading.alpaca = true;
   try {{
-    var [acct, pos, orders, ledger, status, conserv] = await Promise.all([
+    var [acct, pos, orders, ledger, status, conserv, riskData] = await Promise.all([
       fetchJSON('/api/alpaca/account'),
       fetchJSON('/api/alpaca/positions'),
       fetchJSON('/api/alpaca/orders'),
       fetchJSON('/api/alpaca/trade-ledger'),
       fetchJSON('/api/alpaca/auto/status'),
       fetchJSON('/api/alpaca/conservative-status'),
+      fetchJSON('/api/position-risk'),
     ]);
     var posList = Array.isArray(pos) ? pos : (pos && Array.isArray(pos.positions) ? pos.positions : []);
-    _cache.alpaca = {{account: acct, positions: posList, orders: orders, ledger: ledger, status: status, conservative: conserv}};
+    var riskPositions = (riskData && riskData.positions) || {{}};
+    _cache.alpaca = {{account: acct, positions: posList, orders: orders, ledger: ledger, status: status, conservative: conserv, risk: riskPositions}};
   }} catch(e) {{}}
   _loading.alpaca = false;
   return _cache.alpaca || {{}};
+}}
+
+/* ══ LIVE PRICE TICKER — fast position-only refresh every 3s on Alpaca page ══ */
+var _livePriceInterval = null;
+async function _tickPositions() {{
+  try {{
+    var [pos, riskData] = await Promise.all([
+      fetchJSON('/api/alpaca/positions'),
+      fetchJSON('/api/position-risk'),
+    ]);
+    var posList = Array.isArray(pos) ? pos : (pos && Array.isArray(pos.positions) ? pos.positions : []);
+    var riskPositions = (riskData && riskData.positions) || {{}};
+    if (_cache.alpaca) {{
+      _cache.alpaca.positions = posList;
+      _cache.alpaca.risk = riskPositions;
+    }}
+    renderAlpacaPositions(posList, riskPositions);
+    $('lastRefresh').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+  }} catch(e) {{}}
+}}
+function startLivePrices() {{
+  stopLivePrices();
+  _livePriceInterval = setInterval(_tickPositions, 3000);
+}}
+function stopLivePrices() {{
+  if (_livePriceInterval) {{ clearInterval(_livePriceInterval); _livePriceInterval = null; }}
 }}
 
 /* ══ REFRESH ══ */
@@ -651,11 +682,58 @@ function renderOverview(alp, insight) {{
   }}
 }}
 
+/* ══ RENDER: ALPACA POSITIONS (extracted for live ticker) ══ */
+function renderAlpacaPositions(pos, riskPositions) {{
+  var posBody = $('alpPosBody');
+  var posEmpty = $('alpPosEmpty');
+  var liveEl = $('liveIndicator');
+  if (Array.isArray(pos) && pos.length) {{
+    posEmpty.style.display = 'none';
+    if (liveEl && _livePriceInterval) liveEl.style.display = 'inline';
+    posBody.innerHTML = pos.map(function(p) {{
+      var sym = p.symbol || '?';
+      var qty = Number(p.qty || p.quantity || 0);
+      var entry = Number(p.avg_entry_price || 0);
+      var current = Number(p.current_price || 0);
+      var grossPL = Number(p.unrealized_pl || 0);
+      var estFee = Math.abs(entry * qty * 0.0001) + Math.abs(current * qty * 0.0001);
+      var netPL = grossPL - estFee;
+      // SL/TP from position risk book
+      var risk = (riskPositions && riskPositions[sym]) || {{}};
+      var strategy = (risk.strategy || '').replace(/_/g, ' ');
+      var sl = Number(risk.trailing_stop_price || risk.stop_loss_price || 0);
+      var tp = Number(risk.take_profit_price || 0);
+      var slStr = sl > 0 ? '$' + sl.toFixed(2) : '—';
+      var tpStr = tp > 0 ? '$' + tp.toFixed(2) : '—';
+      // Color SL/TP: red if close to SL, green if close to TP
+      var slDist = sl > 0 && current > 0 ? ((current - sl) / current * 100) : 999;
+      var tpDist = tp > 0 && current > 0 ? ((tp - current) / current * 100) : 999;
+      var slColor = slDist < 1.5 ? 'var(--red)' : 'var(--text-secondary)';
+      var tpColor = tpDist < 1.5 ? 'var(--green)' : 'var(--text-secondary)';
+      return '<tr><td><strong>' + escHtml(sym) + '</strong>' + leveragedBadge(sym) + '</td>' +
+        '<td style="font-size:12px;color:var(--text-secondary)">' + escHtml(strategy) + '</td>' +
+        '<td class="num">' + qty.toFixed(2) + '</td>' +
+        '<td class="num">$' + entry.toFixed(2) + '</td>' +
+        '<td class="num" style="font-weight:700">$' + current.toFixed(2) + '</td>' +
+        '<td class="num" style="color:' + plColor(grossPL) + '">' + signedMoney(grossPL) + '</td>' +
+        '<td class="num">-$' + estFee.toFixed(2) + '</td>' +
+        '<td class="num" style="color:' + plColor(netPL) + ';font-weight:700">' + signedMoney(netPL) + '</td>' +
+        '<td class="num" style="color:' + slColor + '">' + slStr + '</td>' +
+        '<td class="num" style="color:' + tpColor + '">' + tpStr + '</td></tr>';
+    }}).join('');
+  }} else {{
+    posEmpty.style.display = 'block';
+    posBody.innerHTML = '';
+    if (liveEl) liveEl.style.display = 'none';
+  }}
+}}
+
 /* ══ RENDER: ALPACA ══ */
 function renderAlpaca(alp) {{
   var pos = (alp && alp.positions) || [];
   var orders = (alp && alp.orders) || [];
   var status = (alp && alp.status) || {{}};
+  var riskPositions = (alp && alp.risk) || {{}};
   var insight = _cache.insight || {{}};
   var desk = insight.desk || insight.state || {{}};
 
@@ -669,32 +747,8 @@ function renderAlpaca(alp) {{
     autoEl.className = 'pill pill-red';
   }}
 
-  // Positions
-  var posBody = $('alpPosBody');
-  var posEmpty = $('alpPosEmpty');
-  if (Array.isArray(pos) && pos.length) {{
-    posEmpty.style.display = 'none';
-    posBody.innerHTML = pos.map(function(p) {{
-      var sym = p.symbol || '?';
-      var qty = Number(p.qty || p.quantity || 0);
-      var entry = Number(p.avg_entry_price || 0);
-      var current = Number(p.current_price || 0);
-      var grossPL = Number(p.unrealized_pl || 0);
-      var estFee = Math.abs(entry * qty * 0.0001) + Math.abs(current * qty * 0.0001);
-      var netPL = grossPL - estFee;
-      return '<tr><td><strong>' + escHtml(sym) + '</strong>' + leveragedBadge(sym) + '</td>' +
-        '<td class="num">' + qty + '</td>' +
-        '<td class="num">$' + entry.toFixed(2) + '</td>' +
-        '<td class="num">$' + current.toFixed(2) + '</td>' +
-        '<td class="num" style="color:' + plColor(grossPL) + '">' + signedMoney(grossPL) + '</td>' +
-        '<td class="num">-$' + estFee.toFixed(2) + '</td>' +
-        '<td class="num" style="color:' + plColor(netPL) + ';font-weight:700">' + signedMoney(netPL) + '</td>' +
-        '<td class="num">—</td><td class="num">—</td></tr>';
-    }}).join('');
-  }} else {{
-    posEmpty.style.display = 'block';
-    posBody.innerHTML = '';
-  }}
+  // Positions (delegated to shared function for live ticker)
+  renderAlpacaPositions(pos, riskPositions);
 
   // Orders
   var ordBody = $('alpOrdBody');
