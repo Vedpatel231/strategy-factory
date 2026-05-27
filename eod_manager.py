@@ -2,9 +2,11 @@
 End-of-Day (EOD) Position Manager
 
 Rules:
-  1. At 3:55 PM ET every trading day (including Fridays), sell any
+  1. At 3:45 PM ET every trading day (including Fridays), sell any
      positions that are in profit.  This locks in gains before
-     after-hours volatility can erode them.
+     after-hours volatility can erode them.  The 3:45 start gives
+     a 15-minute window so the auto-trader cycle (every 15 min)
+     is guaranteed to catch it before the 4:00 PM close.
 
   2. Positions in the red are kept overnight — no point selling at a
      loss right before close.  They get another chance next morning.
@@ -30,10 +32,12 @@ logger = logging.getLogger("eod_manager")
 STATE_FILE = os.path.join(config.DATA_DIR, "eod_manager_state.json")
 
 # ── Configuration ─────────────────────────────────────────────────
-# Time to start EOD closes (ET).  3:55 PM gives 5 minutes for orders
-# to fill before the 4:00 PM close.
+# Time to start EOD closes (ET).  3:45 PM gives a 15-minute window
+# so that even with the auto-trader's 15-min cycle interval, at
+# least one cycle is guaranteed to land before the 4:00 PM close.
+# (e.g. if last cycle was 3:44, next at 3:59 still catches it.)
 EOD_HOUR = int(os.environ.get("EOD_CLOSE_HOUR", "15"))
-EOD_MINUTE = int(os.environ.get("EOD_CLOSE_MINUTE", "55"))
+EOD_MINUTE = int(os.environ.get("EOD_CLOSE_MINUTE", "45"))
 
 
 def _et_now():
@@ -89,15 +93,18 @@ def check_eod():
     if weekday >= 5:
         return None
 
-    # Check if we're in the EOD window (3:55 PM ET or later, before midnight)
+    # Check if we're in the EOD window (3:50 PM ET to 3:59 PM ET)
+    # Orders MUST be submitted before 4:00 PM close to fill same-day.
     current_minutes = now_et.hour * 60 + now_et.minute
     eod_minutes = EOD_HOUR * 60 + EOD_MINUTE
 
     if current_minutes < eod_minutes:
         return None  # Not time yet
 
-    # Don't run after 4:05 PM — market is closed, orders won't fill
-    if current_minutes > (16 * 60 + 5):
+    # Hard cutoff at 3:59 PM — after this the market closes in <1 min
+    # and orders risk not filling.  Previous 4:05 cutoff caused orders
+    # to be submitted after close, sitting as "accepted" but unfilled.
+    if current_minutes >= (16 * 60):
         return None
 
     # Check if already ran today
@@ -108,7 +115,13 @@ def check_eod():
     logger.info(f"EOD profit-taking triggered at {now_et.strftime('%I:%M %p ET')}")
 
     try:
-        from alpaca_client import AlpacaPaperClient
+        from alpaca_client import AlpacaPaperClient, is_us_market_open
+
+        # Double-check: don't submit orders if market already closed
+        if not is_us_market_open():
+            logger.warning("EOD: Market is closed — skipping (orders would not fill)")
+            return None
+
         client = AlpacaPaperClient()
         positions = client.get_positions(live_prices=False)
 
@@ -242,5 +255,5 @@ def get_status():
         "eod_ran_today": state.get("last_eod_date") == today,
         "last_eod_date": state.get("last_eod_date"),
         "last_eod_result": state.get("last_eod_result"),
-        "rule": "Sell profitable (green) positions at 3:55 PM ET; keep red positions for next morning",
+        "rule": "Sell profitable (green) positions at 3:45 PM ET; keep red positions for next morning",
     }

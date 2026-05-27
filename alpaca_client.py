@@ -341,6 +341,19 @@ class AlpacaPaperClient:
         orders = self._trading.get_orders(req)
         return [self._format_order(o) for o in orders]
 
+    def cancel_all_orders(self):
+        """Cancel all open/pending orders."""
+        responses = self._trading.cancel_orders()
+        cancelled = []
+        for r in (responses or []):
+            if hasattr(r, "id"):
+                cancelled.append({"id": str(r.id), "status": "cancelled"})
+            elif hasattr(r, "body"):
+                cancelled.append({"id": str(getattr(r.body, "id", "?")), "status": "cancelled"})
+            else:
+                cancelled.append(str(r))
+        return cancelled
+
     def get_daily_pnl(self, period="1A"):
         """Return daily equity snapshots suitable for the dashboard calendar."""
         from alpaca.trading.requests import GetPortfolioHistoryRequest

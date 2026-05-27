@@ -338,6 +338,21 @@ def alpaca_close_position():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/alpaca/cancel-orders", methods=["POST"])
+@require_auth
+def alpaca_cancel_orders():
+    """Cancel all open/pending orders."""
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    try:
+        result = client.cancel_all_orders()
+        return jsonify({"cancelled": result})
+    except Exception as e:
+        logger.error(f"Cancel orders failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/alpaca/close-all", methods=["POST"])
 @require_auth
 def alpaca_close_all():
