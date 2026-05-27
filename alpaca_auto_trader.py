@@ -251,6 +251,21 @@ class AlpacaAutoTrader:
                 except Exception as e:
                     logger.warning(f"Exit check failed: {e}")
 
+                # EOD profit-taking + Friday close-all
+                try:
+                    from eod_manager import check_eod
+                    eod_result = check_eod()
+                    if eod_result:
+                        self._append_log({
+                            "timestamp": datetime.datetime.utcnow().isoformat(),
+                            "status": "ok",
+                            "cycle_type": "eod_close",
+                            "result": eod_result,
+                        })
+                        self._refresh_live_monitor()
+                except Exception as e:
+                    logger.warning(f"EOD check failed: {e}")
+
             # Sleep in 10-second slices for exit_check_interval
             for _ in range(exit_check_sec // 10):
                 if self._stop.is_set():
@@ -508,6 +523,14 @@ class AlpacaAutoTrader:
         intraday_runs = sum(1 for r in self._runs_log if "intraday" in r.get("cycle_type", ""))
         exit_check_runs = sum(1 for r in self._runs_log if r.get("cycle_type") == "exit_check")
 
+        # EOD manager status
+        eod_status = {}
+        try:
+            from eod_manager import get_status as eod_get_status
+            eod_status = eod_get_status()
+        except Exception:
+            pass
+
         return {
             "enabled": self.is_enabled(),
             "broker": "alpaca",
@@ -526,6 +549,7 @@ class AlpacaAutoTrader:
             "intraday_runs_total": intraday_runs,
             "exit_check_runs_total": exit_check_runs,
             "recent_runs": self._runs_log[-15:],
+            "eod_manager": eod_status,
         }
 
     def trigger_now(self):

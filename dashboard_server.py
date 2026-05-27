@@ -493,6 +493,18 @@ def alpaca_conservative_status():
                         "estimated_fees": 0, "total_fees_today": 0}), 500
 
 
+@app.route("/api/alpaca/eod-status")
+@require_auth
+def alpaca_eod_status():
+    """Return EOD manager status — profit-taking + Friday close-all."""
+    try:
+        from eod_manager import get_status
+        return jsonify(get_status())
+    except Exception as e:
+        logger.error(f"EOD status failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ── EMERGENCY KILL SWITCH & RISK ──────────────────────────────────────
 @app.route("/api/emergency/kill", methods=["POST"])
 @require_auth

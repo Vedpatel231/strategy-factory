@@ -55,8 +55,20 @@ def _utcnow():
     return datetime.now(timezone.utc)
 
 
+def _et_now():
+    """Current time in US Eastern.  Used so that the trading 'day' aligns
+    with market hours instead of resetting at UTC midnight (7 PM ET)."""
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/New_York"))
+
+
 def _today_str():
-    return _utcnow().strftime("%Y-%m-%d")
+    """Return today's date string in ET so daily state persists through
+    the full US trading session including after-hours."""
+    return _et_now().strftime("%Y-%m-%d")
 
 
 def _safe_float(value, default=0.0):
