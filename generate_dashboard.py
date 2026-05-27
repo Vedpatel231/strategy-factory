@@ -1098,8 +1098,10 @@ function calRender() {{
       }}
     }});
   }}
-  // Add today's live P&L from conservative mode (Alpaca won't have today's snapshot yet)
-  if (!dailyChanges[todayStr] && _cache.alpaca && _cache.alpaca.conservative) {{
+  // For TODAY: always use conservative mode (live, accurate, tracks actual
+  // trading day P&L).  Alpaca's portfolio history day_pl includes multi-day
+  // gaps (weekends/holidays) lumped into one number, which is misleading.
+  if (_cache.alpaca && _cache.alpaca.conservative) {{
     var cm = _cache.alpaca.conservative;
     var todayPnl = Number(cm.realized_pl || 0) + Number(cm.unrealized_pl || 0);
     var todayFees = Number(cm.total_fees_today || cm.estimated_fees || 0);
