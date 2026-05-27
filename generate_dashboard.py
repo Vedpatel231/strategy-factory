@@ -471,12 +471,25 @@ function leveragedBadge(sym) {{ return LEVERAGED[sym] ? '<span class="leveraged-
 var _cache = {{}};
 var _loading = {{}};
 
-async function fetchJSON(url) {{
+async function fetchJSON(url, timeoutMs) {{
+  timeoutMs = timeoutMs || 15000;
   try {{
-    var r = await fetch(url);
+    var ctrl = new AbortController();
+    var timer = setTimeout(function() {{ ctrl.abort(); }}, timeoutMs);
+    var r = await fetch(url, {{signal: ctrl.signal}});
+    clearTimeout(timer);
     if (!r.ok) return null;
     return await r.json();
   }} catch(e) {{ return null; }}
+}}
+
+/* Fetch with one automatic retry on failure (covers Railway cold starts) */
+async function fetchJSONRetry(url, timeoutMs) {{
+  var result = await fetchJSON(url, timeoutMs);
+  if (result !== null) return result;
+  /* Single retry after 1s pause */
+  await new Promise(function(r) {{ setTimeout(r, 1000); }});
+  return await fetchJSON(url, timeoutMs);
 }}
 
 async function loadInsightData(force) {{
@@ -484,7 +497,7 @@ async function loadInsightData(force) {{
   if (_loading.insight) return _cache.insight || {{}};
   _loading.insight = true;
   try {{
-    var d = await fetchJSON('/api/insight-data');
+    var d = await fetchJSONRetry('/api/insight-data');
     if (d) _cache.insight = d;
   }} catch(e) {{}}
   _loading.insight = false;
@@ -493,16 +506,17 @@ async function loadInsightData(force) {{
 
 async function loadAlpacaData(force) {{
   if (!force && _cache.alpaca) return _cache.alpaca;
+  if (_loading.alpaca) return _cache.alpaca || {{}};
   _loading.alpaca = true;
   try {{
     var [acct, pos, orders, ledger, status, conserv, riskData] = await Promise.all([
-      fetchJSON('/api/alpaca/account'),
-      fetchJSON('/api/alpaca/positions'),
-      fetchJSON('/api/alpaca/orders'),
-      fetchJSON('/api/alpaca/trade-ledger'),
-      fetchJSON('/api/alpaca/auto/status'),
-      fetchJSON('/api/alpaca/conservative-status'),
-      fetchJSON('/api/position-risk'),
+      fetchJSONRetry('/api/alpaca/account'),
+      fetchJSONRetry('/api/alpaca/positions'),
+      fetchJSONRetry('/api/alpaca/orders'),
+      fetchJSONRetry('/api/alpaca/trade-ledger'),
+      fetchJSONRetry('/api/alpaca/auto/status'),
+      fetchJSONRetry('/api/alpaca/conservative-status'),
+      fetchJSONRetry('/api/position-risk'),
     ]);
     var posList = Array.isArray(pos) ? pos : (pos && Array.isArray(pos.positions) ? pos.positions : []);
     var riskPositions = (riskData && riskData.positions) || {{}};
