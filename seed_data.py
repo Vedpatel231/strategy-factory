@@ -372,7 +372,7 @@ def main():
     n_assets = len(COINS) + len(STOCKS)
     n_bots = len(STRATEGIES)
     print(f"\n  {G}{B}Database ready!{X} {D}{config.DB_PATH}{X}")
-    print(f"  {C}Assets: {len(COINS)} crypto + {len(STOCKS)} stocks = {n_assets} total{X}")
+    print(f"  {C}Assets: {len(STOCKS)} ETFs = {n_assets} total{X}")
     print(f"  {C}Bots: {n_bots} professional 1H bots ({len(config.PROFESSIONAL_STRATEGIES)} per asset){X}")
     print(f"  {C}Strategies: {', '.join(config.PROFESSIONAL_STRATEGIES)}{X}")
     print(f"  {C}Next: python daily_runner.py{X}\n")

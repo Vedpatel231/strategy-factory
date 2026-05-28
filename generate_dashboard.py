@@ -465,6 +465,7 @@ function pct(v) {{ return Number(v || 0).toFixed(1) + '%'; }}
 function plColor(v) {{ return Number(v || 0) >= 0 ? 'var(--green)' : 'var(--red)'; }}
 function plClass(v) {{ return Number(v || 0) >= 0 ? 'positive' : 'negative'; }}
 var LEVERAGED = {{'SOXL':1,'TQQQ':1,'SOXS':1}};
+var ETF_SYMBOLS = {{'QQQ':1,'SPY':1,'SOXL':1,'IWM':1,'TQQQ':1,'SOXX':1,'SMH':1,'RSP':1,'SOXS':1,'VOO':1}};
 function leveragedBadge(sym) {{ return LEVERAGED[sym] ? '<span class="leveraged-badge">LEV</span>' : ''; }}
 
 /* ══ DATA CACHE ══ */
@@ -812,7 +813,8 @@ function renderClaude(alp, insight) {{
   var managers = (desk && desk.managers) || [];
   var conserv = (alp && alp.conservative) || {{}};
   var ledger = (alp && alp.ledger) || {{}};
-  var rows = (ledger && ledger.rows) || [];
+  var allRows = (ledger && ledger.rows) || [];
+  var rows = allRows.filter(function(r) {{ return ETF_SYMBOLS[(r.symbol||'').toUpperCase()]; }});
 
   // CEO
   $('clRegime').textContent = (ceo.market_regime || '—').replace(/_/g, ' ').toUpperCase();
@@ -956,7 +958,8 @@ function copyClaudeExport() {{
   var desk = insight.desk || insight.state || {{}};
   var ceo = (desk && desk.ceo) || {{}};
   var managers = (desk && desk.managers) || [];
-  var rows = ((alp.ledger || {{}}).rows) || [];
+  var rawRows = ((alp.ledger || {{}}).rows) || [];
+  var rows = rawRows.filter(function(r) {{ return ETF_SYMBOLS[(r.symbol||'').toUpperCase()]; }});
 
   var lines = [];
   lines.push('=== STRATEGY FACTORY SYSTEM STATUS ===');
@@ -1028,7 +1031,8 @@ async function calLoadData() {{
   }} catch(e) {{ calData = {{}}; }}
   try {{
     var ledger = await fetchJSON('/api/alpaca/trade-ledger?limit=2000');
-    var rows = (ledger && ledger.rows) || [];
+    var allR = (ledger && ledger.rows) || [];
+    var rows = allR.filter(function(r) {{ return ETF_SYMBOLS[(r.symbol||'').toUpperCase()]; }});
     calTradeData = {{}};
     rows.forEach(function(row) {{
       var closedAt = row.closed_at || row.opened_at || '';

@@ -1,8 +1,9 @@
 """
 Strategy Factory — Risk Manager
 
-Comprehensive risk controls for the crypto trading system.
-All classes persist state to disk (DATA_DIR) and use UTC timestamps.
+Comprehensive risk controls for the ETF trading system.
+All classes persist state to disk (DATA_DIR) and use US Eastern timestamps
+so that daily resets align with conservative_mode and eod_manager.
 """
 
 import json
@@ -50,12 +51,17 @@ def _write_json(path, data):
         logger.exception("Failed to write %s", path)
 
 
-def _utcnow():
-    return datetime.now(timezone.utc)
+def _et_now():
+    """Current time in US Eastern — matches conservative_mode and eod_manager."""
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/New_York"))
 
 
 def _today_str():
-    return _utcnow().strftime("%Y-%m-%d")
+    return _et_now().strftime("%Y-%m-%d")
 
 
 def _safe_float(value, default=0.0):
@@ -91,7 +97,7 @@ class DrawdownCircuitBreaker:
     def _persist_peak(self):
         _write_json(self.PEAK_FILE, {
             "peak_equity": self.peak_equity,
-            "updated_at": _utcnow().isoformat(),
+            "updated_at": _et_now().isoformat(),
         })
 
     def check(self, current_equity: float) -> bool:
@@ -151,7 +157,7 @@ class DrawdownCircuitBreaker:
         # 3. Write alert
         alert = {
             "event": "circuit_breaker",
-            "fired_at": _utcnow().isoformat(),
+            "fired_at": _et_now().isoformat(),
             "peak_equity": self.peak_equity,
             "current_equity": current_equity,
             "drawdown_pct": round(drawdown_pct, 2),
@@ -172,7 +178,7 @@ class DailyLossGuard:
     """
     Track start-of-day equity.  If current equity drops more than
     *max_daily_loss_pct* from that baseline, block new trades.
-    Resets at midnight UTC.
+    Resets at midnight ET (aligned with conservative_mode).
     """
 
     STATE_FILE = os.path.join(config.DATA_DIR, "daily_loss_guard.json")
@@ -190,13 +196,13 @@ class DailyLossGuard:
         _write_json(self.STATE_FILE, {
             "date": self._date,
             "start_equity": self._start_equity,
-            "updated_at": _utcnow().isoformat(),
+            "updated_at": _et_now().isoformat(),
         })
 
     def check(self, current_equity: float) -> bool:
         """
         Return True if daily loss is within limits.
-        Automatically resets the baseline at midnight UTC.
+        Automatically resets the baseline at midnight ET.
         """
         today = _today_str()
 
@@ -285,7 +291,7 @@ class PositionStopLoss:
                         "loss_pct": round(loss_pct, 2),
                         "cost_basis": cost_basis,
                         "market_value": market_value,
-                        "closed_at": _utcnow().isoformat(),
+                        "closed_at": _et_now().isoformat(),
                         "result": result,
                     })
                 except Exception:
@@ -317,7 +323,7 @@ class PositionStopLoss:
 
     def get_recent_stops(self, days: int = 7) -> list:
         """Return stop-loss events from the last *days* days."""
-        cutoff = (_utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (_et_now() - timedelta(days=days)).isoformat()
         entries = _read_json(self.STOP_LOG_FILE, [])
         if not isinstance(entries, list):
             return []
@@ -421,7 +427,7 @@ class ExposureLimits:
 class TradeFrequencyLimiter:
     """
     Limit to 50 total orders per day and 5 orders per symbol per day.
-    Resets at midnight UTC.
+    Resets at midnight ET.
     """
 
     # Conservative limits: survival mode. Reduce to 10 total trades/day
@@ -453,7 +459,7 @@ class TradeFrequencyLimiter:
             "date": self._date,
             "total": self._total,
             "by_symbol": self._by_symbol,
-            "updated_at": _utcnow().isoformat(),
+            "updated_at": _et_now().isoformat(),
         })
 
     def can_trade(self, symbol: str) -> bool:
@@ -509,7 +515,7 @@ class DuplicateOrderGuard:
             return True
         try:
             last = datetime.fromisoformat(last_ts)
-            if _utcnow() - last < timedelta(seconds=self.MIN_REPEAT_SECONDS):
+            if _et_now() - last < timedelta(seconds=self.MIN_REPEAT_SECONDS):
                 logger.warning("DuplicateOrderGuard: blocked duplicate %s", key)
                 return False
         except Exception:
@@ -518,7 +524,7 @@ class DuplicateOrderGuard:
 
     def record(self, symbol: str, side: str):
         key = f"{symbol}:{side.lower()}"
-        self._state[key] = _utcnow().isoformat()
+        self._state[key] = _et_now().isoformat()
         _write_json(self.STATE_FILE, self._state)
 
 
@@ -544,7 +550,7 @@ class CooldownManager:
             fired_at = cb_alert.get("fired_at", "")
             try:
                 fired_dt = datetime.fromisoformat(fired_at)
-                if _utcnow() - fired_dt < timedelta(days=7):
+                if _et_now() - fired_dt < timedelta(days=7):
                     logger.info("CooldownManager: circuit breaker fired within 7 days — multiplier 0.25")
                     return 0.25
             except Exception:
@@ -552,7 +558,7 @@ class CooldownManager:
 
         # Check daily loss guard (yesterday)
         dl_state = _read_json(DailyLossGuard.STATE_FILE, {})
-        yesterday = (_utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday = (_et_now() - timedelta(days=1)).strftime("%Y-%m-%d")
         if dl_state.get("date") == yesterday:
             start_eq = dl_state.get("start_equity", 0.0)
             # If the guard state is from yesterday and equity dropped past the
@@ -578,7 +584,7 @@ class CooldownManager:
         hit_file = os.path.join(config.DATA_DIR, "daily_loss_hit.json")
         _write_json(hit_file, {
             "date": _today_str(),
-            "recorded_at": _utcnow().isoformat(),
+            "recorded_at": _et_now().isoformat(),
         })
 
 
@@ -615,7 +621,7 @@ class StrategyDisabler:
         expires = entry.get("expires_at", "")
         try:
             exp_dt = datetime.fromisoformat(expires)
-            if _utcnow() >= exp_dt:
+            if _et_now() >= exp_dt:
                 # Expiry passed — re-enable
                 logger.info("StrategyDisabler: %s expiry passed, re-enabling", bot_name)
                 del self._disabled[bot_name]
@@ -650,7 +656,7 @@ class StrategyDisabler:
         if not reasons:
             return False
 
-        now = _utcnow()
+        now = _et_now()
         expires = now + timedelta(days=self.DISABLE_DAYS)
         self._disabled[bot_name] = {
             "disabled_at": now.isoformat(),
@@ -926,7 +932,7 @@ class RiskManager:
     # ── Dashboard status ───────────────────────────────────────────────
     def get_status(self) -> dict:
         """Return a dict summarising all risk-control states for the dashboard."""
-        now = _utcnow()
+        now = _et_now()
         cb_alert = self.circuit_breaker.last_alert
         cb_active = False
         if cb_alert and isinstance(cb_alert, dict):

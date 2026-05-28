@@ -88,7 +88,6 @@ MAX_CONCURRENT_STOCKS = 4     # Max 4 ETF positions at once (out of 10 ETFs)
 POST_LOSS_COOLDOWN_BARS = 2   # 2 bars = 8 hours cooldown after a loss
 
 # === Strategy Parameters (used by professional_strategies.py) ===
-INTRADAY_TIMEFRAMES = ["15m", "30m"]
 
 # --- RSI Mean Reversion ---
 RSI_MR_PERIOD = 14

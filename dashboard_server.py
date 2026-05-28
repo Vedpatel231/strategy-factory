@@ -435,49 +435,6 @@ def alpaca_auto_run_now():
     return jsonify(AlpacaAutoTrader.get().trigger_now())
 
 
-@app.route("/api/alpaca/auto/preview")
-@require_auth
-def alpaca_auto_preview():
-    """Dry-run preview of what Alpaca auto-trade would do."""
-    try:
-        from alpaca_trader import AlpacaTrader
-        from alpaca_client import is_configured
-        if not is_configured():
-            return jsonify({"error": "Alpaca API keys not configured"}), 400
-        portfolio = load_portfolio()
-        if not portfolio:
-            return jsonify({"error": "No portfolio found. Run a daily analysis first."}), 400
-        trader = AlpacaTrader()
-        return jsonify(trader.execute_portfolio(portfolio, dry_run=True))
-    except Exception as e:
-        logger.error(f"Alpaca preview failed: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/alpaca/auto/execute", methods=["POST"])
-@require_auth
-def alpaca_auto_execute():
-    """Execute portfolio rebalance on Alpaca (manual trigger)."""
-    data = request.get_json(silent=True) or {}
-    if not data.get("confirm"):
-        return jsonify({"error": "Missing 'confirm: true'"}), 400
-    try:
-        from alpaca_trader import AlpacaTrader
-        from alpaca_client import is_configured
-        if not is_configured():
-            return jsonify({"error": "Alpaca API keys not configured"}), 400
-        portfolio = load_portfolio()
-        if not portfolio:
-            return jsonify({"error": "No portfolio found. Run a daily analysis first."}), 400
-        trader = AlpacaTrader()
-        results = trader.execute_portfolio(portfolio, dry_run=False)
-        logger.info(f"Alpaca execute: {results.get('summary', {})}")
-        return jsonify(results)
-    except Exception as e:
-        logger.error(f"Alpaca execute failed: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
-
-
 # ── INSIGHT DATA (trading desk state for dashboard) ──────────────────
 @app.route("/api/insight-data")
 @require_auth
@@ -695,7 +652,7 @@ def debug_candles(symbol):
 @app.route("/api/trade-journal")
 @require_auth
 def trade_journal():
-    """Return real paper-trading decisions/fills recorded by AlpacaTrader."""
+    """Return real paper-trading decisions/fills recorded by the trading desk."""
     try:
         limit = int(request.args.get("limit", 200))
         from trade_journal import load_trade_journal

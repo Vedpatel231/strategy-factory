@@ -123,7 +123,7 @@ MAX_OPEN_RISK_BUDGET_PCT = _safe_float(
 )
 
 # --- Max open positions ---
-# With 100 stocks + 3 crypto, allow up to 5 concurrent positions
+# With 10 ETFs, allow up to 5 concurrent positions
 MAX_OPEN_POSITIONS = int(
     os.environ.get("CONSERVATIVE_MAX_OPEN_POSITIONS", "5")
 )
