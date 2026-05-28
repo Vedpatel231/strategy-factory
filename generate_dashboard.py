@@ -560,7 +560,7 @@ async function refreshData(pageId) {{
   var insight = await loadInsightData(true);
   $('lastRefresh').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 
-  if (pageId === 'overview' || !pageId) renderOverview(alp, insight);
+  if (pageId === 'overview' || !pageId) {{ renderOverview(alp, insight); calRender(); }}
   if (pageId === 'alpaca-live') renderAlpaca(alp);
   if (pageId === 'claude-analysis') renderClaude(alp, insight);
   /* (Advanced pages removed) */
