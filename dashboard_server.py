@@ -426,6 +426,25 @@ def alpaca_auto_toggle():
     return jsonify({"enabled": AlpacaAutoTrader.is_enabled(), "status": AlpacaAutoTrader.get().status()})
 
 
+# Dashboard button aliases — JS calls /start and /stop separately
+@app.route("/api/alpaca/auto/start", methods=["POST"])
+@require_auth
+def alpaca_auto_start():
+    AlpacaAutoTrader.set_enabled(True)
+    trader = AlpacaAutoTrader.get()
+    trader.start()
+    return jsonify({"enabled": True, "status": trader.status()})
+
+
+@app.route("/api/alpaca/auto/stop", methods=["POST"])
+@require_auth
+def alpaca_auto_stop():
+    AlpacaAutoTrader.set_enabled(False)
+    trader = AlpacaAutoTrader.get()
+    trader.stop()
+    return jsonify({"enabled": False, "status": trader.status()})
+
+
 @app.route("/api/alpaca/auto/run-now", methods=["POST"])
 @require_auth
 def alpaca_auto_run_now():
@@ -433,6 +452,60 @@ def alpaca_auto_run_now():
     if not data.get("confirm"):
         return jsonify({"error": "Missing 'confirm: true'"}), 400
     return jsonify(AlpacaAutoTrader.get().trigger_now())
+
+
+# Dashboard button alias — JS calls /run-once (server has /run-now)
+@app.route("/api/alpaca/auto/run-once", methods=["POST"])
+@require_auth
+def alpaca_auto_run_once():
+    return jsonify(AlpacaAutoTrader.get().trigger_now())
+
+
+# Dashboard button alias — JS calls /close-all (server has /emergency/kill)
+@app.route("/api/alpaca/close-all", methods=["POST"])
+@require_auth
+def alpaca_close_all():
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err}), 500
+    try:
+        results = client.close_all_positions()
+        return jsonify({"closed": results})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── TODAY'S REALIZED P&L FROM ALPACA (catches manual closes) ─────────
+@app.route("/api/alpaca/today-realized")
+@require_auth
+def alpaca_today_realized():
+    """Return today's realized P&L directly from Alpaca portfolio history.
+    This includes ALL closes — manual or bot-initiated — so it's the
+    source of truth and won't miss trades the bot didn't record."""
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err, "realized_pl": 0}), 500
+    try:
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+        from datetime import timezone
+        history = client._trading.get_portfolio_history(
+            GetPortfolioHistoryRequest(period="1D", timeframe="1Min")
+        )
+        # profit_loss array from Alpaca = cumulative P&L from market open
+        # The last value is today's total realized + unrealized P&L change
+        profit_loss = list(getattr(history, "profit_loss", []) or [])
+        equity = list(getattr(history, "equity", []) or [])
+        # We want today's total P&L from Alpaca (vs prior close)
+        today_total_pl = float(profit_loss[-1]) if profit_loss else 0.0
+        today_equity = float(equity[-1]) if equity else 0.0
+        return jsonify({
+            "today_total_pl": round(today_total_pl, 2),
+            "today_equity": round(today_equity, 2),
+            "source": "alpaca_portfolio_history",
+        })
+    except Exception as e:
+        logger.error(f"today-realized failed: {e}")
+        return jsonify({"error": str(e), "realized_pl": 0}), 500
 
 
 # ── INSIGHT DATA (trading desk state for dashboard) ──────────────────

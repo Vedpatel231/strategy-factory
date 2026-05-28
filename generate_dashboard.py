@@ -510,7 +510,7 @@ async function loadAlpacaData(force) {{
   if (_loading.alpaca) return _cache.alpaca || {{}};
   _loading.alpaca = true;
   try {{
-    var [acct, pos, orders, ledger, status, conserv, riskData] = await Promise.all([
+    var [acct, pos, orders, ledger, status, conserv, riskData, todayPl] = await Promise.all([
       fetchJSONRetry('/api/alpaca/account'),
       fetchJSONRetry('/api/alpaca/positions'),
       fetchJSONRetry('/api/alpaca/orders'),
@@ -518,10 +518,11 @@ async function loadAlpacaData(force) {{
       fetchJSONRetry('/api/alpaca/auto/status'),
       fetchJSONRetry('/api/alpaca/conservative-status'),
       fetchJSONRetry('/api/position-risk'),
+      fetchJSONRetry('/api/alpaca/today-realized'),
     ]);
     var posList = Array.isArray(pos) ? pos : (pos && Array.isArray(pos.positions) ? pos.positions : []);
     var riskPositions = (riskData && riskData.positions) || {{}};
-    _cache.alpaca = {{account: acct, positions: posList, orders: orders, ledger: ledger, status: status, conservative: conserv, risk: riskPositions}};
+    _cache.alpaca = {{account: acct, positions: posList, orders: orders, ledger: ledger, status: status, conservative: conserv, risk: riskPositions, todayPl: todayPl}};
   }} catch(e) {{}}
   _loading.alpaca = false;
   return _cache.alpaca || {{}};
@@ -592,15 +593,22 @@ function renderOverview(alp, insight) {{
   else modeDesc = 'Score 75+ trades allowed';
   $('ovModeSub').textContent = modeDesc;
 
+  // Use Alpaca portfolio history as source of truth for today's gross P&L.
+  // This includes ALL closes — manual or bot — so nothing gets missed.
+  var todayPl = (alp && alp.todayPl) || {{}};
+  var alpacaTodayGross = Number(todayPl.today_total_pl || 0);
+
+  // Fallback: compute from live positions + conservative realized
   var realized = Number(conserv.realized_pl || 0);
-  // Use LIVE unrealized from Alpaca positions instead of stale conservative state
   var liveUnrealized = 0;
   (Array.isArray(pos) ? pos : []).forEach(function(p) {{
     liveUnrealized += Number(p.unrealized_pl || 0);
   }});
-  var unrealized = liveUnrealized;
+  // Prefer Alpaca portfolio history (authoritative) over internal tracking
+  var grossPL = alpacaTodayGross !== 0 ? alpacaTodayGross : (realized + liveUnrealized);
+
+  // Fees: use conservative mode's tracked fees, or estimate from live positions
   var fees = Number(conserv.total_fees_today || conserv.estimated_fees || 0);
-  // Also compute live fee estimate from current positions for consistency
   var liveFees = 0;
   (Array.isArray(pos) ? pos : []).forEach(function(p) {{
     var qty = Math.abs(Number(p.qty || p.quantity || 0));
@@ -609,8 +617,7 @@ function renderOverview(alp, insight) {{
     liveFees += (entry * qty * 0.0001) + (cur * qty * 0.0001);
   }});
   if (liveFees > 0) fees = Math.max(fees, liveFees);
-  var grossPL = realized + unrealized;
-  var netPL = realized + unrealized - fees;
+  var netPL = grossPL - fees;
 
   $('ovGross').textContent = signedMoney(grossPL);
   $('ovGross').className = 'card-value ' + plClass(grossPL);
