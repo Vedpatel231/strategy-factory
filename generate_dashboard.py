@@ -280,7 +280,7 @@ tr:hover td{{background:var(--bg-hover)}}
   <div class="table-section">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ETF</th><th class="num">Price</th><th class="num">Day %</th><th>Position</th><th>Signal</th><th class="num">Score</th><th class="num">Net P&L</th><th>Last Action</th></tr></thead>
+        <thead><tr><th>ETF</th><th class="num">Price</th><th class="num">Entry %</th><th>Position</th><th>Signal</th><th class="num">Score</th><th class="num">Net P&L</th><th>Last Action</th></tr></thead>
         <tbody id="ovEtfBody"></tbody>
       </table>
     </div>
@@ -856,10 +856,19 @@ function renderClaude(alp, insight) {{
   // Risk
   var mode = conserv.daily_mode || conserv.mode || 'SAFE_TEST_MODE';
   $('clRiskMode').textContent = mode.replace(/_/g, ' ').replace('MODE', '').trim();
-  var realized = Number(conserv.realized_pl || 0);
-  var unrealized = Number(conserv.unrealized_pl || 0);
-  $('clRiskPL').textContent = signedMoney(realized + unrealized);
-  $('clRiskPL').className = 'card-value ' + plClass(realized + unrealized);
+  // Use Alpaca portfolio history for today's gross P&L — same source as Daily P&L Tracker
+  var _clTodayPl = (alp && alp.todayPl) || {{}};
+  var _clGross = Number(_clTodayPl.today_total_pl || 0);
+  if (_clGross === 0) {{
+    // Fallback: conservative tracked + live positions
+    var _clLiveUPL = 0;
+    (Array.isArray((alp && alp.positions) ? alp.positions : []) ? alp.positions : []).forEach(function(p) {{ _clLiveUPL += Number(p.unrealized_pl || 0); }});
+    _clGross = Number(conserv.realized_pl || 0) + _clLiveUPL;
+  }}
+  var _clFees = Number(conserv.total_fees_today || conserv.estimated_fees || 0);
+  var _clNet = _clGross - _clFees;
+  $('clRiskPL').textContent = signedMoney(_clNet);
+  $('clRiskPL').className = 'card-value ' + plClass(_clNet);
   $('clRiskUsed').textContent = '$' + Number(conserv.open_risk_used || 0).toFixed(2);
   $('clRiskThresh').textContent = String(conserv.quality_threshold || conserv.required_quality_score || 75);
 
@@ -999,7 +1008,10 @@ function copyClaudeExport() {{
   lines.push('CEO DIRECTION: ' + (ceo.market_direction || 'unknown'));
   lines.push('DAILY MODE: ' + (conserv.daily_mode || conserv.mode || 'unknown'));
   lines.push('');
-  lines.push('DAILY P&L: Net ' + signedMoney(Number(conserv.realized_pl || 0) + Number(conserv.unrealized_pl || 0)));
+  var _expTodayPl = (alp.todayPl) || {{}};
+  var _expGross = Number(_expTodayPl.today_total_pl || 0) || (Number(conserv.realized_pl || 0) + (alp.positions || []).reduce(function(s, p) {{ return s + Number(p.unrealized_pl || 0); }}, 0));
+  var _expFees = Number(conserv.total_fees_today || conserv.estimated_fees || 0);
+  lines.push('DAILY P&L: Gross ' + signedMoney(_expGross) + ' | Fees -$' + Math.abs(_expFees).toFixed(2) + ' | Net ' + signedMoney(_expGross - _expFees));
   lines.push('OPEN POSITIONS: ' + ((alp.positions || []).length));
   lines.push('');
   lines.push('--- STRATEGY PERFORMANCE (ALL TIME) ---');
@@ -1040,7 +1052,11 @@ async function alpAutoStop() {{ await fetch('/api/alpaca/auto/stop', {{method:'P
 async function alpRunOnce() {{ await fetch('/api/alpaca/auto/run-once', {{method:'POST'}}); setTimeout(function() {{ refreshData('alpaca-live'); }}, 3000); }}
 async function alpKillAll() {{
   if (!confirm('EMERGENCY: Close ALL positions? This cannot be undone.')) return;
-  await fetch('/api/alpaca/close-all', {{method:'POST'}});
+  await fetch('/api/alpaca/close-all', {{
+    method:'POST',
+    headers:{{'Content-Type':'application/json'}},
+    body: JSON.stringify({{confirm: true}})
+  }});
   setTimeout(function() {{ refreshData('alpaca-live'); }}, 2000);
 }}
 
@@ -1128,15 +1144,28 @@ function calRender() {{
       }}
     }});
   }}
-  // For TODAY: always use conservative mode (live, accurate, tracks actual
-  // trading day P&L).  Alpaca's portfolio history day_pl includes multi-day
-  // gaps (weekends/holidays) lumped into one number, which is misleading.
-  if (_cache.alpaca && _cache.alpaca.conservative) {{
-    var cm = _cache.alpaca.conservative;
-    var todayPnl = Number(cm.realized_pl || 0) + Number(cm.unrealized_pl || 0);
-    var todayFees = Number(cm.total_fees_today || cm.estimated_fees || 0);
-    var netPnl = todayPnl - todayFees;
-    var todayEquity = Number((_cache.alpaca.account && _cache.alpaca.account.equity) || 0);
+  // For TODAY: use Alpaca portfolio history (same source as Daily P&L Tracker).
+  // This includes manual closes — authoritative for the full trading day.
+  if (_cache.alpaca) {{
+    var _todayPlData = (_cache.alpaca.todayPl) || {{}};
+    var _alpacaTodayGross = Number(_todayPlData.today_total_pl || 0);
+    var _cm = _cache.alpaca.conservative || {{}};
+    var _todayFees = Number(_cm.total_fees_today || _cm.estimated_fees || 0);
+    // Estimate live fees from open positions if no tracked fees yet
+    if (_todayFees === 0) {{
+      (_cache.alpaca.positions || []).forEach(function(p) {{
+        var _qty = Math.abs(Number(p.qty || 0));
+        _todayFees += (_qty * Number(p.avg_entry_price || 0) * 0.0001) + (_qty * Number(p.current_price || 0) * 0.0001);
+      }});
+    }}
+    // Fallback to conservative mode tracking if Alpaca history not available
+    if (_alpacaTodayGross === 0) {{
+      var _liveUPL = 0;
+      (_cache.alpaca.positions || []).forEach(function(p) {{ _liveUPL += Number(p.unrealized_pl || 0); }});
+      _alpacaTodayGross = Number(_cm.realized_pl || 0) + _liveUPL;
+    }}
+    var netPnl = _alpacaTodayGross - _todayFees;
+    var todayEquity = Number((_cache.alpaca.account && _cache.alpaca.account.equity) || (_todayPlData.today_equity || 0));
     if (Math.abs(netPnl) >= 0.01 || todayEquity > 0) {{
       dailyChanges[todayStr] = {{ pnl: netPnl, pct: todayEquity > 0 ? netPnl / todayEquity * 100 : 0, equity: todayEquity, source: 'live' }};
     }}

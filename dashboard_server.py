@@ -461,18 +461,7 @@ def alpaca_auto_run_once():
     return jsonify(AlpacaAutoTrader.get().trigger_now())
 
 
-# Dashboard button alias — JS calls /close-all (server has /emergency/kill)
-@app.route("/api/alpaca/close-all", methods=["POST"])
-@require_auth
-def alpaca_close_all():
-    client, err = get_alpaca_client()
-    if err:
-        return jsonify({"error": err}), 500
-    try:
-        results = client.close_all_positions()
-        return jsonify({"closed": results})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# Note: /api/alpaca/close-all is already defined above (line ~356) — no duplicate needed.
 
 
 # ── TODAY'S REALIZED P&L FROM ALPACA (catches manual closes) ─────────
