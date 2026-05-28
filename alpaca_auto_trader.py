@@ -266,11 +266,29 @@ class AlpacaAutoTrader:
                 except Exception as e:
                     logger.warning(f"EOD check failed: {e}")
 
-            # Sleep in 10-second slices for exit_check_interval
+            # Sleep in 10-second slices for exit_check_interval.
+            # Also poll EOD manager every slice so it fires promptly
+            # at 3:45 PM ET regardless of where we are in the cycle.
             for _ in range(exit_check_sec // 10):
                 if self._stop.is_set():
                     return
                 time.sleep(10)
+                # EOD check inside sleep loop — ensures it fires within 10s
+                # of the 3:45 PM window opening, not just once per 15-min cycle.
+                if self.is_enabled():
+                    try:
+                        from eod_manager import check_eod
+                        eod_result = check_eod()
+                        if eod_result:
+                            self._append_log({
+                                "timestamp": datetime.datetime.utcnow().isoformat(),
+                                "status": "ok",
+                                "cycle_type": "eod_close",
+                                "result": eod_result,
+                            })
+                            self._refresh_live_monitor()
+                    except Exception as e:
+                        logger.warning(f"EOD sleep-loop check failed: {e}")
 
     def _run_once(self):
         """One full cycle: re-analyze, then rebalance on Alpaca."""
