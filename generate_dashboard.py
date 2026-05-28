@@ -593,8 +593,22 @@ function renderOverview(alp, insight) {{
   $('ovModeSub').textContent = modeDesc;
 
   var realized = Number(conserv.realized_pl || 0);
-  var unrealized = Number(conserv.unrealized_pl || 0);
+  // Use LIVE unrealized from Alpaca positions instead of stale conservative state
+  var liveUnrealized = 0;
+  (Array.isArray(pos) ? pos : []).forEach(function(p) {{
+    liveUnrealized += Number(p.unrealized_pl || 0);
+  }});
+  var unrealized = liveUnrealized;
   var fees = Number(conserv.total_fees_today || conserv.estimated_fees || 0);
+  // Also compute live fee estimate from current positions for consistency
+  var liveFees = 0;
+  (Array.isArray(pos) ? pos : []).forEach(function(p) {{
+    var qty = Math.abs(Number(p.qty || p.quantity || 0));
+    var entry = Number(p.avg_entry_price || 0);
+    var cur = Number(p.current_price || 0);
+    liveFees += (entry * qty * 0.0001) + (cur * qty * 0.0001);
+  }});
+  if (liveFees > 0) fees = Math.max(fees, liveFees);
   var grossPL = realized + unrealized;
   var netPL = realized + unrealized - fees;
 
@@ -645,13 +659,18 @@ function renderOverview(alp, insight) {{
       var score = Number(m.score || 0);
       var conf = Number(m.confidence || 0);
       var reason = m.reason || m.rejection_reason || '';
-      // Find matching position for this ETF
+      // Find matching position for this ETF — compute net P&L with fees
       var posMatch = null;
       var posPL = 0;
       (Array.isArray(pos) ? pos : []).forEach(function(p) {{
         if (p.symbol === sym) {{
           posMatch = p;
-          posPL = Number(p.unrealized_pl || 0);
+          var grossUPL = Number(p.unrealized_pl || 0);
+          var pQty = Math.abs(Number(p.qty || p.quantity || 0));
+          var pEntry = Number(p.avg_entry_price || 0);
+          var pCur = Number(p.current_price || 0);
+          var pFee = (pEntry * pQty * 0.0001) + (pCur * pQty * 0.0001);
+          posPL = grossUPL - pFee;
         }}
       }});
       var priceStr = posMatch ? '$' + Number(posMatch.current_price || 0).toFixed(2) : '—';
