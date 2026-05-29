@@ -373,21 +373,38 @@ def alpaca_close_all():
             entry_price = float((entry_state or {}).get("entry_price") or position.get("avg_entry_price") or 0)
             current_price = float(position.get("current_price") or 0)
             pl_pct = ((current_price - entry_price) / entry_price * 100.0) if entry_price > 0 and current_price > 0 else 0.0
-            result = client.close_position(sym)
+            # Submit AND confirm the fill before booking the close.  A submitted
+            # order can expire/cancel without filling (this is what produced the
+            # May 28 phantom closes), so we only record realized P&L once Alpaca
+            # reports status == 'filled', using the real fill price.
+            result = client.close_position_confirmed(sym)
             closed.append(result)
-            if not result.get("error"):
-                risk_book.remove(sym)
-                journal.append({
-                    "event": "position_closed",
-                    "symbol": sym,
-                    "side": "close",
-                    "reason": "Manual dashboard close all",
-                    "entry_state": entry_state,
-                    "exit_price": current_price,
-                    "exit_notional": position.get("market_value"),
-                    "unrealized_pl_pct": round(pl_pct, 2),
-                    "order": result,
-                })
+            if result.get("error"):
+                continue
+            fill_status = (result.get("status") or "").lower()
+            if fill_status != "filled":
+                result["note"] = ("close order not filled (status "
+                                  f"'{fill_status or 'unknown'}') — position left open")
+                continue
+            fill_px = float(result.get("filled_avg_price") or 0)
+            fill_qty = float(result.get("filled_qty") or 0)
+            exit_price = fill_px if fill_px > 0 else current_price
+            exit_notional = (fill_px * fill_qty) if (fill_px > 0 and fill_qty > 0) \
+                else position.get("market_value")
+            if entry_price > 0 and exit_price > 0:
+                pl_pct = (exit_price - entry_price) / entry_price * 100.0
+            risk_book.remove(sym)
+            journal.append({
+                "event": "position_closed",
+                "symbol": sym,
+                "side": "close",
+                "reason": "Manual dashboard close all",
+                "entry_state": entry_state,
+                "exit_price": exit_price,
+                "exit_notional": exit_notional,
+                "unrealized_pl_pct": round(pl_pct, 2),
+                "order": result,
+            })
         return jsonify({"closed": closed})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

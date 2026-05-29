@@ -182,7 +182,40 @@ def check_eod():
                     f"{unrealized_plpc:+.2f}%)"
                 )
                 try:
-                    order_result = client.close_position(symbol)
+                    # Submit AND confirm the fill before booking the close.  A
+                    # submitted EOD order can expire/cancel without filling near
+                    # the bell; booking P&L from the pre-trade mark would corrupt
+                    # the journal and the conservative-mode daily ladder.  Only
+                    # book once Alpaca reports status == 'filled', recomputing the
+                    # realized net from the actual fill price.
+                    order_result = client.close_position_confirmed(symbol)
+                    fill_status = (order_result.get("status") or "").lower()
+                    if order_result.get("error") or fill_status != "filled":
+                        results.append({
+                            "symbol": symbol,
+                            "action": "close_unconfirmed",
+                            "reason": (f"Close order not filled (status "
+                                       f"'{fill_status or order_result.get('error') or 'unknown'}') "
+                                       f"— kept for next morning"),
+                            "unrealized_pl": round(unrealized_pl, 2),
+                            "order": order_result,
+                        })
+                        logger.warning(f"  EOD {symbol}: close not filled, keeping position open")
+                        continue
+
+                    # Recompute realized net from the confirmed fill price.
+                    fill_px = float(order_result.get("filled_avg_price") or 0)
+                    fill_qty = float(order_result.get("filled_qty") or 0)
+                    if fill_px > 0 and fill_qty > 0:
+                        exit_notional = fill_px * fill_qty
+                        # entry_notional was computed above (cost basis estimate)
+                        realized_gross = exit_notional - entry_notional
+                        realized_fee = _est_round_trip_fee(entry_notional, exit_notional)
+                        net_after_fees = realized_gross - realized_fee
+                        est_fee = realized_fee
+                        market_value = exit_notional
+                        unrealized_pl = realized_gross
+
                     results.append({
                         "symbol": symbol,
                         "action": "closed",

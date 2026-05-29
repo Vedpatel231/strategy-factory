@@ -162,7 +162,37 @@ class ExitManager:
             event_type = "partial_profit"
         elif close_all:
             result = self._close_or_dry(symbol, dry_run)
-            if not result.get("error"):
+            # Only book the close when the order actually FILLED.  A submitted
+            # close can expire/cancel without filling (e.g. near the bell);
+            # booking realized P&L from the pre-trade price would corrupt the
+            # journal.  If it didn't fill, leave the position open so a later
+            # cycle can retry, and log the unconfirmed attempt.
+            if not dry_run and not result.get("error"):
+                fill_status = (result.get("status") or "").lower()
+                if fill_status != "filled":
+                    pending = {
+                        "timestamp": _utcnow(),
+                        "symbol": symbol,
+                        "action": "exit_unconfirmed",
+                        "reason": (f"{reason} Close order status "
+                                   f"'{fill_status or 'unknown'}' — not filled, "
+                                   f"leaving position open."),
+                        "order": result,
+                    }
+                    self.logger.append("exit_unconfirmed", pending)
+                    return pending
+                # Use the real fill price/qty for accurate realized P&L.
+                fill_px = _safe_float(result.get("filled_avg_price"))
+                fill_qty = _safe_float(result.get("filled_qty"))
+                if fill_px > 0:
+                    current_price = fill_px
+                    if entry_price > 0:
+                        pl_pct = (fill_px - entry_price) / entry_price * 100.0
+                    if fill_qty > 0:
+                        market_value = fill_px * fill_qty
+                self.risk_book.remove(symbol)
+            elif not result.get("error"):
+                # Dry-run path keeps prior (simulated) behaviour.
                 self.risk_book.remove(symbol)
             event_type = "position_closed"
         else:
@@ -228,7 +258,7 @@ class ExitManager:
         if self.client is None:
             self.client = AlpacaPaperClient()
         try:
-            return self.client.close_position(symbol)
+            return self.client.close_position_confirmed(symbol)
         except Exception as exc:
             return {"symbol": symbol, "side": "close", "status": "error", "error": str(exc)}
 

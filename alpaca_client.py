@@ -325,6 +325,51 @@ class AlpacaPaperClient:
             "created_at": o.created_at.isoformat() if o.created_at else "",
         }
 
+    def get_order(self, order_id):
+        """Fetch a single order by id (formatted), so callers can poll for fills."""
+        try:
+            o = self._trading.get_order_by_id(order_id)
+            return self._format_order(o)
+        except Exception as e:
+            return {"error": str(e), "id": str(order_id)}
+
+    def close_position_confirmed(self, symbol, max_wait=8.0, interval=1.0):
+        """Submit a close order and poll until it reaches a terminal state.
+
+        Returns the final formatted order dict.  Callers MUST check
+        status == 'filled' before booking realized P&L: a submitted close
+        can expire/cancel without ever filling (e.g. a DAY order placed near
+        the closing bell), and booking a phantom close from the pre-trade
+        price corrupts the P&L journal.  When the fill is confirmed, the
+        returned dict carries the real filled_avg_price/filled_qty.
+        """
+        import time
+
+        result = self.close_position(symbol)
+        if result.get("error"):
+            return result
+        order_id = result.get("id")
+        status = (result.get("status") or "").lower()
+        terminal_unfilled = {
+            "canceled", "cancelled", "expired", "rejected",
+            "done_for_day", "suspended", "stopped",
+        }
+        if status == "filled" or not order_id or order_id == "DRY-RUN-CLOSE":
+            return result
+        waited = 0.0
+        while waited < max_wait:
+            time.sleep(interval)
+            waited += interval
+            updated = self.get_order(order_id)
+            if updated.get("error"):
+                continue
+            st = (updated.get("status") or "").lower()
+            if st == "filled" or st in terminal_unfilled:
+                return updated
+        # Timed out still pending — return last known state (caller will treat
+        # any non-'filled' status as "do not book").
+        return self.get_order(order_id)
+
     def get_orders(self, limit=50, status="all"):
         from alpaca.trading.requests import GetOrdersRequest
         from alpaca.trading.enums import QueryOrderStatus
