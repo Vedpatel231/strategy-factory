@@ -514,6 +514,40 @@ def alpaca_today_realized():
         return jsonify({"error": str(e), "realized_pl": 0}), 500
 
 
+# ── REALIZED P&L BY DAY (single source of truth for the calendar) ────
+@app.route("/api/alpaca/realized-by-day")
+@require_auth
+def alpaca_realized_by_day():
+    """Per-day net realized P&L computed from real Alpaca fills via FIFO.
+
+    This is the calendar's single source of truth: every weekday cell shows
+    the net realized P&L (after estimated fees) from positions actually
+    closed that day, bucketed by US/Eastern date of the closing sell.
+    """
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err, "days": {}}), 500
+    try:
+        from trade_journal import realized_pnl_by_day
+        orders = client.get_orders(limit=500, status="all")
+        days = realized_pnl_by_day(orders)
+        total_net = round(sum(d["realized_net"] for d in days.values()), 2)
+        total_fees = round(sum(d["fees"] for d in days.values()), 2)
+        total_trades = sum(d["closed_trades"] for d in days.values())
+        return jsonify({
+            "days": days,
+            "totals": {
+                "realized_net": total_net,
+                "fees": total_fees,
+                "closed_trades": total_trades,
+            },
+            "source": "alpaca_fills_fifo_net_of_fees_eastern_day",
+        })
+    except Exception as e:
+        logger.error(f"realized-by-day failed: {e}")
+        return jsonify({"error": str(e), "days": {}}), 500
+
+
 # ── INSIGHT DATA (trading desk state for dashboard) ──────────────────
 @app.route("/api/insight-data")
 @require_auth

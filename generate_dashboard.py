@@ -216,6 +216,8 @@ tr:hover td{{background:var(--bg-hover)}}
 .pnl-cal-cell.negative .cal-pnl-usd{{color:var(--red)}}.pnl-cal-cell.negative .cal-pnl-pct{{color:var(--red)}}
 .pnl-cal-cell.zero .cal-pnl-usd{{color:var(--text-muted)}}.pnl-cal-cell.zero .cal-pnl-pct{{color:var(--text-muted)}}
 .pnl-cal-cell.today{{border-color:var(--blue);box-shadow:0 0 8px rgba(59,130,246,.2)}}
+.pnl-cal-cell.weekend{{background:transparent;border-style:dashed;opacity:.45}}
+.pnl-cal-cell.weekend .cal-day{{opacity:.6}}
 .pnl-cal-summary{{display:flex;gap:20px;margin-top:14px;padding:12px 16px;background:var(--bg-hover);border:1px solid var(--border);border-radius:6px;flex-wrap:wrap}}
 .pnl-cal-summary-item{{display:flex;flex-direction:column;gap:2px}}
 .pnl-cal-summary-label{{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}}
@@ -301,7 +303,7 @@ tr:hover td{{background:var(--bg-hover)}}
   <div class="section-title">Daily P&L Calendar</div>
   <div class="pnl-calendar" id="pnlCalendarSection">
     <div class="cal-stats-bar" id="calStatsBar" style="display:none;">
-      <div class="cal-stat-box"><div class="cal-stat-value" id="calStatPnl">$0.00</div><div class="cal-stat-label">Month P&L</div></div>
+      <div class="cal-stat-box"><div class="cal-stat-value" id="calStatPnl">$0.00</div><div class="cal-stat-label">Realized P&L</div></div>
       <div class="cal-stat-box"><div class="cal-stat-value" id="calStatPct">0.00%</div><div class="cal-stat-label">Month %</div></div>
       <div class="cal-stat-box"><div class="cal-stat-value" id="calStatTrades">0</div><div class="cal-stat-label">Trades</div></div>
       <div class="cal-stat-box"><div class="cal-stat-value" id="calStatWinRate">—</div><div class="cal-stat-label">Win Rate</div></div>
@@ -1061,32 +1063,18 @@ async function alpKillAll() {{
 }}
 
 /* ══ P&L CALENDAR ══ */
-var calData = {{}};
-var calTradeData = {{}};
+/* Single source of truth: net realized P&L per day from real Alpaca fills
+   (FIFO-matched, net of estimated fees, bucketed by US/Eastern close date).
+   One number per weekday. Weekends/holidays show no number. */
+var calRealized = {{}};
 var calYear = new Date().getFullYear();
 var calMonth = new Date().getMonth();
 
 async function calLoadData() {{
   try {{
-    var json = await fetchJSON('/api/alpaca/daily-pnl');
-    calData = (json && json.snapshots) || {{}};
-  }} catch(e) {{ calData = {{}}; }}
-  try {{
-    var ledger = await fetchJSON('/api/alpaca/trade-ledger?limit=2000');
-    var allR = (ledger && ledger.rows) || [];
-    var rows = allR.filter(function(r) {{ return ETF_SYMBOLS[(r.symbol||'').toUpperCase()]; }});
-    calTradeData = {{}};
-    rows.forEach(function(row) {{
-      var closedAt = row.closed_at || row.opened_at || '';
-      var dateKey = closedAt.substring(0, 10);
-      if (!dateKey) return;
-      if (!calTradeData[dateKey]) calTradeData[dateKey] = {{ count: 0, wins: 0, totalPL: 0 }};
-      calTradeData[dateKey].count++;
-      var pl = Number(row.net_pl || 0);
-      calTradeData[dateKey].totalPL += pl;
-      if (pl > 0) calTradeData[dateKey].wins++;
-    }});
-  }} catch(e) {{ calTradeData = {{}}; }}
+    var json = await fetchJSON('/api/alpaca/realized-by-day');
+    calRealized = (json && json.days) || {{}};
+  }} catch(e) {{ calRealized = {{}}; }}
   calRender();
 }}
 
@@ -1097,15 +1085,15 @@ function calRender() {{
   var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   $('calMonthLabel').textContent = monthNames[calMonth] + ' ' + calYear;
 
-  /* One-time legend explaining the two numbers shown in each day cell. */
+  /* One-time legend explaining the single number shown in each day cell. */
   if (!document.getElementById('calLegend')) {{
     var _csec = $('pnlCalendarSection');
     if (_csec) {{
       var leg = document.createElement('div'); leg.id = 'calLegend';
       leg.style.cssText = 'font-size:11px;color:var(--text-muted);margin:4px 0 8px;line-height:1.5;';
-      leg.innerHTML = '<b>Big $ / "acct %"</b> = account equity change for the day (mark-to-market, includes unrealized P&L on positions still open). '
-                    + '<b>"Nt · $"</b> = realized P&L from round-trips <i>closed</i> that day; the trade count rises only when a position is sold. '
-                    + 'A buy that is held overnight shows 0 trades until it is sold.';
+      leg.innerHTML = 'Each weekday shows the <b>net realized P&L (after fees)</b> from positions actually <b>closed</b> that day, '
+                    + 'computed from real Alpaca fills (FIFO-matched). A day with no closes is blank. '
+                    + 'Weekends are blank because the market is closed.';
       var _lbl = $('calMonthLabel');
       if (_lbl && _lbl.parentNode) {{ _lbl.parentNode.insertBefore(leg, _lbl.nextSibling); }}
       else {{ _csec.insertBefore(leg, _csec.firstChild); }}
@@ -1123,134 +1111,56 @@ function calRender() {{
   var today = new Date();
   var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
 
-  /* Build daily P&L using Alpaca equity history.
-     - Use day_pl from Alpaca when available (most accurate).
-     - Fall back to equity diff when day_pl not provided.
-     - Skip zero-change days (weekends / holidays).
-     - For days missing from Alpaca but present in trade ledger, use trade P&L.
-     - For today, use live conservative mode data. */
-  var sortedDates = Object.keys(calData).sort();
-  var dailyChanges = {{}};
-  for (var i = 0; i < sortedDates.length; i++) {{
-    var d = sortedDates[i];
-    var snap = calData[d];
-    var prevSnap = i > 0 ? calData[sortedDates[i-1]] : null;
-    var eq = Number((snap && snap.equity) || 0);
-    var prevEq = prevSnap ? Number(prevSnap.equity || 0) : 0;
-    // Use Alpaca day_pl if available, otherwise compute from equity diff
-    var dayPnl = (snap && snap.day_pl !== undefined && snap.day_pl !== 0) ? Number(snap.day_pl) : (prevEq > 0 ? eq - prevEq : 0);
-    var dayPct = (snap && snap.day_pl_pct !== undefined && snap.day_pl_pct !== 0) ? Number(snap.day_pl_pct) : (prevEq > 0 ? dayPnl / prevEq * 100 : 0);
-    // Only include days with actual change (skip weekends/holidays with 0 change)
-    if (Math.abs(dayPnl) >= 0.01) {{
-      dailyChanges[d] = {{ pnl: dayPnl, pct: dayPct, equity: eq }};
-    }}
-  }}
-  // Fill in days missing from Alpaca but present in trade ledger
-  if (calTradeData) {{
-    var lastKnownEquity = 0;
-    if (sortedDates.length > 0) {{ var ls = calData[sortedDates[sortedDates.length - 1]]; lastKnownEquity = Number((ls && ls.equity) || 0); }}
-    Object.keys(calTradeData).forEach(function(dateKey) {{
-      if (!dailyChanges[dateKey] && calTradeData[dateKey].count > 0) {{
-        var td = calTradeData[dateKey];
-        var snapEq = 0;
-        for (var si = sortedDates.length - 1; si >= 0; si--) {{ if (sortedDates[si] < dateKey) {{ snapEq = Number((calData[sortedDates[si]] && calData[sortedDates[si]].equity) || 0); break; }} }}
-        if (snapEq === 0) snapEq = lastKnownEquity;
-        dailyChanges[dateKey] = {{ pnl: td.totalPL, pct: snapEq > 0 ? td.totalPL / snapEq * 100 : 0, equity: snapEq, source: 'trades' }};
-      }}
-    }});
-  }}
-  // For TODAY: use Alpaca portfolio history (same source as Daily P&L Tracker).
-  // This includes manual closes — authoritative for the full trading day.
-  if (_cache.alpaca) {{
-    var _todayPlData = (_cache.alpaca.todayPl) || {{}};
-    var _alpacaTodayGross = Number(_todayPlData.today_total_pl || 0);
-    var _cm = _cache.alpaca.conservative || {{}};
-    var _todayFees = Number(_cm.total_fees_today || _cm.estimated_fees || 0);
-    // Estimate live fees from open positions if no tracked fees yet
-    if (_todayFees === 0) {{
-      (_cache.alpaca.positions || []).forEach(function(p) {{
-        var _qty = Math.abs(Number(p.qty || 0));
-        _todayFees += (_qty * Number(p.avg_entry_price || 0) * 0.0001) + (_qty * Number(p.current_price || 0) * 0.0001);
-      }});
-    }}
-    // Fallback to conservative mode tracking if Alpaca history not available
-    if (_alpacaTodayGross === 0) {{
-      var _liveUPL = 0;
-      (_cache.alpaca.positions || []).forEach(function(p) {{ _liveUPL += Number(p.unrealized_pl || 0); }});
-      _alpacaTodayGross = Number(_cm.realized_pl || 0) + _liveUPL;
-    }}
-    var netPnl = _alpacaTodayGross - _todayFees;
-    var todayEquity = Number((_cache.alpaca.account && _cache.alpaca.account.equity) || (_todayPlData.today_equity || 0));
-    if (Math.abs(netPnl) >= 0.01 || todayEquity > 0) {{
-      dailyChanges[todayStr] = {{ pnl: netPnl, pct: todayEquity > 0 ? netPnl / todayEquity * 100 : 0, equity: todayEquity, source: 'live' }};
-    }}
-  }}
-
   for (var e = 0; e < firstDay; e++) {{ var emp = document.createElement('div'); emp.className = 'pnl-cal-cell empty'; grid.appendChild(emp); }}
 
-  var monthPnl = 0, bestDay = null, worstDay = null, daysTracked = 0, greenDays = 0, redDays = 0;
-  var firstEquity = null, lastEquity = null, totalTrades = 0, winningTrades = 0;
+  var monthPnl = 0, monthFees = 0, bestDay = null, worstDay = null;
+  var daysTracked = 0, greenDays = 0, redDays = 0, totalTrades = 0;
 
   for (var day = 1; day <= daysInMonth; day++) {{
     var dateStr = calYear + '-' + String(calMonth+1).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+    var dow = new Date(calYear, calMonth, day).getDay();
+    var isWeekend = (dow === 0 || dow === 6);
+
     var cell = document.createElement('div');
     cell.className = 'pnl-cal-cell';
+    if (isWeekend) cell.classList.add('weekend');
     var dayLabel = document.createElement('div'); dayLabel.className = 'cal-day'; dayLabel.textContent = day; cell.appendChild(dayLabel);
     if (dateStr === todayStr) cell.classList.add('today');
 
-    var change = dailyChanges[dateStr];
-    if (change) {{
+    /* Only weekdays can carry a realized number. Weekends stay blank. */
+    var rec = (!isWeekend) ? calRealized[dateStr] : null;
+    if (rec) {{
+      var net = Number(rec.realized_net || 0);
+      var trades = Number(rec.closed_trades || 0);
       daysTracked++;
-      if (firstEquity === null) firstEquity = change.equity - change.pnl;
-      lastEquity = change.equity;
-      monthPnl += change.pnl;
-
-      var dayTrades = (calTradeData && calTradeData[dateStr]) || {{}};
-      var dayTradeCount = dayTrades.count || 0;
-      totalTrades += dayTradeCount;
-      winningTrades += (dayTrades.wins || 0);
-
-      /* TWO DIFFERENT NUMBERS, CLEARLY LABELED:
-         (1) Account change (mark-to-market) — the equity swing for the
-             day, INCLUDING unrealized P&L on positions still held open.
-             This matches Alpaca's equity curve and moves even on days
-             with zero closed trades. Shown as the big $ + "acct %".
-         (2) Realized P&L from round-trips CLOSED on this day, taken from
-             the trade ledger. The trade count increments only when a
-             position is SOLD (a full buy->sell round-trip). A day where
-             we only bought and held overnight shows 0 trades here. */
-      var realizedPL = Number(dayTrades.totalPL || 0);
+      monthPnl += net;
+      monthFees += Number(rec.fees || 0);
+      totalTrades += trades;
 
       var pnlEl = document.createElement('div'); pnlEl.className = 'cal-pnl-usd';
-      var absPnl = Math.abs(change.pnl);
-      pnlEl.textContent = (change.pnl >= 0 ? '+$' : '-$') + (absPnl >= 1000 ? (absPnl/1000).toFixed(1) + 'K' : absPnl.toFixed(2));
+      var absNet = Math.abs(net);
+      pnlEl.textContent = (net >= 0 ? '+$' : '-$') + (absNet >= 1000 ? (absNet/1000).toFixed(1) + 'K' : absNet.toFixed(2));
       cell.appendChild(pnlEl);
 
-      var pctEl = document.createElement('div'); pctEl.className = 'cal-pnl-pct';
-      pctEl.textContent = 'acct ' + (change.pct >= 0 ? '+' : '') + change.pct.toFixed(2) + '%';
-      cell.appendChild(pctEl);
-
-      if (dayTradeCount > 0) {{
+      if (trades > 0) {{
         var tradeEl = document.createElement('div'); tradeEl.className = 'cal-trades';
-        tradeEl.textContent = dayTradeCount + 't · ' + (realizedPL >= 0 ? '+$' : '-$') + Math.abs(realizedPL).toFixed(2);
-        tradeEl.style.color = realizedPL >= 0 ? 'var(--green)' : 'var(--red)';
+        tradeEl.textContent = trades + (trades === 1 ? ' close' : ' closes');
         cell.appendChild(tradeEl);
       }}
 
-      cell.title = 'Account change (mark-to-market, incl. open positions): '
-                 + (change.pnl >= 0 ? '+$' : '-$') + Math.abs(change.pnl).toFixed(2)
-                 + ' (' + (change.pct >= 0 ? '+' : '') + change.pct.toFixed(2) + '%)'
-                 + '\\nRealized (closed round-trips): '
-                 + (dayTradeCount > 0
-                     ? ((realizedPL >= 0 ? '+$' : '-$') + Math.abs(realizedPL).toFixed(2) + ' from ' + dayTradeCount + ' trade(s)')
-                     : 'none closed today');
+      var symParts = [];
+      if (rec.symbols) {{ Object.keys(rec.symbols).forEach(function(s) {{ symParts.push(s + ' ' + (rec.symbols[s] >= 0 ? '+' : '') + Number(rec.symbols[s]).toFixed(2)); }}); }}
+      cell.title = 'Net realized (after fees): ' + (net >= 0 ? '+$' : '-$') + absNet.toFixed(2)
+                 + '\\nFees: $' + Number(rec.fees || 0).toFixed(2)
+                 + '\\nCloses: ' + trades
+                 + (symParts.length ? ('\\n' + symParts.join('  ')) : '');
 
-      if (change.pnl > 0) {{ cell.classList.add('positive'); greenDays++; }}
-      else if (change.pnl < 0) {{ cell.classList.add('negative'); redDays++; }}
+      if (net > 0) {{ cell.classList.add('positive'); greenDays++; }}
+      else if (net < 0) {{ cell.classList.add('negative'); redDays++; }}
       else cell.classList.add('zero');
 
-      if (bestDay === null || change.pnl > bestDay.pnl) bestDay = {{ pnl: change.pnl, date: dateStr }};
-      if (worstDay === null || change.pnl < worstDay.pnl) worstDay = {{ pnl: change.pnl, date: dateStr }};
+      if (bestDay === null || net > bestDay.pnl) bestDay = {{ pnl: net, date: dateStr }};
+      if (worstDay === null || net < worstDay.pnl) worstDay = {{ pnl: net, date: dateStr }};
     }}
     grid.appendChild(cell);
   }}
@@ -1259,11 +1169,15 @@ function calRender() {{
   if (daysTracked > 0) {{
     statsBar.style.display = 'grid';
     var pnlColor = monthPnl >= 0 ? 'var(--green)' : 'var(--red)';
-    var monthPct = firstEquity > 0 ? monthPnl / firstEquity * 100 : 0;
     var sp = $('calStatPnl'); sp.textContent = (monthPnl >= 0 ? '+$' : '-$') + (Math.abs(monthPnl) >= 1000 ? (Math.abs(monthPnl)/1000).toFixed(2) + 'K' : Math.abs(monthPnl).toFixed(2)); sp.style.color = pnlColor;
-    var spct = $('calStatPct'); spct.textContent = (monthPct >= 0 ? '+' : '') + monthPct.toFixed(2) + '%'; spct.style.color = pnlColor;
+    /* Repurpose the 2nd stat box: show fees paid this month (label updated). */
+    var spct = $('calStatPct'); spct.textContent = '-$' + monthFees.toFixed(2); spct.style.color = 'var(--text-muted)';
+    var spctLbl = spct.nextElementSibling; if (spctLbl) spctLbl.textContent = 'Fees Paid';
     $('calStatTrades').textContent = totalTrades;
-    $('calStatWinRate').textContent = totalTrades > 0 ? ((winningTrades / totalTrades) * 100).toFixed(1) + '%' : '—';
+    /* Win Rate here = share of tracked days that were green (relabeled). */
+    var greenRedDays = greenDays + redDays;
+    $('calStatWinRate').textContent = greenRedDays > 0 ? ((greenDays / greenRedDays) * 100).toFixed(0) + '%' : '—';
+    var wrLbl = $('calStatWinRate').nextElementSibling; if (wrLbl) wrLbl.textContent = 'Green %';
     var ge = $('calStatGreen'); ge.textContent = greenDays; ge.style.color = 'var(--green)';
     var re = $('calStatRed'); re.textContent = redDays; re.style.color = 'var(--red)';
   }} else {{ statsBar.style.display = 'none'; }}
@@ -1281,7 +1195,7 @@ function calRender() {{
     if (!document.getElementById('calNoDataMsg')) {{
       var nd = document.createElement('div'); nd.id = 'calNoDataMsg';
       nd.style.cssText = 'text-align:center;padding:16px;color:var(--text-muted);font-size:13px;margin-top:8px;background:var(--bg-hover);border:1px solid var(--border);border-radius:6px;';
-      nd.textContent = 'No daily P&L data yet. Alpaca needs at least one full trading day to generate history.';
+      nd.textContent = 'No closed trades yet this month. Days fill in as positions are sold.';
       var cs = $('pnlCalendarSection'); if (cs) cs.appendChild(nd);
     }}
   }}

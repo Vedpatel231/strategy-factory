@@ -10,6 +10,12 @@ import os
 import csv
 from datetime import datetime, timezone
 
+try:
+    from zoneinfo import ZoneInfo
+    _EASTERN = ZoneInfo("America/New_York")
+except Exception:  # pragma: no cover - fallback if tzdata missing
+    _EASTERN = None
+
 import config
 
 JOURNAL_FILE = os.path.join(config.DATA_DIR, "trade_journal.json")
@@ -225,6 +231,146 @@ def _as_float(value, default=0.0):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _parse_ts(value):
+    """Parse an ISO timestamp (UTC) into an aware datetime, or None."""
+    if not value:
+        return None
+    try:
+        s = str(value).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def _eastern_day(dt):
+    """Return the US/Eastern calendar date string (YYYY-MM-DD) for an aware dt."""
+    if dt is None:
+        return None
+    if _EASTERN is not None:
+        try:
+            return dt.astimezone(_EASTERN).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    # Fallback: approximate Eastern as UTC-5 (no DST awareness)
+    from datetime import timedelta
+    return (dt.astimezone(timezone.utc) - timedelta(hours=5)).strftime("%Y-%m-%d")
+
+
+def realized_pnl_by_day(orders, fee_rate=None):
+    """Compute per-day realized P&L from real Alpaca fills using FIFO matching.
+
+    This is the single source of truth for the calendar. It takes a list of
+    Alpaca orders (as returned by AlpacaClient.get_orders, i.e. dicts with
+    symbol/side/filled_qty/filled_avg_price/filled_at/status), keeps only the
+    real fills, matches each sell against earlier buys of the same symbol in
+    FIFO order, nets out an estimated per-side fee, and buckets the realized
+    result into the US/Eastern calendar day on which the *closing sell* filled.
+
+    Returns: {date_str: {"realized_net", "realized_gross", "fees",
+                          "closed_trades", "symbols": {sym: net}}}
+    Only long positions (buy then sell) are modeled, matching the system's
+    long-only ETF design.
+    """
+    if fee_rate is None:
+        fee_rate = ALPACA_STOCK_SLIPPAGE_BPS / 10000.0
+
+    # Keep only real fills with a usable fill timestamp.
+    fills = []
+    for o in orders or []:
+        status = str(o.get("status") or "").lower()
+        if status != "filled":
+            continue
+        qty = _as_float(o.get("filled_qty") or o.get("qty"))
+        px = _as_float(o.get("filled_avg_price"))
+        if qty <= 0 or px <= 0:
+            continue
+        side = str(o.get("side") or "").lower()
+        if side not in ("buy", "sell"):
+            continue
+        dt = _parse_ts(o.get("filled_at") or o.get("submitted_at") or o.get("created_at"))
+        if dt is None:
+            continue
+        fills.append({
+            "symbol": o.get("symbol"),
+            "side": side,
+            "qty": qty,
+            "px": px,
+            "dt": dt,
+        })
+
+    # Chronological order so FIFO lots are built correctly.
+    fills.sort(key=lambda f: f["dt"])
+
+    lots = {}   # symbol -> list of [qty_remaining, price] buy lots (FIFO)
+    days = {}
+
+    def _day_bucket(date_str):
+        if date_str not in days:
+            days[date_str] = {
+                "realized_net": 0.0,
+                "realized_gross": 0.0,
+                "fees": 0.0,
+                "closed_trades": 0,
+                "symbols": {},
+            }
+        return days[date_str]
+
+    for f in fills:
+        sym = f["symbol"]
+        if f["side"] == "buy":
+            lots.setdefault(sym, []).append([f["qty"], f["px"]])
+            continue
+
+        # Sell: match against earliest buy lots FIFO.
+        remaining = f["qty"]
+        sell_px = f["px"]
+        queue = lots.get(sym, [])
+        date_str = _eastern_day(f["dt"])
+        bucket = None  # created lazily only if a buy lot actually matches
+        matched_any = False
+
+        while remaining > 1e-9 and queue:
+            lot = queue[0]
+            lot_qty, buy_px = lot[0], lot[1]
+            take = min(remaining, lot_qty)
+
+            gross = (sell_px - buy_px) * take
+            buy_fee = buy_px * take * fee_rate
+            sell_fee = sell_px * take * fee_rate
+            fees = buy_fee + sell_fee
+            net = gross - fees
+
+            if bucket is None:
+                bucket = _day_bucket(date_str)
+            bucket["realized_gross"] += gross
+            bucket["fees"] += fees
+            bucket["realized_net"] += net
+            bucket["symbols"][sym] = bucket["symbols"].get(sym, 0.0) + net
+            matched_any = True
+
+            lot[0] -= take
+            remaining -= take
+            if lot[0] <= 1e-9:
+                queue.pop(0)
+
+        if matched_any:
+            bucket["closed_trades"] += 1
+        # Unmatched sells (no prior buy in the window) are ignored rather than
+        # treated as phantom realized P&L.
+
+    # Round for display stability.
+    for b in days.values():
+        b["realized_net"] = round(b["realized_net"], 2)
+        b["realized_gross"] = round(b["realized_gross"], 2)
+        b["fees"] = round(b["fees"], 2)
+        b["symbols"] = {s: round(v, 2) for s, v in b["symbols"].items()}
+
+    return days
 
 
 def _round_money(value):
