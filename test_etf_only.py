@@ -48,11 +48,12 @@ def run_tests():
     print("  Strategy Factory — ETF-Only System Tests")
     print("=" * 64)
 
-    # ── Test 1: Config contains only 10 ETFs ──
+    # ── Test 1: Config contains the 12-ETF long-only universe ──
     import config
-    expected_etfs = {"QQQ", "SPY", "SOXL", "IWM", "TQQQ", "SOXX", "SMH", "RSP", "SOXS", "VOO"}
+    expected_etfs = {"QQQ", "SPY", "IWM", "SMH", "XLF", "XLE",
+                     "XLV", "XLI", "GLD", "GDX", "TLT", "XBI"}
     actual_etfs = set(config.STOCK_ASSETS)
-    test("Config has exactly 10 ETFs",
+    test("Config has exactly the 12 long-only ETFs",
          actual_etfs == expected_etfs,
          f"Expected {expected_etfs}, got {actual_etfs}")
 
@@ -115,9 +116,9 @@ def run_tests():
          len(bad_imports) == 0,
          f"Found: {bad_imports}")
 
-    # ── Test 8: Leveraged ETFs identified correctly ──
-    test("Leveraged ETFs set is {SOXL, TQQQ, SOXS}",
-         config.LEVERAGED_ETFS == {"SOXL", "TQQQ", "SOXS"},
+    # ── Test 8: Long-only universe — no leveraged/inverse ETFs ──
+    test("Leveraged ETFs set is empty (long-only, no leverage)",
+         config.LEVERAGED_ETFS == set(),
          f"Got {config.LEVERAGED_ETFS}")
 
     # ── Test 9: MAX_CONCURRENT_CRYPTO is 0 ──

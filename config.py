@@ -23,26 +23,31 @@ DB_PATH = os.environ.get("STRATEGY_FACTORY_DB", os.path.join(DATA_DIR, "strategy
 # DISABLED: No crypto trading.
 CRYPTO_ASSETS = []
 
-# Top 10 ETFs — the active trading universe.
-# Leveraged/inverse ETFs (SOXL, TQQQ, SOXS) get 50% position sizing.
+# Active trading universe — 12 liquid, long-only swing-trading ETFs.
+# Chosen to be diversified (broad equity, sectors, commodities, bonds)
+# with no near-duplicates and NO leveraged/inverse products, so the
+# strategies trade uncorrelated underlyings and position sizing is clean.
 STOCK_ASSETS = [
-    "QQQ",    # Nasdaq 100
-    "SPY",    # S&P 500
-    "SOXL",   # Semiconductors 3x Bull (LEVERAGED)
-    "IWM",    # Russell 2000 Small Cap
-    "TQQQ",   # Nasdaq 100 3x Bull (LEVERAGED)
-    "SOXX",   # Semiconductors
-    "SMH",    # Semiconductors (VanEck)
-    "RSP",    # S&P 500 Equal Weight
-    "SOXS",   # Semiconductors 3x Bear (LEVERAGED/INVERSE)
-    "VOO",    # S&P 500 (Vanguard)
+    "QQQ",    # Nasdaq 100 (growth / megacap tech)
+    "SPY",    # S&P 500 (broad large cap)
+    "IWM",    # Russell 2000 (small cap — different beta)
+    "SMH",    # Semiconductors (high-beta secular trend)
+    "XLF",    # Financials
+    "XLE",    # Energy
+    "XLV",    # Healthcare (defensive)
+    "XLI",    # Industrials (cyclical)
+    "GLD",    # Gold (low equity correlation / risk-off)
+    "GDX",    # Gold miners (higher-beta gold)
+    "TLT",    # 20+yr Treasuries (rates / risk-off diversifier)
+    "XBI",    # Biotech (high volatility)
 ]
 
-# Leveraged/inverse ETFs that need stricter risk controls:
-# - 50% of normal position size
-# - Tighter open-risk budget
-# - Dashboard warning labels
-LEVERAGED_ETFS = {"SOXL", "TQQQ", "SOXS"}
+# Leveraged/inverse ETFs that need stricter risk controls (50% size,
+# tighter open-risk budget, dashboard warning labels).  The current
+# universe is long-only with NO leverage, so this set is intentionally
+# empty.  The handling code remains in place and simply does nothing
+# while no leveraged tickers are traded.
+LEVERAGED_ETFS = set()
 
 # (Old stock/crypto asset lists moved to archive/)
 
@@ -82,7 +87,7 @@ STOCK_MIN_ATR_PCT = 0.3       # Min volatility for stock entries
 
 # === Concurrency Limits (conservative) ===
 MAX_CONCURRENT_CRYPTO = 0     # No crypto trading
-MAX_CONCURRENT_STOCKS = 4     # Max 4 ETF positions at once (out of 10 ETFs)
+MAX_CONCURRENT_STOCKS = 4     # Max 4 ETF positions at once (out of 12 ETFs)
 
 # === Cooldown ===
 POST_LOSS_COOLDOWN_BARS = 2   # 2 bars = 8 hours cooldown after a loss

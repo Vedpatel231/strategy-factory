@@ -3,13 +3,15 @@ End-of-Day (EOD) Position Manager
 
 Rules:
   1. At 3:45 PM ET every trading day (including Fridays), sell any
-     positions that are in profit.  This locks in gains before
-     after-hours volatility can erode them.  The 3:45 start gives
-     a 15-minute window so the auto-trader cycle (every 15 min)
-     is guaranteed to catch it before the 4:00 PM close.
+     position that is still in profit AFTER estimated round-trip fees.
+     This locks in gains before after-hours volatility can erode them.
+     The 3:45 start gives a 15-minute window so the auto-trader cycle
+     (every 15 min) is guaranteed to catch it before the 4:00 PM close.
 
-  2. Positions in the red are kept overnight — no point selling at a
-     loss right before close.  They get another chance next morning.
+  2. Positions that are net-negative — true losers AND positions that
+     are green on paper but would turn red once fees are deducted — are
+     kept overnight rather than booking a loss right before close.  They
+     get another chance next morning.
 
   3. Sends Telegram notifications for every EOD close.
 
@@ -30,6 +32,22 @@ import config
 logger = logging.getLogger("eod_manager")
 
 STATE_FILE = os.path.join(config.DATA_DIR, "eod_manager_state.json")
+
+# ── Fee model ─────────────────────────────────────────────────────
+# Estimated cost per side, as a percent of notional (1 bp = 0.01%).
+# Mirrors conservative_mode.EST_FEE_PCT_STOCK so EOD net-of-fee math
+# uses the same assumption as the rest of the system.  A round trip
+# pays this on BOTH the entry notional and the exit notional.
+try:
+    from conservative_mode import EST_FEE_PCT_STOCK as _EST_FEE_PCT_STOCK
+except Exception:
+    _EST_FEE_PCT_STOCK = 0.01
+
+
+def _est_round_trip_fee(entry_notional, exit_notional):
+    """Estimated round-trip fee in dollars (entry side + exit side)."""
+    rate = _EST_FEE_PCT_STOCK / 100.0
+    return (abs(entry_notional) + abs(exit_notional)) * rate
 
 # ── Configuration ─────────────────────────────────────────────────
 # Time to start EOD closes (ET).  3:45 PM gives a 15-minute window
@@ -143,9 +161,26 @@ def check_eod():
             current_price = float(pos.get("current_price", 0))
             avg_entry = float(pos.get("avg_entry_price", 0))
 
-            # Only sell positions in profit — keep red ones for next morning
-            if unrealized_pl > 0:
-                close_reason = f"EOD profit-taking: locking in ${unrealized_pl:+.2f} ({unrealized_plpc:+.2f}%)"
+            # Net-of-fees green check.  We only lock in a position at EOD if
+            # it is STILL profitable after paying the estimated round-trip
+            # fee (entry side + exit side).  A position that is green on
+            # paper but would go red once fees are deducted is treated as a
+            # loss and kept overnight, same as any other red position.
+            #   entry_notional ≈ cost_basis = market_value - unrealized_pl
+            #   exit_notional  ≈ market_value (what we'd sell for now)
+            entry_notional = market_value - unrealized_pl
+            est_fee = _est_round_trip_fee(entry_notional, market_value)
+            net_after_fees = unrealized_pl - est_fee
+
+            # Only sell positions that stay green AFTER fees — keep the rest
+            # (true losers + marginal "green on paper, red after fees") for
+            # next morning.
+            if net_after_fees > 0:
+                close_reason = (
+                    f"EOD profit-taking: locking in ${net_after_fees:+.2f} net "
+                    f"(gross ${unrealized_pl:+.2f}, est fee ${est_fee:.2f}, "
+                    f"{unrealized_plpc:+.2f}%)"
+                )
                 try:
                     order_result = client.close_position(symbol)
                     results.append({
@@ -153,21 +188,24 @@ def check_eod():
                         "action": "closed",
                         "reason": close_reason,
                         "unrealized_pl": round(unrealized_pl, 2),
+                        "net_pl_after_fees": round(net_after_fees, 2),
+                        "est_fee": round(est_fee, 2),
                         "unrealized_plpc": round(unrealized_plpc, 2),
                         "market_value": round(market_value, 2),
                         "order": order_result,
                     })
-                    total_pl += unrealized_pl
+                    total_pl += net_after_fees
                     logger.info(f"  EOD closed {symbol}: {close_reason}")
 
-                    # Record in conservative mode
+                    # Record in conservative mode (net of estimated fees so
+                    # the daily ladder reflects true realized P&L).
                     try:
                         from conservative_mode import ConservativeMode
                         cm = ConservativeMode()
                         cm.record_trade_result(
                             symbol=symbol,
                             strategy="eod_close",
-                            net_pl=unrealized_pl,
+                            net_pl=net_after_fees,
                             reason=close_reason,
                         )
                         cm.release_open_risk(symbol)
@@ -190,14 +228,27 @@ def check_eod():
                         "unrealized_pl": round(unrealized_pl, 2),
                     })
             else:
-                # In loss — keep for next morning, no point selling red
+                # Net loss (true red, or green-on-paper but red after fees) —
+                # keep for next morning rather than booking a loss now.
+                if unrealized_pl > 0:
+                    keep_reason = (
+                        f"Green on paper (${unrealized_pl:+.2f}) but net "
+                        f"${net_after_fees:+.2f} after est fee ${est_fee:.2f} — "
+                        f"keeping for next morning"
+                    )
+                else:
+                    keep_reason = (
+                        f"In loss (${unrealized_pl:+.2f}), keeping for next morning"
+                    )
                 results.append({
                     "symbol": symbol,
                     "action": "kept",
-                    "reason": f"In loss (${unrealized_pl:+.2f}), keeping for next morning",
+                    "reason": keep_reason,
                     "unrealized_pl": round(unrealized_pl, 2),
+                    "net_pl_after_fees": round(net_after_fees, 2),
+                    "est_fee": round(est_fee, 2),
                 })
-                logger.info(f"  EOD keeping {symbol}: in loss ${unrealized_pl:+.2f}")
+                logger.info(f"  EOD keeping {symbol}: {keep_reason}")
 
         # Save state
         state["last_eod_date"] = today
@@ -255,5 +306,5 @@ def get_status():
         "eod_ran_today": state.get("last_eod_date") == today,
         "last_eod_date": state.get("last_eod_date"),
         "last_eod_result": state.get("last_eod_result"),
-        "rule": "Sell profitable (green) positions at 3:45 PM ET; keep red positions for next morning",
+        "rule": "Sell positions still green AFTER fees at 3:45 PM ET; keep net-negative positions for next morning",
     }

@@ -1,5 +1,18 @@
 # Strategy Factory — Deep System Audit Report
 
+> **⚠️ SUPERSEDED IN PLACES (corrections as of May 28, 2026).** Two items
+> flagged below have since been verified against the live code and are
+> **no longer accurate**:
+> 1. **Timezone mismatch — FIXED.** `DailyLossGuard` and
+>    `TradeFrequencyLimiter` in `risk_manager.py` now use ET
+>    (`_et_now()` / `_today_str()`), aligned with conservative mode and the
+>    EOD manager. The "resets at midnight UTC / RISKY" notes are stale.
+> 2. **Daily-loss limit is 2%, not 5%.** The hard `DailyLossGuard` block is
+>    **−2%** (RiskManager constructs it with `max_daily_loss_pct=2.0`). The
+>    "5% max daily loss" lines below are stale.
+>
+> See `REAL_MONEY_READINESS_AUDIT.md` for the current, authoritative review.
+
 **Date:** May 27, 2026  
 **System:** Strategy Factory ETF-Only Trading System  
 **Deployment:** Railway (strategy-factory-production-9843.up.railway.app)  

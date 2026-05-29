@@ -65,7 +65,7 @@ try:
 except Exception:
     EQUITY_SYMBOLS = set()
 # Always include baseline ETFs in case config import fails
-EQUITY_SYMBOLS |= {"QQQ", "SPY", "SOXL", "IWM", "TQQQ", "SOXX", "SMH", "RSP", "SOXS", "VOO"}
+EQUITY_SYMBOLS |= {"QQQ", "SPY", "IWM", "SMH", "XLF", "XLE", "XLV", "XLI", "GLD", "GDX", "TLT", "XBI"}
 
 
 # Known crypto base tickers to exclude from equity heuristic

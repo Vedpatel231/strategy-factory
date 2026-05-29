@@ -62,7 +62,19 @@ class ExitManager:
         self.risk_book.update_high_water(symbol, current_price)
         state = self.risk_book.get(symbol) or state
         high_water = _safe_float(state.get("high_water_price"), current_price)
-        stop_price = _safe_float(state.get("stop_loss_price")) or entry_price * (1 - _safe_float(state.get("stop_loss_pct")) / 100.0)
+        # Stop price resolution, hardened against a degenerate fallback.
+        # If neither an explicit stop_loss_price nor a stop_loss_pct is set,
+        # the old formula collapsed to entry_price * (1 - 0) == entry_price,
+        # which would stop the position out the instant it dipped to break-
+        # even.  Fall back to the system-wide hard stop instead so an
+        # incompletely-initialized risk-book entry can't trigger an
+        # over-eager exit.
+        stop_price = _safe_float(state.get("stop_loss_price"))
+        if stop_price <= 0:
+            stop_pct = _safe_float(state.get("stop_loss_pct"))
+            if stop_pct <= 0:
+                stop_pct = _safe_float(getattr(config, "HARD_STOP_PCT", 8.0), 8.0)
+            stop_price = entry_price * (1 - stop_pct / 100.0)
         take_price = _safe_float(state.get("take_profit_price")) or entry_price * (1 + _safe_float(state.get("take_profit_pct")) / 100.0)
         partial_price = _safe_float(state.get("partial_profit_price"))
         pl_pct = (current_price - entry_price) / entry_price * 100.0

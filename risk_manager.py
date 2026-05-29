@@ -183,7 +183,11 @@ class DailyLossGuard:
 
     STATE_FILE = os.path.join(config.DATA_DIR, "daily_loss_guard.json")
 
-    def __init__(self, max_daily_loss_pct: float = 5.0):
+    # NOTE: 2.0% is the single source of truth for the hard daily-loss
+    # block.  RiskManager constructs this guard with max_daily_loss_pct=2.0,
+    # so this default is kept at 2.0 to match the live behavior (an older
+    # 5.0 default here was misleading — nothing in the live path used it).
+    def __init__(self, max_daily_loss_pct: float = 2.0):
         self.max_daily_loss_pct = max_daily_loss_pct
         self._load()
 
@@ -336,15 +340,20 @@ class PositionStopLoss:
 
 class ExposureLimits:
     """
-    Cap single-symbol exposure at 12 % of total equity, combined SPY/VOO
-    exposure at 20 %, and total exposure at 90 % of equity.
+    Cap single-symbol exposure at 12 % of total equity, the combined
+    broad-equity index sleeve (QQQ + SPY) at 20 %, and total exposure at
+    90 % of equity.
     """
 
     MAX_SINGLE_PCT = 12.0
     MAX_LEVERAGED_SINGLE_PCT = 6.0  # Leveraged ETFs get half the single-symbol cap
     MAX_EQUITY_INDEX_ETF_PCT = 20.0
     MAX_TOTAL_PCT = 90.0
-    EQUITY_INDEX_ETFS = {"SPY", "VOO"}
+    # Broad large-cap index ETFs with heavy megacap overlap.  Treated as a
+    # single sleeve so they can't bypass the per-symbol cap by splitting.
+    # (Was SPY/VOO; VOO was removed from the universe, QQQ+SPY are now the
+    # most overlapping broad-equity pair.)
+    EQUITY_INDEX_ETFS = {"SPY", "QQQ"}
 
     def _get_target_usd(self, value):
         if isinstance(value, dict):

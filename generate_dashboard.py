@@ -235,7 +235,7 @@ tr:hover td{{background:var(--bg-hover)}}
     <div class="nav-link" onclick="showPage('claude-analysis')">Claude Analysis</div>
   </div>
   <div class="nav-right">
-    <span class="nav-badge">10 ETFs Active</span>
+    <span class="nav-badge">12 ETFs Active</span>
     <span class="nav-refresh" id="lastRefresh">Updated: {timestamp}</span>
   </div>
 </nav>
@@ -255,7 +255,7 @@ tr:hover td{{background:var(--bg-hover)}}
     <div class="card"><div class="card-label">Equity</div><div class="card-value" id="ovEquity">—</div><div class="card-sub" id="ovEquitySub">Loading...</div></div>
     <div class="card"><div class="card-label">Buying Power</div><div class="card-value" id="ovBuyingPower">—</div></div>
     <div class="card"><div class="card-label">Cash</div><div class="card-value" id="ovCash">—</div></div>
-    <div class="card"><div class="card-label">Open Positions</div><div class="card-value" id="ovPositions">—</div><div class="card-sub">of 10 ETFs</div></div>
+    <div class="card"><div class="card-label">Open Positions</div><div class="card-value" id="ovPositions">—</div><div class="card-sub">of 12 ETFs</div></div>
     <div class="card"><div class="card-label">Daily Mode</div><div class="card-value" id="ovMode">—</div><div class="card-sub" id="ovModeSub"></div></div>
   </div>
 
@@ -464,8 +464,8 @@ function signedMoney(v) {{ v = Number(v || 0); return (v >= 0 ? '+$' : '-$') + M
 function pct(v) {{ return Number(v || 0).toFixed(1) + '%'; }}
 function plColor(v) {{ return Number(v || 0) >= 0 ? 'var(--green)' : 'var(--red)'; }}
 function plClass(v) {{ return Number(v || 0) >= 0 ? 'positive' : 'negative'; }}
-var LEVERAGED = {{'SOXL':1,'TQQQ':1,'SOXS':1}};
-var ETF_SYMBOLS = {{'QQQ':1,'SPY':1,'SOXL':1,'IWM':1,'TQQQ':1,'SOXX':1,'SMH':1,'RSP':1,'SOXS':1,'VOO':1}};
+var LEVERAGED = {{}};
+var ETF_SYMBOLS = {{'QQQ':1,'SPY':1,'IWM':1,'SMH':1,'XLF':1,'XLE':1,'XLV':1,'XLI':1,'GLD':1,'GDX':1,'TLT':1,'XBI':1}};
 function leveragedBadge(sym) {{ return LEVERAGED[sym] ? '<span class="leveraged-badge">LEV</span>' : ''; }}
 
 /* ══ DATA CACHE ══ */
@@ -873,8 +873,8 @@ function renderClaude(alp, insight) {{
   $('clRiskThresh').textContent = String(conserv.quality_threshold || conserv.required_quality_score || 75);
 
   // Universe table
-  var ETFS = ['QQQ','SPY','SOXL','IWM','TQQQ','SOXX','SMH','RSP','SOXS','VOO'];
-  var etfTypes = {{'QQQ':'Nasdaq 100','SPY':'S&P 500','SOXL':'Semi 3x Bull','IWM':'Russell 2000','TQQQ':'Nasdaq 3x Bull','SOXX':'Semiconductors','SMH':'Semi (VanEck)','RSP':'S&P Equal Weight','SOXS':'Semi 3x Bear','VOO':'S&P 500 (Vanguard)'}};
+  var ETFS = ['QQQ','SPY','IWM','SMH','XLF','XLE','XLV','XLI','GLD','GDX','TLT','XBI'];
+  var etfTypes = {{'QQQ':'Nasdaq 100','SPY':'S&P 500','IWM':'Russell 2000','SMH':'Semiconductors','XLF':'Financials','XLE':'Energy','XLV':'Healthcare','XLI':'Industrials','GLD':'Gold','GDX':'Gold Miners','TLT':'20+yr Treasuries','XBI':'Biotech'}};
   var uniBody = $('clUniverseBody');
   // Count trades per ETF from ledger
   var etfTrades = {{}};
@@ -1001,8 +1001,8 @@ function copyClaudeExport() {{
   lines.push('Generated: ' + new Date().toISOString());
   lines.push('');
   lines.push('ACCOUNT: Equity $' + Number(acct.equity || 0).toFixed(2) + ' | Cash $' + Number(acct.cash || 0).toFixed(2));
-  lines.push('UNIVERSE: 10 ETFs (QQQ, SPY, SOXL, IWM, TQQQ, SOXX, SMH, RSP, SOXS, VOO)');
-  lines.push('LEVERAGED: SOXL, TQQQ, SOXS (50% position size)');
+  lines.push('UNIVERSE: 12 ETFs (QQQ, SPY, IWM, SMH, XLF, XLE, XLV, XLI, GLD, GDX, TLT, XBI)');
+  lines.push('LEVERAGED: none (long-only, no leverage)');
   lines.push('');
   lines.push('CEO REGIME: ' + (ceo.market_regime || 'unknown'));
   lines.push('CEO DIRECTION: ' + (ceo.market_direction || 'unknown'));
@@ -1096,6 +1096,21 @@ function calNext() {{ calMonth++; if (calMonth > 11) {{ calMonth = 0; calYear++;
 function calRender() {{
   var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   $('calMonthLabel').textContent = monthNames[calMonth] + ' ' + calYear;
+
+  /* One-time legend explaining the two numbers shown in each day cell. */
+  if (!document.getElementById('calLegend')) {{
+    var _csec = $('pnlCalendarSection');
+    if (_csec) {{
+      var leg = document.createElement('div'); leg.id = 'calLegend';
+      leg.style.cssText = 'font-size:11px;color:var(--text-muted);margin:4px 0 8px;line-height:1.5;';
+      leg.innerHTML = '<b>Big $ / "acct %"</b> = account equity change for the day (mark-to-market, includes unrealized P&L on positions still open). '
+                    + '<b>"Nt · $"</b> = realized P&L from round-trips <i>closed</i> that day; the trade count rises only when a position is sold. '
+                    + 'A buy that is held overnight shows 0 trades until it is sold.';
+      var _lbl = $('calMonthLabel');
+      if (_lbl && _lbl.parentNode) {{ _lbl.parentNode.insertBefore(leg, _lbl.nextSibling); }}
+      else {{ _csec.insertBefore(leg, _csec.firstChild); }}
+    }}
+  }}
 
   var grid = $('calGrid');
   var headers = [];
@@ -1195,20 +1210,40 @@ function calRender() {{
       totalTrades += dayTradeCount;
       winningTrades += (dayTrades.wins || 0);
 
+      /* TWO DIFFERENT NUMBERS, CLEARLY LABELED:
+         (1) Account change (mark-to-market) — the equity swing for the
+             day, INCLUDING unrealized P&L on positions still held open.
+             This matches Alpaca's equity curve and moves even on days
+             with zero closed trades. Shown as the big $ + "acct %".
+         (2) Realized P&L from round-trips CLOSED on this day, taken from
+             the trade ledger. The trade count increments only when a
+             position is SOLD (a full buy->sell round-trip). A day where
+             we only bought and held overnight shows 0 trades here. */
+      var realizedPL = Number(dayTrades.totalPL || 0);
+
       var pnlEl = document.createElement('div'); pnlEl.className = 'cal-pnl-usd';
       var absPnl = Math.abs(change.pnl);
       pnlEl.textContent = (change.pnl >= 0 ? '+$' : '-$') + (absPnl >= 1000 ? (absPnl/1000).toFixed(1) + 'K' : absPnl.toFixed(2));
       cell.appendChild(pnlEl);
 
       var pctEl = document.createElement('div'); pctEl.className = 'cal-pnl-pct';
-      pctEl.textContent = (change.pct >= 0 ? '+' : '') + change.pct.toFixed(2) + '%';
+      pctEl.textContent = 'acct ' + (change.pct >= 0 ? '+' : '') + change.pct.toFixed(2) + '%';
       cell.appendChild(pctEl);
 
       if (dayTradeCount > 0) {{
         var tradeEl = document.createElement('div'); tradeEl.className = 'cal-trades';
-        tradeEl.textContent = dayTradeCount + ' trade' + (dayTradeCount !== 1 ? 's' : '');
+        tradeEl.textContent = dayTradeCount + 't · ' + (realizedPL >= 0 ? '+$' : '-$') + Math.abs(realizedPL).toFixed(2);
+        tradeEl.style.color = realizedPL >= 0 ? 'var(--green)' : 'var(--red)';
         cell.appendChild(tradeEl);
       }}
+
+      cell.title = 'Account change (mark-to-market, incl. open positions): '
+                 + (change.pnl >= 0 ? '+$' : '-$') + Math.abs(change.pnl).toFixed(2)
+                 + ' (' + (change.pct >= 0 ? '+' : '') + change.pct.toFixed(2) + '%)'
+                 + '\\nRealized (closed round-trips): '
+                 + (dayTradeCount > 0
+                     ? ((realizedPL >= 0 ? '+$' : '-$') + Math.abs(realizedPL).toFixed(2) + ' from ' + dayTradeCount + ' trade(s)')
+                     : 'none closed today');
 
       if (change.pnl > 0) {{ cell.classList.add('positive'); greenDays++; }}
       else if (change.pnl < 0) {{ cell.classList.add('negative'); redDays++; }}
@@ -1284,7 +1319,7 @@ def generate_mock_data(n=10):
     """Generate mock data for preview/testing."""
     import random
     names = [f"Bot-{i}" for i in range(n)]
-    pairs = ["QQQ", "SPY", "SOXL", "IWM", "TQQQ", "SOXX", "SMH", "RSP", "SOXS", "VOO"]
+    pairs = ["QQQ", "SPY", "IWM", "SMH", "XLF", "XLE", "XLV", "XLI", "GLD", "GDX", "TLT", "XBI"]
     stypes = ["trend_pullback", "ema_crossover", "macd_momentum", "rsi_mean_reversion",
               "bollinger_reversion", "breakout_retest", "donchian_breakout", "vwap_bounce",
               "atr_momentum_expansion", "supertrend_continuation"]

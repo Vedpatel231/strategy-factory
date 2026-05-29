@@ -31,7 +31,8 @@ Daily net P&L includes:
   - Estimated trading fees / commissions
   - Estimated slippage
 
-State resets at midnight UTC.
+State resets at midnight US Eastern (America/New_York) — the same
+trading-day boundary used by the EOD manager and the risk guards.
 """
 
 import json
@@ -123,7 +124,7 @@ MAX_OPEN_RISK_BUDGET_PCT = _safe_float(
 )
 
 # --- Max open positions ---
-# With 10 ETFs, allow up to 5 concurrent positions
+# With 12 ETFs, allow up to 5 concurrent positions
 MAX_OPEN_POSITIONS = int(
     os.environ.get("CONSERVATIVE_MAX_OPEN_POSITIONS", "5")
 )
