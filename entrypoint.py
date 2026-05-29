@@ -33,7 +33,8 @@ def seed_if_needed():
         try:
             import seed_data
             result = seed_data.ensure_seed_data()
-            print(f"[entrypoint] Professional bots ensured: +{result.get('added', 0)} strategies")
+            print(f"[entrypoint] Professional bots ensured: +{result.get('added', 0)} strategies, "
+                  f"-{result.get('pruned', 0)} stale (off-universe) removed")
         except Exception as exc:
             print(f"[entrypoint] Professional seed ensure skipped: {exc}")
 
@@ -43,7 +44,8 @@ def generate_dashboard_if_needed():
     source_files = [
         "generate_dashboard.py", "dashboard_server.py", "daily_runner.py",
         "trading_desk.py", "market_ceo.py", "asset_manager.py",
-        "bot_registry.py", "risk_manager.py",
+        "bot_registry.py", "risk_manager.py", "config.py",
+        "conservative_mode.py", "eod_manager.py", "exit_manager.py",
     ]
     repo_dir = os.path.dirname(__file__)
     source_mtime = max(

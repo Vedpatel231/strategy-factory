@@ -311,8 +311,49 @@ def verify_data(conn):
         print(f"    {D}{pair}: {name}{X}")
 
 
+def prune_stale_strategies(conn):
+    """Remove strategy rows whose pair is no longer in the configured
+    universe, plus their dependent rows.
+
+    Seeding is additive, so after a universe change the DB keeps old rows
+    (e.g. dropped tickers like SOXL/VOO) that then clutter the dashboard's
+    strategy tables.  This brings the table back in sync with config.
+
+    Safety:
+      * Only touches the local SQLite PLACEHOLDER tables.  Real trade
+        history lives in Alpaca and the learning-engine state — neither is
+        affected here.
+      * If the valid set can't be determined (empty), it does NOTHING,
+        so a config glitch can never wipe the whole table.
+      * Children are deleted before parents (no ON DELETE CASCADE).
+    """
+    valid_pairs = set(str(p).upper() for p in getattr(config, "STOCK_ASSETS", []))
+    valid_pairs |= set(f"{c}/USDT".upper() for c in getattr(config, "CRYPTO_ASSETS", []))
+    if not valid_pairs:
+        return 0  # fail safe — never prune everything
+
+    rows = conn.execute("SELECT id, pair FROM strategies").fetchall()
+    stale_ids = [r[0] for r in rows if str(r[1]).upper() not in valid_pairs]
+    if not stale_ids:
+        return 0
+
+    qm = ",".join("?" for _ in stale_ids)
+    bot_ids = [b[0] for b in conn.execute(
+        f"SELECT id FROM bots WHERE strategy_id IN ({qm})", stale_ids).fetchall()]
+    if bot_ids:
+        bq = ",".join("?" for _ in bot_ids)
+        conn.execute(f"DELETE FROM decisions WHERE bot_id IN ({bq})", bot_ids)
+    conn.execute(f"DELETE FROM decisions WHERE strategy_id IN ({qm})", stale_ids)
+    conn.execute(f"DELETE FROM performance_history WHERE strategy_id IN ({qm})", stale_ids)
+    conn.execute(f"DELETE FROM bots WHERE strategy_id IN ({qm})", stale_ids)
+    conn.execute(f"DELETE FROM strategies WHERE id IN ({qm})", stale_ids)
+    conn.commit()
+    return len(stale_ids)
+
+
 def ensure_seed_data():
-    """Non-destructively ensure the professional 1H bot universe exists."""
+    """Non-destructively ensure the professional 1H bot universe exists,
+    then prune any rows left over from a previous (different) universe."""
     os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
     conn = sqlite3.connect(config.DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -320,6 +361,7 @@ def ensure_seed_data():
     before = conn.execute("SELECT COUNT(*) FROM strategies").fetchone()[0]
     seed_strategies(conn)
     seed_bots(conn)
+    pruned = prune_stale_strategies(conn)
     after = conn.execute("SELECT COUNT(*) FROM strategies").fetchone()[0]
     missing_perf = conn.execute("""
         SELECT s.id
@@ -331,7 +373,8 @@ def ensure_seed_data():
     if missing_perf:
         generate_performance_history(conn, strategy_ids=[row[0] for row in missing_perf])
     conn.close()
-    return {"strategies_before": before, "strategies_after": after, "added": max(0, after - before)}
+    return {"strategies_before": before, "strategies_after": after,
+            "added": max(0, after - before), "pruned": pruned}
 
 
 def main():
