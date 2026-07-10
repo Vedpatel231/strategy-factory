@@ -67,6 +67,16 @@ class TradingDeskEngine:
         # CEO analysis runs first so regime-flip exit can use current regime
         ceo_state = self.ceo.analyze()
 
+        # Market-trend filter ("don't fight the tape"): computed once per cycle.
+        # When the broad market is in a downtrend, NEW long entries are blocked;
+        # existing positions are still managed by the exit manager.
+        try:
+            from market_filter import market_trend_status
+            market_status = market_trend_status(self.data)
+        except Exception as _mf_exc:
+            market_status = {"enabled": True, "allow_longs": True, "degraded": True,
+                             "reason": f"Market filter error ({_mf_exc}) — longs allowed."}
+
         exit_result = self.exit_manager.check_exits(
             positions=positions, dry_run=dry_run,
             ceo_regime=ceo_state.market_regime,
@@ -128,8 +138,25 @@ class TradingDeskEngine:
             if not decision.trade_request:
                 continue
 
-            # ── Conservative mode gate ──
             trade_req = decision.trade_request
+
+            # ── Market-trend filter gate: block NEW longs in a downtrend ──
+            if not market_status.get("allow_longs", True):
+                self.logger.append("market_filter_block", {
+                    "symbol": trade_req.get("symbol"),
+                    "strategy": trade_req.get("strategy"),
+                    "reason": market_status.get("reason"),
+                    "timestamp": _utcnow(),
+                })
+                approvals.append({
+                    "approved": False,
+                    "symbol": trade_req.get("symbol"),
+                    "reasons": [f"Market filter: {market_status.get('reason')}"],
+                    "trade_request": trade_req,
+                })
+                continue
+
+            # ── Conservative mode gate ──
             # Estimate proposed risk for open risk budget check
             proposed_risk = self.conservative.get_risk_per_trade()
             cm_ok, cm_reason = self.conservative.can_trade(
@@ -226,6 +253,7 @@ class TradingDeskEngine:
             broker_note=broker_note,
         )
         state["reconciliation"] = reconciliation
+        state["market_filter"] = market_status
         try:
             state["missed_opportunities"] = self.missed_analyzer.get_status()
         except Exception:

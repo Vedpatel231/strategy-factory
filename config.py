@@ -160,6 +160,16 @@ EMA_CROSS_TAKE_PROFIT_PCT = 4.0
 # --- Intraday Concurrency ---
 MAX_CONCURRENT_INTRADAY_STOCKS = 5
 
+# === Market-trend filter ("don't fight the tape", 2026-07 audit) ===
+# Block NEW long entries while the broad market is below its trend MA.
+# Existing positions are unaffected. Reversible via MARKET_FILTER_ENABLED=0.
+MARKET_FILTER_ENABLED = os.environ.get("MARKET_FILTER_ENABLED", "1") not in ("0", "false", "False", "no")
+MARKET_FILTER_SYMBOL = os.environ.get("MARKET_FILTER_SYMBOL", "SPY")
+MARKET_FILTER_MA_PERIOD = int(os.environ.get("MARKET_FILTER_MA_PERIOD", "50"))
+# Gate mode: "50ma" (price >= 50D SMA), "200ma" (price >= 200D SMA),
+# or "50and200" (both). Default 50ma balances protection vs staying active.
+MARKET_FILTER_MODE = os.environ.get("MARKET_FILTER_MODE", "50ma")
+
 # === Pause Thresholds ===
 PAUSE_WIN_RATE = 45.0
 PAUSE_MAX_DRAWDOWN = -20.0
