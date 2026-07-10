@@ -23,23 +23,38 @@ DB_PATH = os.environ.get("STRATEGY_FACTORY_DB", os.path.join(DATA_DIR, "strategy
 # DISABLED: No crypto trading.
 CRYPTO_ASSETS = []
 
-# Active trading universe — 12 liquid, long-only swing-trading ETFs.
-# Chosen to be diversified (broad equity, sectors, commodities, bonds)
-# with no near-duplicates and NO leveraged/inverse products, so the
-# strategies trade uncorrelated underlyings and position sizing is clean.
+# Active trading universe — 20 liquid, long-only swing-trading names:
+# 10 broad/sector ETFs + 10 mega-cap stocks.  Chosen for deep liquidity,
+# tight spreads, and clean trends, with NO leveraged/inverse products so
+# position sizing stays clean.  Narrow single-sector ETFs that whipsawed
+# (XLV, XLI, XBI, GDX) were removed in the 2026-07 audit.
+#
+# NOTE: single stocks can GAP on earnings (overnight moves past the stop).
+# The bot holds overnight, so an earnings-blackout rule is the recommended
+# next safety add-on before real money (not yet implemented).
 STOCK_ASSETS = [
-    "QQQ",    # Nasdaq 100 (growth / megacap tech)
-    "SPY",    # S&P 500 (broad large cap)
+    # --- Broad & sector ETFs (10) ---
+    "SPY",    # S&P 500 (most liquid instrument in the world)
+    "QQQ",    # Nasdaq 100 (megacap tech / growth)
     "IWM",    # Russell 2000 (small cap — different beta)
+    "DIA",    # Dow 30 (large-cap industrials tilt)
     "SMH",    # Semiconductors (high-beta secular trend)
+    "XLK",    # Technology sector
+    "XLE",    # Energy (clean cyclical trends)
     "XLF",    # Financials
-    "XLE",    # Energy
-    "XLV",    # Healthcare (defensive)
-    "XLI",    # Industrials (cyclical)
     "GLD",    # Gold (low equity correlation / risk-off)
-    "GDX",    # Gold miners (higher-beta gold)
     "TLT",    # 20+yr Treasuries (rates / risk-off diversifier)
-    "XBI",    # Biotech (high volatility)
+    # --- Mega-cap stocks (10) — highest volume, trend cleanly ---
+    "AAPL",   # Apple
+    "MSFT",   # Microsoft
+    "NVDA",   # Nvidia
+    "GOOGL",  # Alphabet (Google)
+    "AMZN",   # Amazon
+    "META",   # Meta
+    "TSLA",   # Tesla
+    "AMD",    # AMD
+    "AVGO",   # Broadcom
+    "NFLX",   # Netflix
 ]
 
 # Leveraged/inverse ETFs that need stricter risk controls (50% size,
@@ -87,7 +102,7 @@ STOCK_MIN_ATR_PCT = 0.3       # Min volatility for stock entries
 
 # === Concurrency Limits (conservative) ===
 MAX_CONCURRENT_CRYPTO = 0     # No crypto trading
-MAX_CONCURRENT_STOCKS = 4     # Max 4 ETF positions at once (out of 12 ETFs)
+MAX_CONCURRENT_STOCKS = 4     # Max 4 positions at once (out of 20-name universe)
 
 # === Cooldown ===
 POST_LOSS_COOLDOWN_BARS = 2   # 2 bars = 8 hours cooldown after a loss

@@ -48,12 +48,12 @@ def run_tests():
     print("  Strategy Factory — ETF-Only System Tests")
     print("=" * 64)
 
-    # ── Test 1: Config contains the 12-ETF long-only universe ──
+    # ── Test 1: Config contains the 20-name long-only universe ──
     import config
-    expected_etfs = {"QQQ", "SPY", "IWM", "SMH", "XLF", "XLE",
-                     "XLV", "XLI", "GLD", "GDX", "TLT", "XBI"}
+    expected_etfs = {"SPY", "QQQ", "IWM", "DIA", "SMH", "XLK", "XLE", "XLF", "GLD", "TLT",
+                     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AMD", "AVGO", "NFLX"}
     actual_etfs = set(config.STOCK_ASSETS)
-    test("Config has exactly the 12 long-only ETFs",
+    test("Config has exactly the 20-name long-only universe",
          actual_etfs == expected_etfs,
          f"Expected {expected_etfs}, got {actual_etfs}")
 
@@ -66,10 +66,10 @@ def run_tests():
     from bot_registry import BotRegistry
     registry = BotRegistry()
     all_assets = set(b.asset for b in registry.all_bots())
-    non_etf = all_assets - expected_etfs
-    test("Bot registry has only ETF bots",
-         len(non_etf) == 0,
-         f"Non-ETF assets found: {non_etf}")
+    non_universe = all_assets - expected_etfs
+    test("Bot registry has only in-universe bots",
+         len(non_universe) == 0,
+         f"Off-universe assets found: {non_universe}")
 
     # ── Test 4: Fee model is 1 bps per side ──
     from trade_journal import estimate_alpaca_fee, ALPACA_STOCK_SLIPPAGE_BPS

@@ -467,7 +467,7 @@ function pct(v) {{ return Number(v || 0).toFixed(1) + '%'; }}
 function plColor(v) {{ return Number(v || 0) >= 0 ? 'var(--green)' : 'var(--red)'; }}
 function plClass(v) {{ return Number(v || 0) >= 0 ? 'positive' : 'negative'; }}
 var LEVERAGED = {{}};
-var ETF_SYMBOLS = {{'QQQ':1,'SPY':1,'IWM':1,'SMH':1,'XLF':1,'XLE':1,'XLV':1,'XLI':1,'GLD':1,'GDX':1,'TLT':1,'XBI':1}};
+var ETF_SYMBOLS = {{'SPY':1,'QQQ':1,'IWM':1,'DIA':1,'SMH':1,'XLK':1,'XLE':1,'XLF':1,'GLD':1,'TLT':1,'AAPL':1,'MSFT':1,'NVDA':1,'GOOGL':1,'AMZN':1,'META':1,'TSLA':1,'AMD':1,'AVGO':1,'NFLX':1}};
 function leveragedBadge(sym) {{ return LEVERAGED[sym] ? '<span class="leveraged-badge">LEV</span>' : ''; }}
 
 /* ══ DATA CACHE ══ */
@@ -875,8 +875,8 @@ function renderClaude(alp, insight) {{
   $('clRiskThresh').textContent = String(conserv.quality_threshold || conserv.required_quality_score || 75);
 
   // Universe table
-  var ETFS = ['QQQ','SPY','IWM','SMH','XLF','XLE','XLV','XLI','GLD','GDX','TLT','XBI'];
-  var etfTypes = {{'QQQ':'Nasdaq 100','SPY':'S&P 500','IWM':'Russell 2000','SMH':'Semiconductors','XLF':'Financials','XLE':'Energy','XLV':'Healthcare','XLI':'Industrials','GLD':'Gold','GDX':'Gold Miners','TLT':'20+yr Treasuries','XBI':'Biotech'}};
+  var ETFS = ['SPY','QQQ','IWM','DIA','SMH','XLK','XLE','XLF','GLD','TLT','AAPL','MSFT','NVDA','GOOGL','AMZN','META','TSLA','AMD','AVGO','NFLX'];
+  var etfTypes = {{'SPY':'S&P 500','QQQ':'Nasdaq 100','IWM':'Russell 2000','DIA':'Dow 30','SMH':'Semiconductors','XLK':'Technology','XLE':'Energy','XLF':'Financials','GLD':'Gold','TLT':'20+yr Treasuries','AAPL':'Apple','MSFT':'Microsoft','NVDA':'Nvidia','GOOGL':'Alphabet','AMZN':'Amazon','META':'Meta','TSLA':'Tesla','AMD':'AMD','AVGO':'Broadcom','NFLX':'Netflix'}};
   var uniBody = $('clUniverseBody');
   // Count trades per ETF from ledger
   var etfTrades = {{}};
@@ -1003,7 +1003,7 @@ function copyClaudeExport() {{
   lines.push('Generated: ' + new Date().toISOString());
   lines.push('');
   lines.push('ACCOUNT: Equity $' + Number(acct.equity || 0).toFixed(2) + ' | Cash $' + Number(acct.cash || 0).toFixed(2));
-  lines.push('UNIVERSE: 12 ETFs (QQQ, SPY, IWM, SMH, XLF, XLE, XLV, XLI, GLD, GDX, TLT, XBI)');
+  lines.push('UNIVERSE: 20 names — 10 ETFs (SPY, QQQ, IWM, DIA, SMH, XLK, XLE, XLF, GLD, TLT) + 10 stocks (AAPL, MSFT, NVDA, GOOGL, AMZN, META, TSLA, AMD, AVGO, NFLX)');
   lines.push('LEVERAGED: none (long-only, no leverage)');
   lines.push('');
   lines.push('CEO REGIME: ' + (ceo.market_regime || 'unknown'));
@@ -1233,7 +1233,8 @@ def generate_mock_data(n=10):
     """Generate mock data for preview/testing."""
     import random
     names = [f"Bot-{i}" for i in range(n)]
-    pairs = ["QQQ", "SPY", "IWM", "SMH", "XLF", "XLE", "XLV", "XLI", "GLD", "GDX", "TLT", "XBI"]
+    pairs = ["SPY", "QQQ", "IWM", "DIA", "SMH", "XLK", "XLE", "XLF", "GLD", "TLT",
+             "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AMD", "AVGO", "NFLX"]
     stypes = ["trend_pullback", "ema_crossover", "macd_momentum", "rsi_mean_reversion",
               "bollinger_reversion", "breakout_retest", "donchian_breakout", "vwap_bounce",
               "atr_momentum_expansion", "supertrend_continuation"]
