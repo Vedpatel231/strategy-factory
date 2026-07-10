@@ -176,6 +176,42 @@ def check_eod():
             # (true losers + marginal "green on paper, red after fees") for
             # next morning.
             if net_after_fees > 0:
+                # ── LET WINNERS RUN (2026-07 audit) ──────────────────────
+                # Instead of blanket-closing every green position at the bell,
+                # lock a protective stop and HOLD the winner so it can keep
+                # running over the following days.  The stop locks a fraction
+                # of the open gain (never below break-even), protecting gains
+                # without capping the upside.  Reversible: EOD_LET_WINNERS_RUN=0
+                # restores the old close-all-greens behavior.  Untracked
+                # positions (no risk-book entry) fall through and close as before.
+                if getattr(config, "EOD_LET_WINNERS_RUN", True):
+                    try:
+                        from trade_journal import PositionRiskBook
+                        rb = PositionRiskBook()
+                        rb_entry = rb.get(symbol)
+                        if rb_entry:
+                            lock_frac = float(getattr(config, "EOD_GAIN_LOCK_FRACTION", 0.5))
+                            gain_lock_stop = (avg_entry + lock_frac * (current_price - avg_entry)
+                                              if current_price > avg_entry else avg_entry)
+                            existing_stop = float(rb_entry.get("stop_loss_price") or 0)
+                            protective_stop = max(avg_entry, existing_stop, gain_lock_stop)
+                            rb.update_fields(symbol, stop_loss_price=round(protective_stop, 6),
+                                             trailing_active=True)
+                            results.append({
+                                "symbol": symbol,
+                                "action": "kept_running",
+                                "reason": (f"EOD let-winners-run: green ${net_after_fees:+.2f} net — held with "
+                                           f"protective stop ${protective_stop:.4f} (locks {lock_frac*100:.0f}% "
+                                           f"of gain, never below break-even)"),
+                                "unrealized_pl": round(unrealized_pl, 2),
+                                "net_pl_after_fees": round(net_after_fees, 2),
+                                "protective_stop": round(protective_stop, 4),
+                            })
+                            logger.info(f"  EOD keeping winner {symbol}: stop ${protective_stop:.2f}, letting it run")
+                            continue
+                    except Exception as e:
+                        logger.warning(f"EOD let-winners-run failed for {symbol}, falling back to close: {e}")
+
                 close_reason = (
                     f"EOD profit-taking: locking in ${net_after_fees:+.2f} net "
                     f"(gross ${unrealized_pl:+.2f}, est fee ${est_fee:.2f}, "
@@ -290,6 +326,7 @@ def check_eod():
             "positions_checked": len(positions),
             "positions_closed": sum(1 for r in results if r["action"] == "closed"),
             "positions_kept": sum(1 for r in results if r["action"] == "kept"),
+            "positions_kept_running": sum(1 for r in results if r["action"] == "kept_running"),
             "total_pl_locked": round(total_pl, 2),
             "details": results,
         }
@@ -298,20 +335,25 @@ def check_eod():
         # Send Telegram notification
         closed_count = sum(1 for r in results if r["action"] == "closed")
         kept_count = sum(1 for r in results if r["action"] == "kept")
+        running_count = sum(1 for r in results if r["action"] == "kept_running")
 
-        if closed_count > 0:
-            closed_symbols = [r["symbol"] for r in results if r["action"] == "closed"]
+        if closed_count > 0 or running_count > 0:
             msg_lines = []
-            msg_lines.append("🔔 END-OF-DAY PROFIT LOCK")
-            msg_lines.append(f"Closed {closed_count} position(s): {', '.join(closed_symbols)}")
-            msg_lines.append(f"Total P&L locked: ${total_pl:+.2f}")
+            msg_lines.append("🔔 END-OF-DAY REVIEW")
+            if closed_count > 0:
+                closed_symbols = [r["symbol"] for r in results if r["action"] == "closed"]
+                msg_lines.append(f"Locked {closed_count} position(s): {', '.join(closed_symbols)}")
+                msg_lines.append(f"Total P&L locked: ${total_pl:+.2f}")
+            if running_count > 0:
+                running_symbols = [r["symbol"] for r in results if r["action"] == "kept_running"]
+                msg_lines.append(f"Letting {running_count} winner(s) run (stop protected): {', '.join(running_symbols)}")
             if kept_count > 0:
                 kept_symbols = [r["symbol"] for r in results if r["action"] == "kept"]
                 msg_lines.append(f"Kept {kept_count} (in loss): {', '.join(kept_symbols)}")
             _send_telegram("\n".join(msg_lines), level="info")
 
-        logger.info(f"EOD complete: closed={closed_count}, kept={kept_count}, "
-                     f"P&L locked=${total_pl:+.2f}")
+        logger.info(f"EOD complete: closed={closed_count}, kept_running={running_count}, "
+                     f"kept={kept_count}, P&L locked=${total_pl:+.2f}")
         return state["last_eod_result"]
 
     except Exception as e:

@@ -107,6 +107,25 @@ MAX_CONCURRENT_STOCKS = 4     # Max 4 positions at once (out of 20-name universe
 # === Cooldown ===
 POST_LOSS_COOLDOWN_BARS = 2   # 2 bars = 8 hours cooldown after a loss
 
+# === Let-Winners-Run profit protection (2026-07 audit fix) ===
+# Problem the audit found: winners were force-closed tiny (avg +$10) while
+# losers ran to the stop (avg -$26), giving a losing 0.41 win/loss ratio.
+# These knobs let a winning trade keep running instead of being clipped,
+# while still protecting the open gain.  All are env-overridable and the
+# EOD behavior is fully reversible (set EOD_LET_WINNERS_RUN=0).
+PROFIT_LOCK_PCT = float(os.environ.get("PROFIT_LOCK_PCT", "0.5"))
+# Above this gain %, "soft" exits (signal invalidation, regime flip) stop
+# force-closing a winner — the trailing stop / take-profit manage it instead.
+PROFIT_PROTECT_PCT = float(os.environ.get("PROFIT_PROTECT_PCT", "1.0"))
+# At/above this gain %, ratchet the stop up to break-even so a winner can
+# keep running but can no longer round-trip into a loss.
+EOD_LET_WINNERS_RUN = os.environ.get("EOD_LET_WINNERS_RUN", "1") not in ("0", "false", "False", "no")
+# When True, EOD no longer blanket-closes every green position; it locks a
+# protective stop and holds the winner so it can run over the following days.
+EOD_GAIN_LOCK_FRACTION = float(os.environ.get("EOD_GAIN_LOCK_FRACTION", "0.5"))
+# Fraction of the open gain the EOD protective stop locks in (never below
+# break-even). 0.5 = lock half the gain, let the rest run.
+
 # === Strategy Parameters (used by professional_strategies.py) ===
 
 # --- RSI Mean Reversion ---

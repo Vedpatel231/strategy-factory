@@ -79,6 +79,23 @@ class ExitManager:
         partial_price = _safe_float(state.get("partial_profit_price"))
         pl_pct = (current_price - entry_price) / entry_price * 100.0
 
+        # ── LET WINNERS RUN: break-even protection (2026-07 audit) ───────
+        # Once a trade is comfortably in profit, ratchet the stop up to at
+        # least break-even and switch on trailing management.  This lets a
+        # winner keep running toward its target while guaranteeing it can no
+        # longer round-trip into a loss.  Winners were previously clipped at
+        # ~+$10 while losers ran to the stop (0.41 win/loss ratio).
+        profit_lock_pct = _safe_float(getattr(config, "PROFIT_LOCK_PCT", 0.5), 0.5)
+        profit_protect_pct = _safe_float(getattr(config, "PROFIT_PROTECT_PCT", 1.0), 1.0)
+        if pl_pct >= profit_protect_pct and 0 < entry_price and stop_price < entry_price:
+            stop_price = entry_price
+            self.risk_book.update_fields(
+                symbol,
+                stop_loss_price=round(entry_price, 6),
+                trailing_active=True,
+            )
+            state = self.risk_book.get(symbol) or state
+
         reason = None
         close_all = False
         partial = False
@@ -112,21 +129,29 @@ class ExitManager:
                 if trail_reason:
                     reason = trail_reason
                     close_all = True
-                else:
+                elif pl_pct < profit_lock_pct:
+                    # Signal invalidation only cuts trades that are NOT winning.
+                    # A green winner (>= PROFIT_LOCK_PCT) is left to the trailing
+                    # stop / take-profit so it can run instead of being clipped
+                    # the moment price dips below the lagging 1H EMA50.
                     invalid_reason = self._invalidation_reason(symbol, state, current_price)
                     if invalid_reason:
                         reason = invalid_reason
                         close_all = True
 
-            # REGIME-FLIP EXIT: if CEO regime flipped to risk_off while we're
-            # holding a long, close if in profit to protect gains.
-            if not reason and ceo_regime and ceo_regime == "risk_off":
-                if pl_pct > 0.5:  # Only exit if at least slightly positive
-                    reason = (
-                        f"Regime-flip exit: CEO regime is 'risk_off', "
-                        f"closing profitable position ({pl_pct:+.2f}%) to protect gains."
+            # REGIME-FLIP: on a risk_off flip, don't hard-close a winner at a
+            # tiny gain (that capped winners at ~+0.5%).  Instead lock the stop
+            # at break-even and let the trailing stop keep running it — a real
+            # reversal now exits at break-even rather than surrendering the
+            # position early.
+            if not reason and ceo_regime == "risk_off" and pl_pct > 0.5:
+                if stop_price < entry_price:
+                    stop_price = entry_price
+                    self.risk_book.update_fields(
+                        symbol,
+                        stop_loss_price=round(entry_price, 6),
+                        trailing_active=True,
                     )
-                    close_all = True
 
         if not reason:
             return None
