@@ -682,7 +682,12 @@ STRATEGY_CLASSES: Dict[str, Type[BaseProfessionalStrategy]] = {
     SupertrendContinuationStrategy.name: SupertrendContinuationStrategy,
 }
 
-STRATEGY_NAMES = list(STRATEGY_CLASSES.keys())
+# The ACTIVE strategy set (what the live registry builds bots for) is driven by
+# config.PROFESSIONAL_STRATEGIES so strategies can be enabled/disabled without
+# deleting their code. Fall back to all classes if config is missing/empty;
+# unknown names are ignored.
+_active_strategy_names = [n for n in getattr(config, "PROFESSIONAL_STRATEGIES", []) if n in STRATEGY_CLASSES]
+STRATEGY_NAMES = _active_strategy_names or list(STRATEGY_CLASSES.keys())
 
 
 def create_strategy(strategy_name):

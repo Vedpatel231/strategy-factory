@@ -75,18 +75,25 @@ DESK_ENTRY_TIMEFRAME = "1h"     # primary entry timeframe
 DESK_CONFIRMATION_TIMEFRAMES_INTRADAY = []  # optional future lower-TF context
 DESK_CONFIRM_TIMEFRAMES = ["4h", "1D"]
 DESK_CYCLE_INTERVAL_MIN = int(os.environ.get("DESK_CYCLE_INTERVAL_MIN", "15"))
+# Active strategy set. Trimmed 2026-07 after a 20-symbol backtest dropped the
+# strategies with no edge: trend_pullback (negative expectancy), vwap_bounce
+# (~no edge) and supertrend_continuation (~flat). Their classes remain in
+# strategies/professional_strategies.py so they can be re-tested or restored
+# by adding the name back here — nothing is deleted.
 PROFESSIONAL_STRATEGIES = [
-    "trend_pullback",
-    "ema_crossover",
-    "macd_momentum",
-    "rsi_mean_reversion",
-    "bollinger_reversion",
-    "breakout_retest",
-    "donchian_breakout",
-    "vwap_bounce",
-    "atr_momentum_expansion",
-    "supertrend_continuation",
+    "donchian_breakout",       # backtest PF 1.62, +1.59%/trade (best evidence)
+    "bollinger_reversion",     # PF 3.16, +2.46%/trade
+    "breakout_retest",         # PF 2.03, +1.96%/trade
+    "atr_momentum_expansion",  # PF 1.38, +1.02%/trade
+    "rsi_mean_reversion",      # PF 3.23, +2.34%/trade (smaller sample)
+    "ema_crossover",           # PF 3.65, +2.53%/trade (small sample — on watch)
+    "macd_momentum",           # PF 1.13, +0.30%/trade (marginal — on watch)
 ]
+
+# Strategies removed from the active set on 2026-07 (kept here for the record;
+# re-add to PROFESSIONAL_STRATEGIES to restore): trend_pullback, vwap_bounce,
+# supertrend_continuation.
+DISABLED_STRATEGIES_NOTE = ["trend_pullback", "vwap_bounce", "supertrend_continuation"]
 
 # === Legacy Strategy Parameters (kept for old dashboard/backtest paths) ===
 STRATEGY_NAME = "adaptive_breakout"
