@@ -548,6 +548,34 @@ def alpaca_realized_by_day():
         return jsonify({"error": str(e), "days": {}}), 500
 
 
+# ── BACKTEST (read-only edge measurement, one symbol per call) ───────
+@app.route("/api/backtest/symbol")
+@require_auth
+def backtest_symbol():
+    """Run the honest backtester for ONE symbol and return per-strategy stats.
+
+    Read-only: fetches historical candles and computes; places no orders and
+    writes no state. Called once per symbol so each request stays well under
+    the request timeout.
+    """
+    symbol = (request.args.get("symbol", "SPY") or "SPY").upper()
+    tf = request.args.get("tf", "1D")
+    try:
+        limit = int(request.args.get("limit", 1500))
+        window = int(request.args.get("window", 250))
+        max_hold = int(request.args.get("max_hold", 60))
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad numeric parameter"}), 400
+    try:
+        from backtest import run_symbol_backtest
+        result = run_symbol_backtest(symbol, timeframe=tf, limit=limit,
+                                     window=window, max_hold_bars=max_hold)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"backtest failed for {symbol}: {e}")
+        return jsonify({"symbol": symbol, "error": str(e), "per_strategy": {}}), 500
+
+
 # ── INSIGHT DATA (trading desk state for dashboard) ──────────────────
 @app.route("/api/insight-data")
 @require_auth
