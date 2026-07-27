@@ -63,6 +63,11 @@ class AlpacaAutoTrader:
         self._last_result = None
         self._last_error = None
         self._runs_log = self._load_log()
+        # Watchdog / heartbeat state (2026-07: prevent silent multi-day freezes).
+        self._last_heartbeat = None        # loop is alive (updated every iteration)
+        self._last_cycle_complete = None   # a full desk cycle finished
+        self._cycle_timeout_sec = int(os.environ.get("DESK_CYCLE_TIMEOUT_SEC", "180"))
+        self._stall_alerted = False
 
     @classmethod
     def get(cls):
@@ -161,10 +166,66 @@ class AlpacaAutoTrader:
         if self._thread and self._thread.is_alive():
             logger.info("AlpacaAutoTrader already running")
             return
+        # Root-cause safety net: cap ALL blocking socket ops process-wide so a
+        # single hung data fetch can never freeze the desk thread for days again
+        # (2026-07 incident). Generous default — longer than any normal REST call.
+        try:
+            import socket
+            socket.setdefaulttimeout(float(os.environ.get("DESK_SOCKET_TIMEOUT_SEC", "45")))
+        except Exception as _e:
+            logger.warning(f"could not set default socket timeout: {_e}")
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="AlpacaAutoTrader")
         self._thread.start()
         logger.info(f"AlpacaAutoTrader thread started (interval {self.interval_min}min)")
+
+    def _alert_stall(self, message):
+        """Notify (Telegram) when the desk stalls — never raise."""
+        try:
+            from telegram_notifier import send_alert, is_configured
+            if is_configured():
+                send_alert(f"Auto-trader watchdog: {message}", level="critical")
+        except Exception:
+            pass
+
+    def _run_cycle_with_timeout(self):
+        """Run one desk cycle in a child thread with a hard timeout.
+
+        A hung network call inside run_cycle raises no exception, so the old
+        try/except could not catch it — the loop froze indefinitely. Running the
+        cycle in a daemon child and joining with a timeout guarantees the main
+        loop keeps advancing: if a cycle overruns, we abandon it (the child is a
+        daemon and, with the socket timeout above, will error out and die),
+        alert, and let the next interval retry.
+        """
+        done = threading.Event()
+
+        def _target():
+            try:
+                self._run_once()
+            finally:
+                done.set()
+
+        threading.Thread(target=_target, daemon=True, name="DeskCycle").start()
+        if done.wait(self._cycle_timeout_sec):
+            self._last_cycle_complete = utc_now().isoformat()
+            self._stall_alerted = False
+            return True
+        # Timed out — cycle is hung.
+        msg = (f"desk cycle exceeded {self._cycle_timeout_sec}s and was abandoned "
+               f"(likely a hung data fetch). Loop stays alive; retrying next interval.")
+        logger.error(msg)
+        self._last_error = "cycle_timeout"
+        self._append_log({
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "status": "error",
+            "cycle_type": "trading_desk",
+            "error": "cycle_timeout",
+        })
+        if not self._stall_alerted:      # alert once per stall episode
+            self._alert_stall(msg)
+            self._stall_alerted = True
+        return False
 
     def stop(self):
         self._stop.set()
@@ -177,13 +238,17 @@ class AlpacaAutoTrader:
         last_30m_run = 0
 
         while not self._stop.is_set():
+            # Heartbeat: proves the loop itself is alive every iteration, even if
+            # a cycle is slow. Staleness here vs _last_cycle_complete distinguishes
+            # "loop dead" from "cycle hung".
+            self._last_heartbeat = utc_now().isoformat()
             if self.is_enabled():
                 now = time.time()
-                # Main cycle: run every N minutes (entry checks + full analysis)
+                # Main cycle: run every N minutes (entry checks + full analysis).
+                # Guarded by a hard timeout so a hung fetch can't freeze the loop.
                 if now - last_main_run >= self.interval_sec:
                     try:
-                        self._run_once()
-                        last_main_run = time.time()  # use fresh timestamp after run
+                        self._run_cycle_with_timeout()
                     except Exception as e:
                         self._last_error = str(e)
                         logger.error(f"Alpaca auto run failed: {e}", exc_info=True)
@@ -192,7 +257,7 @@ class AlpacaAutoTrader:
                             "status": "error",
                             "error": str(e),
                         })
-                        last_main_run = time.time()  # don't retry immediately
+                    last_main_run = time.time()  # don't retry immediately
 
                 # Refresh now after main cycle (which can take minutes)
                 now = time.time()
@@ -549,11 +614,32 @@ class AlpacaAutoTrader:
         except Exception:
             pass
 
+        # Heartbeat / staleness (watchdog visibility).
+        def _age(ts):
+            if not ts:
+                return None
+            try:
+                t = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                return round((utc_now() - t).total_seconds())
+            except Exception:
+                return None
+        secs_since_hb = _age(self._last_heartbeat)
+        secs_since_cycle = _age(self._last_cycle_complete)
+        # Healthy = a full cycle completed within ~2 intervals (plus slack).
+        stale_limit = self.interval_sec * 2 + 120
+        healthy = secs_since_cycle is not None and secs_since_cycle <= stale_limit
+
         return {
             "enabled": self.is_enabled(),
             "broker": "alpaca",
             "engine": "professional_trading_desk",
             "thread_alive": bool(self._thread and self._thread.is_alive()),
+            "healthy": healthy,
+            "last_heartbeat": self._last_heartbeat,
+            "seconds_since_heartbeat": secs_since_hb,
+            "last_cycle_complete": self._last_cycle_complete,
+            "seconds_since_cycle_complete": secs_since_cycle,
+            "cycle_timeout_sec": self._cycle_timeout_sec,
             "interval_min": self.interval_min,
             "entry_timeframe": getattr(config, "DESK_ENTRY_TIMEFRAME", "1h"),
             "confirm_timeframes": getattr(config, "DESK_CONFIRM_TIMEFRAMES", ["4h", "1D"]),
