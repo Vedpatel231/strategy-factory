@@ -576,6 +576,33 @@ def backtest_symbol():
         return jsonify({"symbol": symbol, "error": str(e), "per_strategy": {}}), 500
 
 
+# ── OPTIONS CHAIN (read-only, Phase 1 of options build) ──────────────
+@app.route("/api/options/chain")
+@require_auth
+def options_chain():
+    """Live put chain for a symbol: nearest expirations, puts near spot,
+    with bid/ask/mid, IV, delta, and break-even. Read-only — no orders."""
+    import os as _os
+    symbol = (request.args.get("symbol", "AAPL") or "AAPL").upper()
+    try:
+        max_exp = int(request.args.get("expirations", 2))
+        max_dte = int(request.args.get("max_dte", 60))
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad numeric parameter"}), 400
+    key = _os.environ.get("ALPACA_API_KEY", "")
+    sec = _os.environ.get("ALPACA_API_SECRET", "")
+    if not (key and sec):
+        return jsonify({"error": "Alpaca API keys not set on server"}), 500
+    try:
+        from options_data import get_live_put_chain
+        result = get_live_put_chain(symbol, key, sec,
+                                    max_expirations=max_exp, max_dte=max_dte)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"options chain failed for {symbol}: {e}")
+        return jsonify({"error": str(e), "symbol": symbol}), 500
+
+
 # ── INSIGHT DATA (trading desk state for dashboard) ──────────────────
 @app.route("/api/insight-data")
 @require_auth
