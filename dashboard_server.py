@@ -603,6 +603,34 @@ def options_chain():
         return jsonify({"error": str(e), "symbol": symbol}), 500
 
 
+# ── OPTIONS DESK STATE (last wheel-cycle decisions) ──────────────────
+@app.route("/api/options/desk-state")
+@require_auth
+def options_desk_state():
+    """Return the last options desk cycle: positions, buying power, and the
+    actions it took/would take (dry-run shows decisions without trading)."""
+    try:
+        from options_desk import load_options_desk_state
+        return jsonify(load_options_desk_state() or {})
+    except Exception as e:
+        logger.error(f"options desk-state failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ── OPTIONS DESK: trigger one cycle now (read-only in dry-run) ────────
+@app.route("/api/options/run-now", methods=["POST"])
+@require_auth
+def options_run_now():
+    """Run one options desk cycle immediately. Honors OPTIONS_LIVE (dry-run by
+    default), so unless live mode is on this only computes and logs decisions."""
+    try:
+        from options_desk import OptionsDesk
+        return jsonify(OptionsDesk().run_cycle())
+    except Exception as e:
+        logger.error(f"options run-now failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ── INSIGHT DATA (trading desk state for dashboard) ──────────────────
 @app.route("/api/insight-data")
 @require_auth

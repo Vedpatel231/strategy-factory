@@ -369,14 +369,32 @@ class AlpacaAutoTrader:
         }
 
         try:
-            from trading_desk import TradingDeskEngine
-            desk_state = TradingDeskEngine().run_cycle(dry_run=False)
-            entry["steps"]["trading_desk"] = {
-                "ok": True,
-                "summary": desk_state.get("summary", {}),
-                "ceo": desk_state.get("ceo", {}),
-                "broker_note": desk_state.get("broker_note", ""),
-            }
+            import config as _cfg
+            _options_mode = bool(getattr(_cfg, "OPTIONS_MODE", False))
+            if _options_mode:
+                from options_desk import OptionsDesk
+                desk_state = OptionsDesk().run_cycle()
+                acts = desk_state.get("actions", [])
+                traded = [a for a in acts if a.get("action") not in ("hold", None)]
+                entry["cycle_type"] = "options_desk"
+                entry["steps"]["options_desk"] = {
+                    "ok": True,
+                    "dry_run": desk_state.get("dry_run"),
+                    "positions": len(desk_state.get("positions", [])),
+                    "buying_power": desk_state.get("buying_power"),
+                    "decisions": len(acts),
+                    "trade_actions": len(traded),
+                    "errors": desk_state.get("errors", []),
+                }
+            else:
+                from trading_desk import TradingDeskEngine
+                desk_state = TradingDeskEngine().run_cycle(dry_run=False)
+                entry["steps"]["trading_desk"] = {
+                    "ok": True,
+                    "summary": desk_state.get("summary", {}),
+                    "ceo": desk_state.get("ceo", {}),
+                    "broker_note": desk_state.get("broker_note", ""),
+                }
             entry["status"] = "ok"
             entry["duration_sec"] = (utc_now() - start_ts).total_seconds()
             self._last_run = start_ts.isoformat()
@@ -384,8 +402,9 @@ class AlpacaAutoTrader:
             self._last_error = None
             self._append_log(entry)
             self._refresh_live_monitor()
-            self._write_last_refresh(desk_state)
-            logger.info(f"🦙 Professional trading desk cycle complete ({entry['status']})")
+            if not _options_mode:
+                self._write_last_refresh(desk_state)
+            logger.info(f"Desk cycle complete ({entry['cycle_type']}, {entry['status']})")
             return
         except Exception as e:
             logger.error(f"Professional trading desk cycle failed: {e}", exc_info=True)

@@ -50,6 +50,10 @@ OPT_MAX_POSITIONS = int(os.environ.get("OPT_MAX_POSITIONS", "4"))            # m
 OPT_MAX_CONTRACTS_PER_NAME = int(os.environ.get("OPT_MAX_CONTRACTS_PER_NAME", "1"))
 OPT_ROLL_DTE = int(os.environ.get("OPT_ROLL_DTE", "1"))                       # manage/roll when <= this DTE
 OPT_COVERED_CALL_DELTA = float(os.environ.get("OPT_COVERED_CALL_DELTA", "0.30"))  # wheel: covered-call delta
+# Safety switch: the options desk runs in DECISION-ONLY (dry-run) mode until
+# OPTIONS_LIVE is explicitly turned on. Dry-run computes and logs every action
+# it would take on real data but places NO orders.
+OPTIONS_LIVE = os.environ.get("OPTIONS_LIVE", "0") not in ("0", "false", "False", "no")
 
 # Active trading universe — 20 liquid, long-only swing-trading names:
 # 10 broad/sector ETFs + 10 mega-cap stocks.  Chosen for deep liquidity,

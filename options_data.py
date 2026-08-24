@@ -154,6 +154,26 @@ def get_live_put_chain(symbol, api_key, api_secret,
             "contracts_returned": len(chain or {})}
 
 
+def get_contract_quote(occ, api_key, api_secret):
+    """Return the current mid price for a single option contract, or None.
+    Used to mark open positions for profit-taking decisions."""
+    try:
+        from alpaca.data.historical.option import OptionHistoricalDataClient
+        from alpaca.data.requests import OptionLatestQuoteRequest
+        oc = OptionHistoricalDataClient(api_key=api_key, secret_key=api_secret)
+        q = oc.get_option_latest_quote(OptionLatestQuoteRequest(symbol_or_symbols=occ))
+        item = q.get(occ) if isinstance(q, dict) else q
+        bid = _num(getattr(item, "bid_price", None))
+        ask = _num(getattr(item, "ask_price", None))
+        if bid and ask:
+            return round((bid + ask) / 2, 2)
+        if ask:
+            return round(ask, 2)
+        return None
+    except Exception:
+        return None
+
+
 def pick_by_delta(rows, target_delta, tol=0.12):
     """From a flat list of option rows, pick the one whose |delta| is closest
     to target_delta and within tol. Returns the row dict or None."""
