@@ -47,7 +47,8 @@ OPT_MAX_DTE = int(os.environ.get("OPT_MAX_DTE", "14"))                        # 
 OPT_TARGET_DTE = int(os.environ.get("OPT_TARGET_DTE", "9"))                   # prefer the weekly nearest this
 OPT_PROFIT_TAKE_PCT = float(os.environ.get("OPT_PROFIT_TAKE_PCT", "0.50"))    # buy back at 50% of credit
 OPT_MIN_IV_PCT = float(os.environ.get("OPT_MIN_IV_PCT", "15"))               # only sell when IV rich enough
-OPT_MAX_POSITIONS = int(os.environ.get("OPT_MAX_POSITIONS", "4"))            # max concurrent short puts
+OPT_MAX_POSITIONS = int(os.environ.get("OPT_MAX_POSITIONS", "1"))            # max concurrent short puts (start with 1)
+OPT_MAX_TOTAL_COLLATERAL = float(os.environ.get("OPT_MAX_TOTAL_COLLATERAL", "0"))  # $ cap on total collateral (0 = use full buying power)
 OPT_MAX_CONTRACTS_PER_NAME = int(os.environ.get("OPT_MAX_CONTRACTS_PER_NAME", "1"))
 OPT_ROLL_DTE = int(os.environ.get("OPT_ROLL_DTE", "1"))                       # manage/roll when <= this DTE
 OPT_COVERED_CALL_DELTA = float(os.environ.get("OPT_COVERED_CALL_DELTA", "0.30"))  # wheel: covered-call delta

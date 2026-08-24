@@ -36,6 +36,7 @@ def engine_config():
         "profit_take": config.OPT_PROFIT_TAKE_PCT,
         "min_iv": config.OPT_MIN_IV_PCT,
         "max_positions": config.OPT_MAX_POSITIONS,
+        "max_total_collateral": getattr(config, "OPT_MAX_TOTAL_COLLATERAL", 0),
         "cc_delta": config.OPT_COVERED_CALL_DELTA,
     }
 
@@ -175,13 +176,25 @@ def decide_actions(underlyings, positions, put_chain_fn, call_chain_fn, quote_fn
     cfg = cfg or engine_config()
     state = classify_positions(positions)
     open_put_count = sum(len(s["short_puts"]) for s in state.values())
+
+    # Cumulative budget: cap by the configured total-collateral limit (if set),
+    # else by buying power. Subtract collateral already tied up by open short
+    # puts, then decrement as we commit new ones this cycle — so the bot can
+    # NEVER over-commit across multiple names in a single cycle.
+    cap = cfg.get("max_total_collateral", 0) or 0
+    available = min(buying_power, cap) if cap > 0 else buying_power
+    for s in state.values():
+        for leg in s["short_puts"]:
+            available -= abs(leg.get("strike", 0)) * 100
+
     actions = []
     for u in underlyings:
         st = state.get(u, {"short_puts": [], "short_calls": [], "shares": 0.0, "share_cost": 0.0})
         act = decide_for_underlying(u, st, put_chain_fn, call_chain_fn, quote_fn,
-                                    cfg, buying_power, open_put_count)
+                                    cfg, max(0.0, available), open_put_count)
         if act:
             actions.append(act)
             if act.get("action") == "sell_put":
                 open_put_count += 1
+                available -= act.get("collateral", 0)  # commit collateral for the cycle
     return actions
