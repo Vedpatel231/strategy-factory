@@ -123,9 +123,10 @@ def decide_for_underlying(u, st, put_chain_fn, call_chain_fn, quote_fn, cfg,
             return {"action": "hold", "symbol": u,
                     "reason": (f"best call strike {pick['strike']} below cost basis "
                                f"{st['share_cost']:.2f} — would lock a loss")}
+        sell_px = pick.get("bid") or pick.get("mid")
         return {"action": "sell_call", "symbol": u, "contract": pick["symbol"],
                 "strike": pick["strike"], "expiration": pick["expiration"],
-                "limit_price": pick["mid"], "delta": pick.get("delta"),
+                "limit_price": sell_px, "delta": pick.get("delta"),
                 "reason": "covered call (wheel step 2)"}
 
     # 3) Manage an existing short (covered) call.
@@ -162,41 +163,50 @@ def decide_for_underlying(u, st, put_chain_fn, call_chain_fn, quote_fn, cfg,
     if buying_power < collateral:
         return {"action": "hold", "symbol": u,
                 "reason": f"insufficient buying power for ${collateral:.0f} collateral"}
+    # Sell at the bid for a reliable fill (mid limits can sit unfilled and pile
+    # up). Fall back to mid if no bid is available.
+    sell_px = pick.get("bid") or pick.get("mid")
     return {"action": "sell_put", "symbol": u, "contract": pick["symbol"],
             "strike": pick["strike"], "expiration": pick["expiration"],
-            "limit_price": pick["mid"], "delta": pick.get("delta"), "iv_pct": iv,
-            "credit_est": round((pick["mid"] or 0) * 100, 2),
+            "limit_price": sell_px, "delta": pick.get("delta"), "iv_pct": iv,
+            "credit_est": round((sell_px or 0) * 100, 2),
             "collateral": round(collateral, 2),
             "reason": f"sell ~{cfg['target_delta']:.2f}-delta cash-secured put"}
 
 
 def decide_actions(underlyings, positions, put_chain_fn, call_chain_fn, quote_fn,
-                   buying_power, cfg=None, pending_underlyings=None):
+                   buying_power, cfg=None, pending_puts=None):
     """Return the list of wheel actions for all underlyings.
 
-    pending_underlyings: set of underlyings that already have an OPEN (unfilled)
-    order — the bot must not place a duplicate while one is working.
+    pending_puts: list of {"root", "collateral"} for OPEN (unfilled) short-put
+    orders. These count as a used slot AND committed collateral so the bot never
+    exceeds max_positions / budget while orders sit unfilled, and never places a
+    duplicate on a name that already has a working order.
     """
     cfg = cfg or engine_config()
-    pending_underlyings = set(pending_underlyings or [])
+    pending_puts = list(pending_puts or [])
+    pending_roots = {p.get("root") for p in pending_puts}
     state = classify_positions(positions)
-    open_put_count = sum(len(s["short_puts"]) for s in state.values())
+
+    # Filled short puts + pending short-put orders both occupy a slot.
+    open_put_count = sum(len(s["short_puts"]) for s in state.values()) + len(pending_puts)
 
     # Cumulative budget: cap by the configured total-collateral limit (if set),
-    # else by buying power. Subtract collateral already tied up by open short
-    # puts, then decrement as we commit new ones this cycle — so the bot can
-    # NEVER over-commit across multiple names in a single cycle.
+    # else buying power. Subtract collateral tied up by filled short puts AND
+    # pending short-put orders, then decrement as we commit new ones this cycle.
     cap = cfg.get("max_total_collateral", 0) or 0
     available = min(buying_power, cap) if cap > 0 else buying_power
     for s in state.values():
         for leg in s["short_puts"]:
             available -= abs(leg.get("strike", 0)) * 100
+    for p in pending_puts:
+        available -= p.get("collateral", 0)
 
     actions = []
     for u in underlyings:
         st = state.get(u, {"short_puts": [], "short_calls": [], "shares": 0.0, "share_cost": 0.0})
         is_flat = (not st["short_puts"] and not st["short_calls"] and st["shares"] < 100)
-        if u in pending_underlyings and is_flat:
+        if u in pending_roots and is_flat:
             actions.append({"action": "hold", "symbol": u,
                             "reason": "an order is already pending (unfilled) — not re-ordering"})
             continue
