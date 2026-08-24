@@ -627,6 +627,51 @@ def options_chain():
         return jsonify({"error": str(e), "symbol": symbol}), 500
 
 
+# ── OPTIONS LIVE QUOTES (batched — for the 1s price ticker) ──────────
+@app.route("/api/options/quotes")
+@require_auth
+def options_quotes():
+    import os as _os
+    key = _os.environ.get("ALPACA_API_KEY", "")
+    sec = _os.environ.get("ALPACA_API_SECRET", "")
+    if not (key and sec):
+        return jsonify({"error": "keys not set", "quotes": {}}), 500
+    try:
+        import config as _cfg
+        q = request.args.get("symbols")
+        symbols = ([s.strip().upper() for s in q.split(",") if s.strip()]
+                   if q else list(getattr(_cfg, "OPTIONS_UNDERLYINGS", [])))
+        from alpaca.data.historical.stock import StockHistoricalDataClient
+        from alpaca.data.requests import StockSnapshotRequest
+        c = StockHistoricalDataClient(api_key=key, secret_key=sec)
+        snaps = c.get_stock_snapshot(StockSnapshotRequest(symbol_or_symbols=symbols))
+        out = {}
+        for s in symbols:
+            snap = snaps.get(s) if isinstance(snaps, dict) else None
+            if not snap:
+                continue
+            price = None
+            lt = getattr(snap, "latest_trade", None)
+            if lt and getattr(lt, "price", None):
+                price = float(lt.price)
+            if not price:
+                lq = getattr(snap, "latest_quote", None)
+                if lq:
+                    b = float(getattr(lq, "bid_price", 0) or 0)
+                    a = float(getattr(lq, "ask_price", 0) or 0)
+                    price = (b + a) / 2 if (b and a) else (a or b or None)
+            prev = None
+            pdb = getattr(snap, "previous_daily_bar", None)
+            if pdb and getattr(pdb, "close", None):
+                prev = float(pdb.close)
+            chg = round((price / prev - 1) * 100, 2) if (price and prev) else None
+            out[s] = {"price": round(price, 2) if price else None, "change_pct": chg}
+        return jsonify({"quotes": out})
+    except Exception as e:
+        logger.error(f"options quotes failed: {e}")
+        return jsonify({"error": str(e), "quotes": {}}), 500
+
+
 # ── OPTIONS REALIZED P&L BY DAY (calendar source of truth) ───────────
 @app.route("/api/options/realized-by-day")
 @require_auth
