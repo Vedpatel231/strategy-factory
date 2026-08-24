@@ -152,3 +152,101 @@ def get_live_put_chain(symbol, api_key, api_secret,
     return {"symbol": symbol, "spot": round(spot, 2) if spot else None,
             "expirations": expirations,
             "contracts_returned": len(chain or {})}
+
+
+def pick_by_delta(rows, target_delta, tol=0.12):
+    """From a flat list of option rows, pick the one whose |delta| is closest
+    to target_delta and within tol. Returns the row dict or None."""
+    best = None
+    for r in rows or []:
+        d = r.get("delta")
+        if d is None:
+            continue
+        diff = abs(abs(d) - abs(target_delta))
+        if diff <= tol and (best is None or diff < best[0]):
+            best = (diff, r)
+    return best[1] if best else None
+
+
+def shape_call_chain(chain, spot, max_expirations=2, strikes_per_exp=6,
+                     strike_window=0.15, max_dte=60):
+    """Compact CALL view (for covered calls): calls at/above spot, grouped by
+    expiration, nearest expirations, strikes closest to spot."""
+    today = dt.date.today()
+    lo = spot * 0.97 if spot else None
+    hi = spot * (1 + strike_window) if spot else None
+    rows = []
+    for occ, snap in (chain or {}).items():
+        info = parse_occ_symbol(occ)
+        if not info or info["type"] != "call":
+            continue
+        strike = info["strike"]
+        if lo is not None and (strike < lo or strike > hi):
+            continue
+        try:
+            exp_date = dt.date.fromisoformat(info["expiration"])
+        except ValueError:
+            continue
+        dte = (exp_date - today).days
+        if dte < 0 or dte > max_dte:
+            continue
+        bid, ask, iv, delta = _snapshot_fields(snap)
+        mid = round((bid + ask) / 2, 2) if (bid is not None and ask is not None) else None
+        rows.append({
+            "symbol": occ, "expiration": info["expiration"], "dte": dte,
+            "strike": round(strike, 2), "bid": bid, "ask": ask, "mid": mid,
+            "iv_pct": round(iv * 100, 1) if iv is not None else None,
+            "delta": round(delta, 3) if delta is not None else None,
+        })
+    by_exp = {}
+    for r in rows:
+        by_exp.setdefault(r["expiration"], []).append(r)
+    exps = sorted(by_exp.keys())[:max_expirations]
+    out = []
+    for e in exps:
+        calls = by_exp[e]
+        calls.sort(key=lambda r: abs(r["strike"] - spot) if spot else r["strike"])
+        keep = sorted(calls[:strikes_per_exp], key=lambda r: r["strike"])
+        out.append({"expiration": e, "dte": keep[0]["dte"] if keep else None, "calls": keep})
+    return out
+
+
+def get_live_call_chain(symbol, api_key, api_secret,
+                        max_expirations=2, strike_window=0.15, max_dte=60):
+    """Fetch and shape a live CALL chain (mirror of get_live_put_chain)."""
+    symbol = str(symbol or "").upper()
+    spot = None
+    try:
+        from alpaca.data.historical.stock import StockHistoricalDataClient
+        from alpaca.data.requests import StockLatestTradeRequest
+        sc = StockHistoricalDataClient(api_key=api_key, secret_key=api_secret)
+        lt = sc.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=symbol))
+        spot = _num(getattr(lt.get(symbol), "price", None))
+    except Exception as e:
+        return {"error": f"spot price fetch failed: {e}", "step": "spot"}
+    try:
+        from alpaca.data.historical.option import OptionHistoricalDataClient
+        from alpaca.data.requests import OptionChainRequest
+        oc = OptionHistoricalDataClient(api_key=api_key, secret_key=api_secret)
+        kwargs = {"underlying_symbol": symbol}
+        try:
+            from alpaca.trading.enums import ContractType
+            kwargs["type"] = ContractType.CALL
+        except Exception:
+            pass
+        if spot:
+            kwargs["strike_price_gte"] = round(spot * 0.97, 2)
+            kwargs["strike_price_lte"] = round(spot * (1 + strike_window), 2)
+        try:
+            chain = oc.get_option_chain(OptionChainRequest(**kwargs))
+        except TypeError:
+            chain = oc.get_option_chain(OptionChainRequest(underlying_symbol=symbol))
+    except Exception as e:
+        return {"error": f"option chain fetch failed: {e}", "step": "chain", "spot": spot}
+    try:
+        expirations = shape_call_chain(chain, spot, max_expirations=max_expirations,
+                                       strike_window=strike_window, max_dte=max_dte)
+    except Exception as e:
+        return {"error": f"chain parse failed: {e}", "step": "parse", "spot": spot}
+    return {"symbol": symbol, "spot": round(spot, 2) if spot else None,
+            "expirations": expirations, "contracts_returned": len(chain or {})}
