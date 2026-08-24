@@ -32,6 +32,7 @@ def engine_config():
         "delta_tol": config.OPT_DELTA_TOLERANCE,
         "min_dte": config.OPT_MIN_DTE,
         "max_dte": config.OPT_MAX_DTE,
+        "target_dte": getattr(config, "OPT_TARGET_DTE", 9),
         "profit_take": config.OPT_PROFIT_TAKE_PCT,
         "min_iv": config.OPT_MIN_IV_PCT,
         "max_positions": config.OPT_MAX_POSITIONS,
@@ -73,16 +74,19 @@ def classify_positions(positions):
 
 
 def _pick_option(chain, key, target_delta, cfg):
-    """Flatten a chain result to rows within the DTE window and pick by delta."""
+    """Pick the single expiration nearest the target DTE (within the min/max
+    window), then the strike closest to target delta within that expiration.
+    Selecting one expiration avoids mixing weeklies of different lengths."""
     if not chain or chain.get("error"):
         return None
-    rows = []
-    for e in (chain.get("expirations") or []):
-        dte = e.get("dte")
-        if dte is None or dte < cfg["min_dte"] or dte > cfg["max_dte"]:
-            continue
-        rows.extend(e.get(key) or [])
-    return pick_by_delta(rows, target_delta, cfg["delta_tol"])
+    exps = [e for e in (chain.get("expirations") or [])
+            if e.get("dte") is not None and cfg["min_dte"] <= e["dte"] <= cfg["max_dte"]]
+    if not exps:
+        return None
+    target = cfg.get("target_dte", 9)
+    exps.sort(key=lambda e: (abs(e["dte"] - target), e["dte"]))
+    chosen = exps[0]
+    return pick_by_delta(chosen.get(key) or [], target_delta, cfg["delta_tol"])
 
 
 def decide_for_underlying(u, st, put_chain_fn, call_chain_fn, quote_fn, cfg,

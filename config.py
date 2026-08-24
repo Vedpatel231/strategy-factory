@@ -42,8 +42,9 @@ OPTIONS_UNDERLYINGS = [
 # Put-seller parameters (all env-overridable; tuned in Stage 2).
 OPT_TARGET_DELTA = float(os.environ.get("OPT_TARGET_DELTA", "0.30"))          # sell ~30-delta puts
 OPT_DELTA_TOLERANCE = float(os.environ.get("OPT_DELTA_TOLERANCE", "0.12"))
-OPT_MIN_DTE = int(os.environ.get("OPT_MIN_DTE", "5"))                         # avoid 0-2 DTE gamma risk
-OPT_MAX_DTE = int(os.environ.get("OPT_MAX_DTE", "10"))                        # ~1 week
+OPT_MIN_DTE = int(os.environ.get("OPT_MIN_DTE", "5"))                         # avoid 0-4 DTE gamma risk
+OPT_MAX_DTE = int(os.environ.get("OPT_MAX_DTE", "14"))                        # up to ~2 weeks
+OPT_TARGET_DTE = int(os.environ.get("OPT_TARGET_DTE", "9"))                   # prefer the weekly nearest this
 OPT_PROFIT_TAKE_PCT = float(os.environ.get("OPT_PROFIT_TAKE_PCT", "0.50"))    # buy back at 50% of credit
 OPT_MIN_IV_PCT = float(os.environ.get("OPT_MIN_IV_PCT", "15"))               # only sell when IV rich enough
 OPT_MAX_POSITIONS = int(os.environ.get("OPT_MAX_POSITIONS", "4"))            # max concurrent short puts
