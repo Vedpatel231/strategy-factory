@@ -171,9 +171,14 @@ def decide_for_underlying(u, st, put_chain_fn, call_chain_fn, quote_fn, cfg,
 
 
 def decide_actions(underlyings, positions, put_chain_fn, call_chain_fn, quote_fn,
-                   buying_power, cfg=None):
-    """Return the list of wheel actions for all underlyings."""
+                   buying_power, cfg=None, pending_underlyings=None):
+    """Return the list of wheel actions for all underlyings.
+
+    pending_underlyings: set of underlyings that already have an OPEN (unfilled)
+    order — the bot must not place a duplicate while one is working.
+    """
     cfg = cfg or engine_config()
+    pending_underlyings = set(pending_underlyings or [])
     state = classify_positions(positions)
     open_put_count = sum(len(s["short_puts"]) for s in state.values())
 
@@ -190,6 +195,11 @@ def decide_actions(underlyings, positions, put_chain_fn, call_chain_fn, quote_fn
     actions = []
     for u in underlyings:
         st = state.get(u, {"short_puts": [], "short_calls": [], "shares": 0.0, "share_cost": 0.0})
+        is_flat = (not st["short_puts"] and not st["short_calls"] and st["shares"] < 100)
+        if u in pending_underlyings and is_flat:
+            actions.append({"action": "hold", "symbol": u,
+                            "reason": "an order is already pending (unfilled) — not re-ordering"})
+            continue
         act = decide_for_underlying(u, st, put_chain_fn, call_chain_fn, quote_fn,
                                     cfg, max(0.0, available), open_put_count)
         if act:

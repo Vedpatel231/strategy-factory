@@ -72,6 +72,20 @@ class OptionsDesk:
             self._save(state)
             return state
 
+        # Open (unfilled) orders — never place a duplicate while one is working.
+        pending = set()
+        try:
+            from options_data import parse_occ_symbol
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+            for o in tc.get_orders(filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=100)):
+                info = parse_occ_symbol(str(getattr(o, "symbol", "")))
+                if info:
+                    pending.add(info["root"])
+        except Exception as e:
+            state["errors"].append(f"open-orders fetch failed: {e}")
+        state["pending_underlyings"] = sorted(pending)
+
         # Live data providers (bounded DTE window with a little slack)
         max_dte = cfg["max_dte"] + 4
 
@@ -86,7 +100,8 @@ class OptionsDesk:
 
         try:
             actions = decide_actions(config.OPTIONS_UNDERLYINGS, positions,
-                                     put_fn, call_fn, quote_fn, bp, cfg)
+                                     put_fn, call_fn, quote_fn, bp, cfg,
+                                     pending_underlyings=pending)
         except Exception as e:
             state["errors"].append(f"decision engine failed: {e}")
             self._save(state)
