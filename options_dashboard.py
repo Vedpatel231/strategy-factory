@@ -80,6 +80,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 <div class="stats" id="stats"></div>
 <div class="section"><h2>Wheel status</h2><div class="wheelgrid" id="wheel"></div></div>
 <div class="section"><h2>Open positions</h2><div id="positions"></div></div>
+<div class="section"><h2>Working orders</h2><div id="orders"></div></div>
 <div class="section"><h2>Bot decisions — last cycle</h2><div id="decisions"></div></div>
 <div class="section"><h2>Daily realized P&amp;L</h2>
   <div class="kpis" id="kpis"></div>
@@ -89,7 +90,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 </div>
 <script>
 var UNDER=["SOFI","PFE","T","F"];
-var _prices={},_px={},_calData={},_positions=[],_desk={};
+var _prices={},_px={},_calData={},_positions=[],_desk={},_detail={},_orders=[];
 var _calY=new Date().getFullYear(),_calM=new Date().getMonth();
 function money(n){n=Number(n||0);return (n<0?'-':'+')+'$'+Math.abs(n).toFixed(2);}
 function money0(n){return '$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:0});}
@@ -111,17 +112,28 @@ async function loadAll(){
   var acct=await j('/api/alpaca/account');
   _desk=await j('/api/options/desk-state');
   var posR=await j('/api/alpaca/positions');_positions=Array.isArray(posR)?posR:(posR.positions||[]);
+  _detail=await j('/api/options/positions-detail');
+  var ordR=await j('/api/alpaca/orders?status=open&limit=25');_orders=(ordR&&ordR.orders)||(Array.isArray(ordR)?ordR:[]);
   var realized=await j('/api/options/realized-by-day');_calData=(realized&&realized.days)||{};
-  renderMode();renderStats(acct,realized);renderWheel();renderPositions();renderDecisions();calRender();
+  renderMode();renderStats(acct,realized);renderWheel();renderPositions();renderOrders();renderDecisions();calRender();
   var lc=_desk.timestamp?(' · bot cycle '+String(_desk.timestamp).slice(0,16).replace('T',' ')):'';
   document.getElementById('updated').textContent='Live · updated '+new Date().toLocaleTimeString()+lc;
 }
 function renderMode(){var m=document.getElementById('mode');var live=_desk&&_desk.dry_run===false;m.textContent=live?'LIVE':'DRY-RUN';m.className='badge '+(live?'live':'dry');}
 function renderStats(a,realized){
   var tot=(realized&&realized.totals&&realized.totals.realized_net)||0;
-  var cells=[['Equity','$'+Number(a.equity||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}),null],
-    ['Buying power',money0(a.buying_power),null],['Cash',money0(a.cash),null],
-    ['Realized P&L (options)',money(tot),tot]];
+  var T=(_detail&&_detail.totals)||{};
+  var upl=T.unrealized_pl||0;
+  var util=T.utilization_pct;
+  var theta=T.portfolio_theta;
+  var cap=T.collateral_deployed||0;
+  var cells=[
+    ['Equity','$'+Number(a.equity||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}),null],
+    ['Realized P&L',money(tot),tot],
+    ['Unrealized P&L',money(upl),upl],
+    ['Capital deployed',money0(cap)+(util!=null?(' · '+util+'%'):''),null],
+    ['Daily theta (income)',theta!=null?money(theta):'—',theta],
+    ['Buying power',money0(a.buying_power),null]];
   document.getElementById('stats').innerHTML=cells.map(function(x){var c=x[2]!=null?(x[2]>=0?'pos':'neg'):'';return '<div class="stat"><div class="l">'+x[0]+'</div><div class="v tabnum '+c+'">'+x[1]+'</div></div>';}).join('');
 }
 function stateFor(u){var sp=0,sh=0,sc=0;_positions.forEach(function(p){var o=occ(p.symbol);var q=Number(p.qty||0);if(o&&o.root==u){if(o.type=='put'&&q<0)sp++;if(o.type=='call'&&q<0)sc++;}else if((p.symbol||'').toUpperCase()==u)sh+=q;});
@@ -138,12 +150,21 @@ function renderWheel(){
   }).join('');
 }
 function renderPositions(){
-  var opt=_positions.filter(function(p){return occ(p.symbol);});var el=document.getElementById('positions');
+  var opt=(_detail&&_detail.positions)||[];var el=document.getElementById('positions');
   if(!opt.length){el.innerHTML='<div class="empty">No open option positions.</div>';return;}
-  var rows=opt.map(function(p){var o=occ(p.symbol);var q=Number(p.qty||0);var pl=Number(p.unrealized_pl||0);
-    var dte=Math.round((new Date(o.exp)-new Date())/86400000);
-    return '<tr><td>'+o.root+'</td><td>'+o.type+'</td><td class="num">$'+o.strike+'</td><td>'+o.exp+' ('+dte+'d)</td><td class="num">'+q+'</td><td class="num">'+Number(p.avg_entry_price||0).toFixed(2)+'</td><td class="num">'+Number(p.current_price||0).toFixed(2)+'</td><td class="num '+(pl>=0?'pos':'neg')+'">'+money(pl)+'</td></tr>';}).join('');
-  el.innerHTML='<table><tr><th>Under</th><th>Type</th><th class="num">Strike</th><th>Expiry</th><th class="num">Qty</th><th class="num">Entry</th><th class="num">Now</th><th class="num">P/L</th></tr>'+rows+'</table>';
+  var rows=opt.map(function(p){
+    var pl=Number(p.unrealized_pl||0);var tgt=p.pct_to_target;var cu=p.cushion_pct;
+    var thetaD=(p.theta!=null&&p.qty)?(p.theta*100*p.qty):null;
+    return '<tr><td>'+p.underlying+' '+p.type+'</td><td class="num">$'+p.strike+'</td><td>'+(p.expiration||'')+' ('+(p.dte!=null?p.dte:'?')+'d)</td><td class="num">'+p.qty+'</td><td class="num">'+Number(p.entry||0).toFixed(2)+'</td><td class="num">'+Number(p.mark||0).toFixed(2)+'</td><td class="num '+(pl>=0?'pos':'neg')+'">'+money(pl)+'</td><td class="num '+((tgt!=null&&tgt>=50)?'pos':'')+'">'+(tgt!=null?(tgt+'%'):'—')+'</td><td class="num">'+(p.delta!=null?p.delta:'—')+'</td><td class="num '+(thetaD>=0?'pos':'neg')+'">'+(thetaD!=null?money(thetaD):'—')+'</td><td class="num">'+(p.iv_pct!=null?(p.iv_pct+'%'):'—')+'</td><td class="num">'+(p.breakeven!=null?('$'+p.breakeven):'—')+'</td><td class="num '+(cu!=null&&cu>=0?'pos':'neg')+'">'+(cu!=null?(cu+'%'):'—')+'</td></tr>';
+  }).join('');
+  el.innerHTML='<table><tr><th>Position</th><th class="num">Strike</th><th>Expiry</th><th class="num">Qty</th><th class="num">Credit</th><th class="num">Mark</th><th class="num">Unreal</th><th class="num">% Tgt</th><th class="num">&Delta;</th><th class="num">&Theta;/day</th><th class="num">IV</th><th class="num">B/E</th><th class="num">Cushion</th></tr>'+rows+'</table>';
+}
+function renderOrders(){
+  var oo=(_orders||[]).filter(function(o){return occ(o.symbol);});var el=document.getElementById('orders');
+  if(!oo.length){el.innerHTML='<div class="empty">No working orders.</div>';return;}
+  var rows=oo.map(function(o){var info=occ(o.symbol);var age='';var ts=o.submitted_at||o.created_at;if(ts){age=Math.round((Date.now()-new Date(ts))/60000)+'m';}
+    return '<tr><td>'+info.root+' '+info.type+' $'+info.strike+'</td><td>'+(o.side||'')+'</td><td class="num">'+(o.limit_price!=null?('$'+o.limit_price):(o.order_type||o.type||''))+'</td><td class="num">'+(o.filled_qty||0)+' / '+(o.qty||1)+'</td><td>'+(o.status||'')+'</td><td class="num">'+age+'</td></tr>';}).join('');
+  el.innerHTML='<table><tr><th>Contract</th><th>Side</th><th class="num">Limit</th><th class="num">Filled</th><th>Status</th><th class="num">Age</th></tr>'+rows+'</table>';
 }
 function renderDecisions(){
   var acts=(_desk&&_desk.actions)||[];var el=document.getElementById('decisions');var h='';

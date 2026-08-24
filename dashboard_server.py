@@ -627,6 +627,114 @@ def options_chain():
         return jsonify({"error": str(e), "symbol": symbol}), 500
 
 
+# ── OPTIONS POSITIONS DETAIL (Greeks, break-even, %-to-target, totals) ─
+@app.route("/api/options/positions-detail")
+@require_auth
+def options_positions_detail():
+    import os as _os
+    import datetime as _dt
+    key = _os.environ.get("ALPACA_API_KEY", "")
+    sec = _os.environ.get("ALPACA_API_SECRET", "")
+    if not (key and sec):
+        return jsonify({"error": "keys not set", "positions": [], "totals": {}}), 500
+    try:
+        from options_data import parse_occ_symbol, _num
+        from alpaca.trading.client import TradingClient
+        tc = TradingClient(api_key=key, secret_key=sec, paper=True)
+        acct = tc.get_account()
+        cash = float(getattr(acct, "cash", 0) or 0)
+        equity = float(getattr(acct, "equity", 0) or 0)
+        bp = float(getattr(acct, "options_buying_power", None) or getattr(acct, "buying_power", 0) or 0)
+        today = _dt.date.today()
+
+        positions, opt_syms = [], []
+        for p in tc.get_all_positions():
+            sym = str(getattr(p, "symbol", ""))
+            info = parse_occ_symbol(sym)
+            if not info:
+                continue
+            opt_syms.append(sym)
+            try:
+                dte = (_dt.date.fromisoformat(info["expiration"]) - today).days
+            except Exception:
+                dte = None
+            positions.append({
+                "symbol": sym, "underlying": info["root"], "type": info["type"],
+                "strike": info["strike"], "expiration": info["expiration"], "dte": dte,
+                "qty": float(getattr(p, "qty", 0) or 0),
+                "entry": round(float(getattr(p, "avg_entry_price", 0) or 0), 2),
+                "mark": round(float(getattr(p, "current_price", 0) or 0), 2),
+                "unrealized_pl": round(float(getattr(p, "unrealized_pl", 0) or 0), 2),
+            })
+
+        greeks = {}
+        if opt_syms:
+            try:
+                from alpaca.data.historical.option import OptionHistoricalDataClient
+                from alpaca.data.requests import OptionSnapshotRequest
+                oc = OptionHistoricalDataClient(api_key=key, secret_key=sec)
+                snaps = oc.get_option_snapshot(OptionSnapshotRequest(symbol_or_symbols=opt_syms))
+                for s in opt_syms:
+                    sn = snaps.get(s) if isinstance(snaps, dict) else None
+                    if not sn:
+                        continue
+                    g = getattr(sn, "greeks", None)
+                    greeks[s] = {"delta": _num(getattr(g, "delta", None)) if g else None,
+                                 "theta": _num(getattr(g, "theta", None)) if g else None,
+                                 "iv": _num(getattr(sn, "implied_volatility", None))}
+            except Exception as e:
+                logger.warning(f"option greeks fetch: {e}")
+
+        unders = sorted(set(p["underlying"] for p in positions))
+        spots = {}
+        if unders:
+            try:
+                from alpaca.data.historical.stock import StockHistoricalDataClient
+                from alpaca.data.requests import StockLatestTradeRequest
+                scl = StockHistoricalDataClient(api_key=key, secret_key=sec)
+                lt = scl.get_stock_latest_trade(StockLatestTradeRequest(symbol_or_symbols=unders))
+                for u in unders:
+                    it = lt.get(u) if isinstance(lt, dict) else None
+                    if it:
+                        spots[u] = _num(getattr(it, "price", None))
+            except Exception:
+                pass
+
+        tot_upl = tot_theta = tot_delta = collateral = 0.0
+        for p in positions:
+            g = greeks.get(p["symbol"], {})
+            spot = spots.get(p["underlying"])
+            p["spot"] = round(spot, 2) if spot else None
+            p["delta"] = round(g.get("delta"), 3) if g.get("delta") is not None else None
+            p["theta"] = round(g.get("theta"), 3) if g.get("theta") is not None else None
+            p["iv_pct"] = round(g.get("iv") * 100, 1) if g.get("iv") is not None else None
+            if p["type"] == "put" and p["qty"] < 0:
+                p["breakeven"] = round(p["strike"] - p["entry"], 2)
+                p["cushion_pct"] = round((spot - p["strike"]) / spot * 100, 2) if spot else None
+                p["collateral"] = round(p["strike"] * 100 * abs(p["qty"]), 2)
+                collateral += p["collateral"]
+            elif p["type"] == "call" and p["qty"] < 0:
+                p["breakeven"] = round(p["strike"] + p["entry"], 2)
+                p["cushion_pct"] = round((p["strike"] - spot) / spot * 100, 2) if spot else None
+                p["collateral"] = 0
+            p["pct_to_target"] = round((p["entry"] - p["mark"]) / p["entry"] * 100, 1) if p["entry"] else None
+            tot_upl += p["unrealized_pl"]
+            if p["theta"] is not None:
+                tot_theta += p["theta"] * 100 * p["qty"]   # daily $ (short => positive)
+            if p["delta"] is not None:
+                tot_delta += p["delta"] * 100 * p["qty"]
+
+        totals = {"unrealized_pl": round(tot_upl, 2), "collateral_deployed": round(collateral, 2),
+                  "buying_power": round(bp, 2), "cash": round(cash, 2), "equity": round(equity, 2),
+                  "utilization_pct": round(collateral / cash * 100, 1) if cash else None,
+                  "portfolio_theta": round(tot_theta, 2), "portfolio_delta": round(tot_delta, 1),
+                  "open_count": len(positions)}
+        return jsonify({"positions": positions, "totals": totals})
+    except Exception as e:
+        logger.error(f"positions-detail failed: {e}")
+        return jsonify({"error": str(e), "positions": [], "totals": {}}), 500
+
+
 # ── OPTIONS LIVE QUOTES (batched — for the 1s price ticker) ──────────
 @app.route("/api/options/quotes")
 @require_auth
