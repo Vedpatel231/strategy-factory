@@ -373,6 +373,102 @@ def realized_pnl_by_day(orders, fee_rate=None):
     return days
 
 
+def options_realized_by_day(orders, fee_per_contract=0.04):
+    """Per-day realized P&L from OPTION fills (x100 multiplier), for the wheel.
+
+    Matches opposite-side fills per contract FIFO: a short put/call opened by a
+    sell and bought back by a buy realizes (open - close) x 100 on the close
+    date. Short lots whose expiration has passed with no close are treated as
+    expired-worthless (full credit kept) on the expiration date. Bucketed by the
+    US/Eastern day. Returns the same shape as realized_pnl_by_day.
+    """
+    import datetime as _dt
+    from options_data import parse_occ_symbol
+
+    fills = []
+    for o in orders or []:
+        if str(o.get("status") or "").lower() != "filled":
+            continue
+        sym = o.get("symbol") or ""
+        info = parse_occ_symbol(sym)
+        if not info:  # options only
+            continue
+        qty = _as_float(o.get("filled_qty") or o.get("qty"))
+        px = _as_float(o.get("filled_avg_price"))
+        if qty <= 0 or px <= 0:
+            continue
+        side = str(o.get("side") or "").lower()
+        dt = _parse_ts(o.get("filled_at") or o.get("submitted_at") or o.get("created_at"))
+        if dt is None:
+            continue
+        fills.append({"sym": sym, "buy": side == "buy", "qty": qty, "px": px,
+                      "dt": dt, "root": info["root"], "exp": info["expiration"]})
+    fills.sort(key=lambda f: f["dt"])
+
+    lots = {}   # sym -> list of [signed_qty, price, exp]
+    days = {}
+
+    def bucket(dkey):
+        return days.setdefault(dkey, {"realized_net": 0.0, "realized_gross": 0.0,
+                                      "fees": 0.0, "closed_trades": 0, "symbols": {}})
+
+    def book(dkey, root, gross, contracts):
+        fee = contracts * fee_per_contract
+        b = bucket(dkey)
+        b["realized_gross"] += gross
+        b["fees"] += fee
+        b["realized_net"] += gross - fee
+        b["closed_trades"] += 1
+        b["symbols"][root] = b["symbols"].get(root, 0.0) + (gross - fee)
+
+    for f in fills:
+        sym = f["sym"]
+        signed = f["qty"] if f["buy"] else -f["qty"]
+        px = f["px"]
+        queue = lots.setdefault(sym, [])
+        remaining = signed
+        gross = 0.0
+        matched = 0.0
+        while abs(remaining) > 1e-9 and queue and (queue[0][0] * remaining < 0):
+            lot = queue[0]
+            take = min(abs(remaining), abs(lot[0]))
+            if lot[0] < 0:      # short lot closed by a buy
+                gross += (lot[1] - px) * take * 100
+            else:               # long lot closed by a sell
+                gross += (px - lot[1]) * take * 100
+            matched += take
+            lot[0] += take if lot[0] < 0 else -take
+            remaining += take if remaining < 0 else -take
+            if abs(lot[0]) <= 1e-9:
+                queue.pop(0)
+        if matched > 0:
+            book(_eastern_day(f["dt"]), f["root"], gross, matched)
+        if abs(remaining) > 1e-9:
+            queue.append([remaining, px, f["exp"]])
+
+    # Expired-worthless short lots: full credit realized on the expiration date.
+    today = _dt.date.today()
+    for sym, queue in lots.items():
+        info = parse_occ_symbol(sym) or {}
+        for lot in queue:
+            if lot[0] >= 0:
+                continue
+            try:
+                exp_date = _dt.date.fromisoformat(lot[2])
+            except Exception:
+                continue
+            if exp_date < today:
+                take = abs(lot[0])
+                book(exp_date.isoformat(), info.get("root", sym), lot[1] * take * 100, take)
+
+    for b in days.values():
+        b["realized_net"] = round(b["realized_net"], 2)
+        b["realized_gross"] = round(b["realized_gross"], 2)
+        b["fees"] = round(b["fees"], 2)
+        b["symbols"] = {s: round(v, 2) for s, v in b["symbols"].items()}
+    return days
+
+
 def _round_money(value):
     return round(_as_float(value), 2)
 

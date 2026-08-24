@@ -111,10 +111,34 @@ def load_portfolio():
 @app.route("/")
 @require_auth
 def root():
+    # In options mode the wheel dashboard is the main view; the legacy stock
+    # dashboard is still reachable at /stock-dashboard.
+    try:
+        import config as _cfg
+        if getattr(_cfg, "OPTIONS_MODE", False):
+            from options_dashboard import render_options_dashboard
+            return render_options_dashboard()
+    except Exception as _e:
+        logger.error(f"options dashboard render failed: {_e}")
     if not os.path.exists(DASHBOARD_PATH):
         return ("<h1>Dashboard not found</h1>"
                 "<p>Run <code>python daily_runner.py</code> first to generate it, "
                 "then refresh this page.</p>"), 404
+    return send_from_directory(REPORT_DIR, "dashboard.html")
+
+
+@app.route("/options")
+@require_auth
+def options_dashboard_page():
+    from options_dashboard import render_options_dashboard
+    return render_options_dashboard()
+
+
+@app.route("/stock-dashboard")
+@require_auth
+def stock_dashboard_page():
+    if not os.path.exists(DASHBOARD_PATH):
+        return "<h1>Stock dashboard not found</h1>", 404
     return send_from_directory(REPORT_DIR, "dashboard.html")
 
 
@@ -601,6 +625,28 @@ def options_chain():
     except Exception as e:
         logger.error(f"options chain failed for {symbol}: {e}")
         return jsonify({"error": str(e), "symbol": symbol}), 500
+
+
+# ── OPTIONS REALIZED P&L BY DAY (calendar source of truth) ───────────
+@app.route("/api/options/realized-by-day")
+@require_auth
+def options_realized_by_day_route():
+    """Per-day realized P&L from option fills (x100), for the options calendar."""
+    client, err = get_alpaca_client()
+    if err:
+        return jsonify({"error": err, "days": {}}), 500
+    try:
+        from trade_journal import options_realized_by_day
+        orders = client.get_orders(limit=500, status="all")
+        days = options_realized_by_day(orders)
+        total_net = round(sum(d["realized_net"] for d in days.values()), 2)
+        total_trades = sum(d["closed_trades"] for d in days.values())
+        return jsonify({"days": days,
+                        "totals": {"realized_net": total_net, "closed_trades": total_trades},
+                        "source": "alpaca_option_fills_fifo_x100"})
+    except Exception as e:
+        logger.error(f"options realized-by-day failed: {e}")
+        return jsonify({"error": str(e), "days": {}}), 500
 
 
 # ── OPTIONS DESK STATE (last wheel-cycle decisions) ──────────────────
