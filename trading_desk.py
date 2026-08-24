@@ -121,7 +121,16 @@ class TradingDeskEngine:
         managers = []
         approvals = []
         orders = []
-        grouped = self.registry.by_asset()
+        # OPTIONS MODE (2026-08 pivot): stop opening new equity positions. The
+        # CEO read, exits, and reconciliation still run, but the stock entry loop
+        # is skipped so no new stock trades are placed while the options bot is
+        # built. Set OPTIONS_MODE=0 to restore the legacy stock desk.
+        try:
+            import config as _cfg
+            _options_mode = bool(getattr(_cfg, "OPTIONS_MODE", False))
+        except Exception:
+            _options_mode = False
+        grouped = {} if _options_mode else self.registry.by_asset()
         for symbol, bots in grouped.items():
             asset_class = bots[0].asset_class if bots else "crypto"
             manager = AssetManager(

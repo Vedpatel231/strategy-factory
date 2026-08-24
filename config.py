@@ -23,6 +23,34 @@ DB_PATH = os.environ.get("STRATEGY_FACTORY_DB", os.path.join(DATA_DIR, "strategy
 # DISABLED: No crypto trading.
 CRYPTO_ASSETS = []
 
+# === OPTIONS MODE (2026-08 pivot: cash-secured put seller / wheel) ===
+# The system is migrating from stock/ETF swing trading to an options
+# premium-selling bot. When OPTIONS_MODE is True the stock desk stops opening
+# new equity positions; the options engine trades instead. (Set OPTIONS_MODE=0
+# to fall back to the legacy stock desk while it still exists.)
+OPTIONS_MODE = os.environ.get("OPTIONS_MODE", "1") not in ("0", "false", "False", "no")
+
+# Underlyings for cash-secured puts — low-priced, liquid names so one contract's
+# collateral (~strike x 100) fits a small account.
+OPTIONS_UNDERLYINGS = [
+    "SOFI",   # ~$19  -> ~$1.9k collateral, higher IV
+    "PFE",    # ~$28  -> ~$2.8k collateral, steady dividend payer
+    "T",      # ~$26  -> ~$2.6k collateral, low-vol telecom
+    "F",      # ~$14  -> ~$1.4k collateral, very liquid
+]
+
+# Put-seller parameters (all env-overridable; tuned in Stage 2).
+OPT_TARGET_DELTA = float(os.environ.get("OPT_TARGET_DELTA", "0.30"))          # sell ~30-delta puts
+OPT_DELTA_TOLERANCE = float(os.environ.get("OPT_DELTA_TOLERANCE", "0.12"))
+OPT_MIN_DTE = int(os.environ.get("OPT_MIN_DTE", "5"))                         # avoid 0-2 DTE gamma risk
+OPT_MAX_DTE = int(os.environ.get("OPT_MAX_DTE", "10"))                        # ~1 week
+OPT_PROFIT_TAKE_PCT = float(os.environ.get("OPT_PROFIT_TAKE_PCT", "0.50"))    # buy back at 50% of credit
+OPT_MIN_IV_PCT = float(os.environ.get("OPT_MIN_IV_PCT", "15"))               # only sell when IV rich enough
+OPT_MAX_POSITIONS = int(os.environ.get("OPT_MAX_POSITIONS", "4"))            # max concurrent short puts
+OPT_MAX_CONTRACTS_PER_NAME = int(os.environ.get("OPT_MAX_CONTRACTS_PER_NAME", "1"))
+OPT_ROLL_DTE = int(os.environ.get("OPT_ROLL_DTE", "1"))                       # manage/roll when <= this DTE
+OPT_COVERED_CALL_DELTA = float(os.environ.get("OPT_COVERED_CALL_DELTA", "0.30"))  # wheel: covered-call delta
+
 # Active trading universe — 20 liquid, long-only swing-trading names:
 # 10 broad/sector ETFs + 10 mega-cap stocks.  Chosen for deep liquidity,
 # tight spreads, and clean trends, with NO leveraged/inverse products so
