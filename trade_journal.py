@@ -374,15 +374,21 @@ def realized_pnl_by_day(orders, fee_rate=None):
 
 
 def options_realized_by_day(orders, fee_per_contract=0.04):
-    """Per-day realized P&L from OPTION fills (x100 multiplier), for the wheel.
+    """Per-day realized P&L from closed OPTION round-trips (x100), for the wheel.
 
     Matches opposite-side fills per contract FIFO: a short put/call opened by a
     sell and bought back by a buy realizes (open - close) x 100 on the close
-    date. Short lots whose expiration has passed with no close are treated as
-    expired-worthless (full credit kept) on the expiration date. Bucketed by the
-    US/Eastern day. Returns the same shape as realized_pnl_by_day.
+    date. Bucketed by the US/Eastern day. Returns the same shape as
+    realized_pnl_by_day.
+
+    NOTE: this counts only genuine closed round-trips. It deliberately does NOT
+    auto-book unmatched short lots as "expired worthless", because an ASSIGNED
+    put is not worthless — its premium defers into the assigned share cost basis
+    (which is why Alpaca's equity does not book it as a standalone gain). The
+    dashboard's headline realized P&L is derived separately from Alpaca's equity
+    identity (equity - funding - unrealized), so it stays correct through
+    assignment; this calendar is the per-day closed-trade breakdown.
     """
-    import datetime as _dt
     from options_data import parse_occ_symbol
 
     fills = []
@@ -446,20 +452,10 @@ def options_realized_by_day(orders, fee_per_contract=0.04):
         if abs(remaining) > 1e-9:
             queue.append([remaining, px, f["exp"]])
 
-    # Expired-worthless short lots: full credit realized on the expiration date.
-    today = _dt.date.today()
-    for sym, queue in lots.items():
-        info = parse_occ_symbol(sym) or {}
-        for lot in queue:
-            if lot[0] >= 0:
-                continue
-            try:
-                exp_date = _dt.date.fromisoformat(lot[2])
-            except Exception:
-                continue
-            if exp_date < today:
-                take = abs(lot[0])
-                book(exp_date.isoformat(), info.get("root", sym), lot[1] * take * 100, take)
+    # NOTE: intentionally no "expired-worthless" auto-booking here. Unmatched
+    # short lots are left unbooked so assigned puts are never mis-counted as a
+    # realized gain (their premium is reflected in the assigned share basis and
+    # in the Alpaca-anchored headline realized P&L instead).
 
     for b in days.values():
         b["realized_net"] = round(b["realized_net"], 2)

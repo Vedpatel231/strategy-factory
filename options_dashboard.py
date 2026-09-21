@@ -115,8 +115,12 @@ async function loadAll(){
 function renderMode(){var m=document.getElementById('mode');var live=_desk&&_desk.dry_run===false;m.textContent=live?'LIVE':'DRY-RUN';m.className='badge '+(live?'live':'dry');}
 function renderHero(a){
   var T=(_detail&&_detail.totals)||{};
-  var realizedTot=(_realized&&_realized.totals&&_realized.totals.realized_net)||0;
-  var unreal=T.unrealized_pl||0;var total=realizedTot+unreal;
+  var unreal=T.unrealized_pl||0;
+  // Realized + total P&L are anchored to Alpaca's equity (equity - funding),
+  // so the hero reconciles with Alpaca in every wheel phase. Fall back to the
+  // calendar sum only if the totals aren't available yet.
+  var realizedTot=(T.realized_pl!=null)?T.realized_pl:((_realized&&_realized.totals&&_realized.totals.realized_net)||0);
+  var total=(T.total_pl!=null)?T.total_pl:(realizedTot+unreal);
   var h=document.getElementById('heroPnl');h.textContent=money(total);h.className='hero-num tabnum '+(total>=0?'pos':'neg');
   document.getElementById('heroSub').innerHTML='<span class="'+(realizedTot>=0?'pos':'neg')+'">'+money(realizedTot)+' realized</span> &nbsp;·&nbsp; <span class="'+(unreal>=0?'pos':'neg')+'">'+money(unreal)+' open</span>';
   var keys=Object.keys(_calData).sort();var cum=0,series=[];
@@ -147,8 +151,7 @@ function renderStrip(a){
     ['Buying power',money0(a.buying_power),null]];
   document.getElementById('strip').innerHTML=cells.map(function(x){var c=x[2]!=null?(x[2]>=0?'pos':'neg'):'';return '<div class="kpi"><div class="l">'+x[0]+'</div><div class="v '+c+'">'+x[1]+'</div></div>';}).join('');
 }
-function stateFor(u){var sp=0,sh=0,sc=0;((_detail&&_detail.positions)||[]).forEach(function(p){if(p.underlying==u){if(p.type=='put'&&p.qty<0)sp++;if(p.type=='call'&&p.qty<0)sc++;}});
-  ((_detail&&_detail.positions)||[]).forEach(function(){});
+function stateFor(u){var sp=0,sh=0,sc=0;((_detail&&_detail.positions)||[]).forEach(function(p){if(p.underlying==u){if(p.type=='put'&&p.qty<0)sp++;if(p.type=='call'&&p.qty<0)sc++;if(p.type=='shares')sh+=Number(p.qty||0);}});
   if(sp>0)return['short put','st-put'];if(sc>0)return['covered call','st-call'];if(sh>=100)return['holding shares','st-shares'];return['flat','st-flat'];}
 function renderWheel(){
   var acts=(_desk&&_desk.actions)||[];var el=document.getElementById('wheel');if(!el)return;
@@ -162,8 +165,12 @@ function renderWheel(){
 }
 function renderPositions(){
   var opt=(_detail&&_detail.positions)||[];var el=document.getElementById('positions');
-  if(!opt.length){el.innerHTML='<div class="empty">No open option positions.</div>';return;}
+  if(!opt.length){el.innerHTML='<div class="empty">No open positions.</div>';return;}
   var rows=opt.map(function(p){var pl=Number(p.unrealized_pl||0);var tgt=p.pct_to_target;var cu=p.cushion_pct;var thetaD=(p.theta!=null&&p.qty)?(p.theta*100*p.qty):null;
+    if(p.type=='shares'){
+      // Assigned shares: no strike/expiry/greeks — show qty, cost, mark, P&L.
+      return '<tr><td>'+p.underlying+' <span class="state st-shares">shares</span></td><td class="num">—</td><td>—</td><td class="num">'+p.qty+'</td><td class="num">'+Number(p.entry||0).toFixed(2)+'</td><td class="num">'+Number(p.mark||0).toFixed(2)+'</td><td class="num '+(pl>=0?'pos':'neg')+'">'+money(pl)+'</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">$'+Number(p.entry||0).toFixed(2)+'</td><td class="num">—</td></tr>';
+    }
     return '<tr><td>'+p.underlying+' '+p.type+'</td><td class="num">$'+p.strike+'</td><td>'+(p.expiration||'')+' ('+(p.dte!=null?p.dte:'?')+'d)</td><td class="num">'+p.qty+'</td><td class="num">'+Number(p.entry||0).toFixed(2)+'</td><td class="num">'+Number(p.mark||0).toFixed(2)+'</td><td class="num '+(pl>=0?'pos':'neg')+'">'+money(pl)+'</td><td class="num '+((tgt!=null&&tgt>=50)?'pos':'')+'">'+(tgt!=null?(tgt+'%'):'—')+'</td><td class="num">'+(p.delta!=null?p.delta:'—')+'</td><td class="num '+(thetaD>=0?'pos':'neg')+'">'+(thetaD!=null?money(thetaD):'—')+'</td><td class="num">'+(p.iv_pct!=null?(p.iv_pct+'%'):'—')+'</td><td class="num">'+(p.breakeven!=null?('$'+p.breakeven):'—')+'</td><td class="num '+(cu!=null&&cu>=0?'pos':'neg')+'">'+(cu!=null?(cu+'%'):'—')+'</td></tr>';}).join('');
   el.innerHTML='<table><tr><th>Position</th><th class="num">Strike</th><th>Expiry</th><th class="num">Qty</th><th class="num">Credit</th><th class="num">Mark</th><th class="num">Unreal</th><th class="num">% Tgt</th><th class="num">&Delta;</th><th class="num">&Theta;/day</th><th class="num">IV</th><th class="num">B/E</th><th class="num">Cushion</th></tr>'+rows+'</table>';
 }

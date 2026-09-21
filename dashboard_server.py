@@ -652,6 +652,17 @@ def options_positions_detail():
             sym = str(getattr(p, "symbol", ""))
             info = parse_occ_symbol(sym)
             if not info:
+                # Equity/share position (e.g. assigned shares in the wheel).
+                # Include it so unrealized P&L and capital-used match Alpaca.
+                qty = float(getattr(p, "qty", 0) or 0)
+                positions.append({
+                    "symbol": sym, "underlying": sym.upper(), "type": "shares",
+                    "strike": None, "expiration": None, "dte": None, "qty": qty,
+                    "entry": round(float(getattr(p, "avg_entry_price", 0) or 0), 2),
+                    "mark": round(float(getattr(p, "current_price", 0) or 0), 2),
+                    "unrealized_pl": round(float(getattr(p, "unrealized_pl", 0) or 0), 2),
+                    "market_value": round(float(getattr(p, "market_value", 0) or 0), 2),
+                })
                 continue
             opt_syms.append(sym)
             try:
@@ -708,7 +719,15 @@ def options_positions_detail():
             p["delta"] = round(g.get("delta"), 3) if g.get("delta") is not None else None
             p["theta"] = round(g.get("theta"), 3) if g.get("theta") is not None else None
             p["iv_pct"] = round(g.get("iv") * 100, 1) if g.get("iv") is not None else None
-            if p["type"] == "put" and p["qty"] < 0:
+            if p["type"] == "shares":
+                # Held (assigned) shares: capital deployed = their market value.
+                mv = p.get("market_value") or round(p["mark"] * p["qty"], 2)
+                p["market_value"] = round(mv, 2)
+                p["collateral"] = round(abs(mv), 2)
+                collateral += p["collateral"]
+                p["breakeven"] = p["entry"]
+                p["cushion_pct"] = None
+            elif p["type"] == "put" and p["qty"] < 0:
                 p["breakeven"] = round(p["strike"] - p["entry"], 2)
                 p["cushion_pct"] = round((spot - p["strike"]) / spot * 100, 2) if spot else None
                 p["collateral"] = round(p["strike"] * 100 * abs(p["qty"]), 2)
@@ -723,12 +742,25 @@ def options_positions_detail():
                 tot_theta += p["theta"] * 100 * p["qty"]   # daily $ (short => positive)
             if p["delta"] is not None:
                 tot_delta += p["delta"] * 100 * p["qty"]
+            elif p["type"] == "shares":
+                tot_delta += p["qty"]   # 1 delta per long share
+
+        # True realized P&L, anchored to Alpaca's own equity so the dashboard
+        # reconciles in every wheel phase (including assignment):
+        #   total P&L  = equity - net funding
+        #   realized   = total P&L - unrealized(all open positions)
+        funding = float(getattr(config, "OPTIONS_ACCOUNT_FUNDING", 100000) or 100000)
+        total_pl = round(equity - funding, 2)
+        realized_pl = round(total_pl - tot_upl, 2)
+        open_count = sum(1 for p in positions if p["type"] != "shares")
 
         totals = {"unrealized_pl": round(tot_upl, 2), "collateral_deployed": round(collateral, 2),
                   "buying_power": round(bp, 2), "cash": round(cash, 2), "equity": round(equity, 2),
                   "utilization_pct": round(collateral / cash * 100, 1) if cash else None,
                   "portfolio_theta": round(tot_theta, 2), "portfolio_delta": round(tot_delta, 1),
-                  "open_count": len(positions)}
+                  "net_funding": round(funding, 2), "realized_pl": realized_pl,
+                  "total_pl": total_pl, "open_count": open_count,
+                  "position_count": len(positions)}
         return jsonify({"positions": positions, "totals": totals})
     except Exception as e:
         logger.error(f"positions-detail failed: {e}")

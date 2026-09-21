@@ -56,6 +56,11 @@ OPT_COVERED_CALL_DELTA = float(os.environ.get("OPT_COVERED_CALL_DELTA", "0.30"))
 # OPTIONS_LIVE is explicitly turned on. Dry-run computes and logs every action
 # it would take on real data but places NO orders.
 OPTIONS_LIVE = os.environ.get("OPTIONS_LIVE", "0") not in ("0", "false", "False", "no")
+# Net cash funded into the options paper account. Used to derive true realized
+# P&L from Alpaca's equity (realized = equity - funding - unrealized), so the
+# dashboard reconciles with Alpaca even through assignment. Update if you reset
+# or re-fund the paper account.
+OPTIONS_ACCOUNT_FUNDING = float(os.environ.get("OPTIONS_ACCOUNT_FUNDING", "100000"))
 
 # Active trading universe — 20 liquid, long-only swing-trading names:
 # 10 broad/sector ETFs + 10 mega-cap stocks.  Chosen for deep liquidity,
