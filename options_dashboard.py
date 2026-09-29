@@ -5,7 +5,9 @@ working orders, bot decisions, and a daily realized-P&L calendar. Reads the
 
 
 def render_options_dashboard():
-    return r"""<!doctype html>
+    import json
+    import config
+    return (r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Options Wheel — Strategy Factory</title>
 <style>
@@ -83,7 +85,7 @@ tr:last-child td{border-bottom:none}td.num,th.num{text-align:right;font-variant-
 </div>
 </div>
 <script>
-var UNDER=["SOFI","PFE","T","F"];
+var UNDER=__UNDER__;
 var _prices={},_px={},_calData={},_realized={},_desk={},_detail={},_orders=[],_equity={};
 var _calY=new Date().getFullYear(),_calM=new Date().getMonth();
 function money(n){n=Number(n||0);return (n<0?'-':'+')+'$'+Math.abs(n).toFixed(2);}
@@ -221,4 +223,4 @@ function calRender(){
 loadAll();loadPrices();
 setInterval(loadPrices,1000);
 setInterval(loadAll,20000);
-</script></body></html>"""
+</script></body></html>""").replace("__UNDER__", json.dumps(list(getattr(config, "OPTIONS_UNDERLYINGS", []))))

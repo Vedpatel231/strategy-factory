@@ -32,11 +32,17 @@ OPTIONS_MODE = os.environ.get("OPTIONS_MODE", "1") not in ("0", "false", "False"
 
 # Underlyings for cash-secured puts — low-priced, liquid names so one contract's
 # collateral (~strike x 100) fits a small account.
+# Quality, dividend-paying, liquid-option names sized for ~$7k of collateral.
+# Bot holds up to OPT_MAX_POSITIONS at once (total capped by
+# OPT_MAX_TOTAL_COLLATERAL), so diversification comes from rotating across
+# these sectors. Dividends give a price floor and are collected if assigned.
 OPTIONS_UNDERLYINGS = [
-    "SOFI",   # ~$19  -> ~$1.9k collateral, higher IV
-    "PFE",    # ~$28  -> ~$2.8k collateral, steady dividend payer
-    "T",      # ~$26  -> ~$2.6k collateral, low-vol telecom
-    "F",      # ~$14  -> ~$1.4k collateral, very liquid
+    "CMCSA",  # ~$21.5 -> ~$2.1k  media/telecom, big FCF + buybacks, ~3.5% yield
+    "T",      # ~$24.7 -> ~$2.5k  telecom, ~4% yield, balance sheet repaired
+    "KMI",    # ~$30.4 -> ~$3.0k  energy pipelines, steady cash flows, ~5-6% yield
+    "KEY",    # ~$20.1 -> ~$2.0k  regional bank, ~4-5% yield
+    "HBAN",   # ~$15.2 -> ~$1.5k  regional bank, ~4% yield
+    "F",      # ~$12.3 -> ~$1.2k  auto, very liquid, richest premium sleeve
 ]
 
 # Put-seller parameters (all env-overridable; tuned in Stage 2).
@@ -47,8 +53,8 @@ OPT_MAX_DTE = int(os.environ.get("OPT_MAX_DTE", "14"))                        # 
 OPT_TARGET_DTE = int(os.environ.get("OPT_TARGET_DTE", "9"))                   # prefer the weekly nearest this
 OPT_PROFIT_TAKE_PCT = float(os.environ.get("OPT_PROFIT_TAKE_PCT", "0.50"))    # buy back at 50% of credit
 OPT_MIN_IV_PCT = float(os.environ.get("OPT_MIN_IV_PCT", "15"))               # only sell when IV rich enough
-OPT_MAX_POSITIONS = int(os.environ.get("OPT_MAX_POSITIONS", "1"))            # max concurrent short puts (start with 1)
-OPT_MAX_TOTAL_COLLATERAL = float(os.environ.get("OPT_MAX_TOTAL_COLLATERAL", "0"))  # $ cap on total collateral (0 = use full buying power)
+OPT_MAX_POSITIONS = int(os.environ.get("OPT_MAX_POSITIONS", "3"))            # max concurrent short puts (3 for diversification at ~$7k)
+OPT_MAX_TOTAL_COLLATERAL = float(os.environ.get("OPT_MAX_TOTAL_COLLATERAL", "7000"))  # $ cap on total collateral across all positions
 OPT_MAX_CONTRACTS_PER_NAME = int(os.environ.get("OPT_MAX_CONTRACTS_PER_NAME", "1"))
 OPT_ROLL_DTE = int(os.environ.get("OPT_ROLL_DTE", "1"))                       # manage/roll when <= this DTE
 OPT_COVERED_CALL_DELTA = float(os.environ.get("OPT_COVERED_CALL_DELTA", "0.30"))  # wheel: covered-call delta
