@@ -767,6 +767,44 @@ def options_positions_detail():
         return jsonify({"error": str(e), "positions": [], "totals": {}}), 500
 
 
+# ── EQUITY / P&L HISTORY (real Alpaca portfolio history for the curve) ─
+@app.route("/api/options/equity-history")
+@require_auth
+def options_equity_history():
+    """Actual account equity over time from Alpaca portfolio history, so the
+    hero curve reflects true total P&L (options + stock + assignments), not the
+    option-only calendar. P&L per point = equity - net funding."""
+    import os as _os
+    key = _os.environ.get("ALPACA_API_KEY", "")
+    sec = _os.environ.get("ALPACA_API_SECRET", "")
+    if not (key and sec):
+        return jsonify({"error": "keys not set", "points": []}), 500
+    try:
+        from alpaca.trading.client import TradingClient
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+        tc = TradingClient(api_key=key, secret_key=sec, paper=True)
+        period = request.args.get("period", "1M")
+        timeframe = request.args.get("timeframe", "1D")
+        ph = tc.get_portfolio_history(
+            GetPortfolioHistoryRequest(period=period, timeframe=timeframe,
+                                       extended_hours=False))
+        ts = list(getattr(ph, "timestamp", None) or [])
+        eq = list(getattr(ph, "equity", None) or [])
+        funding = float(getattr(config, "OPTIONS_ACCOUNT_FUNDING", 100000) or 100000)
+        points = []
+        for i in range(min(len(ts), len(eq))):
+            e = eq[i]
+            if e is None:
+                continue
+            points.append({"t": int(ts[i]), "equity": round(float(e), 2),
+                           "pnl": round(float(e) - funding, 2)})
+        return jsonify({"points": points, "base_value": funding,
+                        "period": period, "timeframe": timeframe})
+    except Exception as e:
+        logger.error(f"equity-history failed: {e}")
+        return jsonify({"error": str(e), "points": []}), 500
+
+
 # ── OPTIONS LIVE QUOTES (batched — for the 1s price ticker) ──────────
 @app.route("/api/options/quotes")
 @require_auth

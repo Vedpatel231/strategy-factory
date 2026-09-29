@@ -84,7 +84,7 @@ tr:last-child td{border-bottom:none}td.num,th.num{text-align:right;font-variant-
 </div>
 <script>
 var UNDER=["SOFI","PFE","T","F"];
-var _prices={},_px={},_calData={},_realized={},_desk={},_detail={},_orders=[];
+var _prices={},_px={},_calData={},_realized={},_desk={},_detail={},_orders=[],_equity={};
 var _calY=new Date().getFullYear(),_calM=new Date().getMonth();
 function money(n){n=Number(n||0);return (n<0?'-':'+')+'$'+Math.abs(n).toFixed(2);}
 function money0(n){return '$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:0});}
@@ -108,6 +108,7 @@ async function loadAll(){
   _detail=await j('/api/options/positions-detail');
   var ordR=await j('/api/alpaca/orders?status=open&limit=25');_orders=(ordR&&ordR.orders)||(Array.isArray(ordR)?ordR:[]);
   _realized=await j('/api/options/realized-by-day');_calData=(_realized&&_realized.days)||{};
+  _equity=await j('/api/options/equity-history');
   renderMode();renderHero(acct);renderStrip(acct);renderWheel();renderPositions();renderOrders();renderDecisions();calRender();
   var lc=_desk.timestamp?(' · bot cycle '+String(_desk.timestamp).slice(0,16).replace('T',' ')):'';
   document.getElementById('updated').textContent='Live · updated '+new Date().toLocaleTimeString()+lc;
@@ -123,8 +124,14 @@ function renderHero(a){
   var total=(T.total_pl!=null)?T.total_pl:(realizedTot+unreal);
   var h=document.getElementById('heroPnl');h.textContent=money(total);h.className='hero-num tabnum '+(total>=0?'pos':'neg');
   document.getElementById('heroSub').innerHTML='<span class="'+(realizedTot>=0?'pos':'neg')+'">'+money(realizedTot)+' realized</span> &nbsp;·&nbsp; <span class="'+(unreal>=0?'pos':'neg')+'">'+money(unreal)+' open</span>';
-  var keys=Object.keys(_calData).sort();var cum=0,series=[];
-  keys.forEach(function(k){cum+=Number(_calData[k].realized_net||0);series.push(cum);});
+  // Equity curve = REAL account P&L over time from Alpaca portfolio history
+  // (includes options, stock, and assignment effects), so it agrees with the
+  // hero total. Fall back to the option-only calendar cumulative only if the
+  // portfolio history isn't available.
+  var series=[];
+  var pts=(_equity&&_equity.points)||[];
+  if(pts.length){series=pts.map(function(p){return Number(p.pnl||0);});}
+  else{var keys=Object.keys(_calData).sort();var cum=0;keys.forEach(function(k){cum+=Number(_calData[k].realized_net||0);series.push(cum);});}
   drawCurve(series);
 }
 function drawCurve(series){
